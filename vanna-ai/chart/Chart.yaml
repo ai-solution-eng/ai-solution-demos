@@ -1,0 +1,7 @@
+apiVersion: v2
+name: vanna-ai
+description: A Helm chart for Vanna AI
+type: application
+
+version: 0.0.3
+appVersion: "1.17.0"
