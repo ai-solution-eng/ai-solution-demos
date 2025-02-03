@@ -24,6 +24,20 @@ Note: tested on an M1 Macbook pro, should work on other OS, but will need to man
 * Change <NV_API_KEY> to your own API key. Follow the guide here to create an NIM API key (link)[https://github.com/NVIDIA-AI-Blueprints/ai-virtual-assistant/tree/main?tab=readme-ov-file#obtain-api-keys]
 * NOTE: the NV_API_KEY can be removed if you point the `NVIDIAEmbeddings` model to a NIM Embedding model running on MLIS. 
 
+Note: The current LLM is pointing to a custom llama 3.1 70B NIM running on the houston cluster:
+```python
+ChatNVIDIA(base_url="http://10.182.1.167:8080/v1",
+                  model="meta/llama-3.1-70b-instruct", 
+                   api_key="\'\'",
+                   verbose=True)
+```
+If you want to change the deployment endpoint to a NIM model running on MLIS, make sure to change the base url and the model as shown here:
+```python
+ChatNVIDIA(base_url="http://jimmy-nv-llama31-8b-instruct.models.mlds-kserve.us.rdlabs.hpecorp.net/v1",
+                  model="meta/llama3-8b-instruct", 
+                   api_key="\'\'",
+                   verbose=True)
+```
 ## Notebooks to run:
 * `demo.ipynb`: the notebook that overviews agentic systems and several agentic architectures/workflows
 * `final_graph_demo.ipynb`: this notebook is a standalone notebook that shows the final agentic system for ease of extending.
