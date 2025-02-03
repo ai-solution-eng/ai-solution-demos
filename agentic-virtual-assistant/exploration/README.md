@@ -20,7 +20,7 @@ Note: tested on an M1 Macbook pro, should work on other OS, but will need to man
 
 
 ## Configuration Steps
-
+ 
 * Change <NV_API_KEY> to your own API key. Follow the guide here to create an NIM API key (link)[https://github.com/NVIDIA-AI-Blueprints/ai-virtual-assistant/tree/main?tab=readme-ov-file#obtain-api-keys]
 * NOTE: the NV_API_KEY can be removed if you point the `NVIDIAEmbeddings` model to a NIM Embedding model running on MLIS. 
 
