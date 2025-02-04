@@ -17,7 +17,7 @@ Note: tested on an M1 Macbook pro, should work on other OS, but will need to man
     * `python3 -m venv demo-env`
     * `source demo-env/bin/activate`
     * `pip install -r requirements.txt`
-
+* uncompress 
 
 ## Configuration Steps
  
