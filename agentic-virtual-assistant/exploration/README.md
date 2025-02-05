@@ -50,3 +50,7 @@ ChatNVIDIA(base_url="http://jimmy-nv-llama31-8b-instruct.models.mlds-kserve.us.r
     * **NOTE: This agentic system requires
 * Currently the notebook uses `ChatNVIDIA` as the llm agent. This can be swapped out with OpenAI if needed.
 * `NVIDIAEmbeddings` can point to an MLIS NIM embedding model if needed. Currently the embedding is down
+
+## Deployment Option
+* Here is a github repo that deploys the same agent using langgraph cloud api server (locally)
+* View README.md for details: https://github.com/interactivetech/test-langgraph-server-app
