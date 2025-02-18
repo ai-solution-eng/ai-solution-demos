@@ -5,8 +5,11 @@
 
 This Helm chart is designed to deploy a simple version of the Vanna AI application to HPE AI Essentials (Or other Kubernetes Clusters). The chart provides a flexible way to configure the application's settings and environment variables.
 
-## What is Vanna.AI?
+## Overview
+
 Vanna.AI is an open-source AI-powered tool that simplifies database interactions by converting natural language questions into accurate SQL queries. Its value lies in democratizing data access, allowing both technical and non-technical users to extract insights from databases without extensive SQL knowledge, while also improving efficiency for experienced data analysts. By leveraging large language models and retrieval-augmented generation techniques, Vanna enhances data exploration, enables non-technical teams, and accelerates the process of obtaining actionable insights from complex databases.
+
+This deployment of Vanna.AI is a single pod running the Vanna Flask UI with onboard ChromaDB as the vector store, and a [sample sqlite database.](https://github.com/lerocha/chinook-database)
 
 ## Prerequisites
 
@@ -42,7 +45,3 @@ The Vanna AI application requires several settings to be configured in the `valu
 1. *Query Execution:* Vanna.ai executes the generated SQL query against the connected database.
 1. *Result Formatting:* The system formats the query results, typically as a Pandas DataFrame or Plotly figure.
 1. *Response Delivery:* Vanna.ai returns the results to the user, often including the SQL query, data, visualizations, and potential follow-up questions.
-
-## Default Dataset
-
-The default database included with the container image is the [Chinook](https://github.com/lerocha/chinook-database) database.
