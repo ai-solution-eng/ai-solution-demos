@@ -21,6 +21,13 @@ applicationSpecs:
         command:
         - bash
         - /opt/scripts/start.sh
+        resources:
+          requests:
+            cpu: '500m'
+            memory: '300Mi'
+          limits:
+            cpu: '4000m'
+            memory: '10Gi'
         env:
         - name: FRONTEND_PORT
           value: '9000'
