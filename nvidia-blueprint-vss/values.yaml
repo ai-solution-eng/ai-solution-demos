@@ -17,6 +17,8 @@ vss:
     vss-deployment:
       containers:
         vss:
+          startupProbe:
+            failureThreshold: 360
           env:
           - name: FRONTEND_PORT
             value: '9000'
