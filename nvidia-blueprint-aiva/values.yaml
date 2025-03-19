@@ -1,0 +1,481 @@
+
+# Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+#
+# NVIDIA CORPORATION and its licensors retain all intellectual property
+# and proprietary rights in and to this software, related documentation
+# and any modifications thereto.  Any use, reproduction, disclosure or
+# distribution of this software and related documentation without an express
+# license agreement from NVIDIA CORPORATION is strictly prohibited.
+
+# This secret is automatically created as part of the deployment
+global:
+  ngcImagePullSecretName: "ngc-docker-reg-secret"
+
+nvcf:
+  dockerRegSecrets:
+    - name: "ngc-docker-reg-secret"
+      username: "$oauthtoken"
+      password: "<REQUIRED: ADD NGC KEY"
+
+  additionalSecrets:
+    - name: "ngc-secret"
+      stringData:
+        key: "ngc-api-key"
+        value: "<REQUIRED: ADD NGC KEY"
+  # if you are using nvidia-hosted enpoints you need you your api key (not your ngc key)
+  # uncomment this and add your key below. Ensure your key has full permissions.
+  #  - name: "nvidia-api-key"
+  #    stringData:
+  #      key: "nvidia-api-key"
+  #      value: "<YOUR_NV_API_KEY"
+
+aiva-ui:
+  fullnameOverride: "aiva-ui"
+
+ezua:
+  #Use next options in order to configure the application endpoint.
+  virtualService:
+    endpoint: "aiva.${DOMAIN_NAME}" # EDIT THIS IF your domain name is different
+    istioGateway: "istio-system/ezaf-gateway"
+  # if your cluster has self-signed certs, and you're using an MLIS endpoint, you'll need to enable this
+  # to add the certs to the agent deployment so it can trust it
+  #and then uncomment out the extrapod volume and args section below
+  selfSignedCerts: true
+agent-services:
+  extraPodVolumeMounts:
+  - mountPath: /cert
+    name: cert
+  extraPodVolumes:
+  - name: cert
+    secret:
+      defaultMode: 420
+      secretName: platform-ingress-cert
+  applicationSpecs:
+    agent-services-deployment:
+      containers:
+        agent-services-container:
+          command: ["/bin/sh"]
+          args:
+          - -c
+          - cp /cert/ca.crt /usr/local/share/ca-certificates/aie-cert.crt && update-ca-certificates
+            && sed -i "s|return ChatNVIDIA(base_url=f\"http://{settings.llm.server_url}/v1\",|return
+            ChatNVIDIA(base_url=settings.llm.server_url, api_key=os.environ['APP_LLM_API_KEY'],|"
+            /opt/src/common/utils.py && uvicorn src.agent.server:app --port 8081 --host
+            0.0.0.0 --workers 32 --loop asyncio
+          env:
+          - name: REQUESTS_CA_BUNDLE
+            value: /etc/ssl/certs/ca-certificates.crt
+          - name: EXAMPLE_PATH
+            value: ./src/agent
+          - name: APP_LLM_MODELNAME
+            value: "<REQUIRED: ADD LLM MODEL NAME e.g. meta/llama-3.1-8b-instruct>"
+          - name: APP_LLM_MODELENGINE
+            value: nvidia-ai-endpoints
+          - name: APP_LLM_SERVERURL
+            value: "<OPTIONAL: ADD MLIS ENDPOINT/v1, or remove line if using NVIDIA Endpoint>"
+          - name: APP_LLM_API_KEY
+            value: "<OPTIONAL: ADD MLIS API KEY if using MLIS Endpoint>"
+          - name: APP_CACHE_NAME
+            value: redis
+          - name: APP_CACHE_URL
+            value: cache-services-cache-services-deployment-cache-services-service:6379
+          - name: APP_DATABASE_NAME
+            value: postgres
+          - name: APP_DATABASE_URL
+            value: postgres-postgres-deployment-postgres-service:5432
+          - name: APP_CHECKPOINTER_NAME
+            value: postgres
+          - name: APP_CHECKPOINTER_URL
+            value: postgres-postgres-deployment-postgres-service:5432
+          - name: POSTGRES_USER
+            value: postgres
+          - name: POSTGRES_PASSWORD
+            value: password
+          - name: POSTGRES_DB
+            value: postgres
+          - name: POSTGRES_USER_READONLY
+            value: postgres_readonly
+          - name: POSTGRES_PASSWORD_READONLY
+            value: readonly_password
+          - name: CANONICAL_RAG_URL
+            value: http://retriever-canonical-canonical-deployment-canonical-service:8086
+          - name: STRUCTURED_RAG_URI
+            value: http://retriever-structured-structured-deployment-structured-service:8087
+          - name: NVIDIA_API_KEY # Manually update your key here if connecting to hosted nvidia endpoint
+            value: "<OPTIONAL: ADD NVIDIA API KEY if using NVIDIA Endpoint>"
+          - name: GRAPH_RECURSION_LIMIT
+            value: '200'
+          - name: GRAPH_TIMEOUT_IN_SEC
+            value: '200'
+          - name: RETURN_WINDOW_CURRENT_DATE
+            value: '2024-10-23'
+          - name: RETURN_WINDOW_THRESHOLD_DAYS
+            value: '30'
+          - name: LOGLEVEL
+            value: INFO
+          resources:
+            requests:
+              cpu: "1"
+              memory: "1Gi"
+            limits:
+              cpu: "4"
+              memory: "16Gi"
+
+  egress:
+    llm-nim:
+      address: nemollm-inference-nemollm-infer-deployment-llm-service
+      port: 8000
+    redis:
+      address: cache-services-cache-services-deployment-cache-services-service
+      port: 6379
+    postgres:
+      address: postgres-postgres-deployment-postgres-service
+      port: 5432
+    chain-server-canonical:
+      address: retriever-canonical-canonical-deployment-canonical-service
+      port: 8086
+    chain-server-structured:
+      address: retriever-structured-structured-deployment-structured-service
+      port: 8087
+analytics-services:
+  applicationSpecs:
+    analytics-deployment:
+      containers:
+        analytics-services-container:
+          env:
+          - name: EXAMPLE_PATH
+            value: ./src/analytics
+          - name: APP_LLM_MODELNAME
+            value: meta/llama-3.1-8b-instruct
+          - name: APP_LLM_MODELENGINE
+            value: nvidia-ai-endpoints
+          - name: APP_LLM_SERVERURL
+            value: nemollm-inference-nemollm-infer-deployment-llm-service:8000
+          - name: APP_DATABASE_NAME
+            value: postgres
+          - name: APP_DATABASE_URL
+            value: postgres-postgres-deployment-postgres-service:5432
+          - name: POSTGRES_USER
+            value: postgres
+          - name: POSTGRES_PASSWORD
+            value: password
+          - name: POSTGRES_DB
+            value: postgres
+          - name: CUSTOMER_DATA_DB
+            value: customer_data
+          - name: PERSIST_DATA
+            value: 'true'
+          - name: NVIDIA_API_KEY # Manually update your key here if connecting to hosted nvidia endpoint
+            value: "<OPTIONAL: ADD NVIDIA API KEY if using NVIDIA Endpoint>"
+          - name: LOGLEVEL
+            value: INFO
+          resources:
+            requests:
+              cpu: "1"
+              memory: "1Gi"
+            limits:
+              cpu: "4"
+              memory: "16Gi"
+
+  egress:
+    llm-nim:
+      address: nemollm-inference-nemollm-infer-deployment-llm-service
+      port: 8000
+    postgres:
+      address: postgres-postgres-deployment-postgres-service
+      port: 5432
+milvus:
+  applicationSpecs:
+    milvus-deployment:
+      containers:
+        milvus-container:
+          env:
+          - name: ETCD_ENDPOINTS
+            value: etcd-etcd-deployment-etcd-service:2379
+          - name: MINIO_ADDRESS
+            value: minio-minio-deployment-minio-service:9010
+          - name: KNOWHERE_GPU_MEM_POOL_SIZE
+            value: 2048;4096
+          resources:
+            requests:
+              cpu: "1"
+              memory: "1Gi"
+            limits:
+              cpu: "4"
+              memory: "16Gi"
+  egress:
+    etcd:
+      address: etcd-etcd-deployment-etcd-service
+      port: 2379
+    minio:
+      address: minio-minio-deployment-minio-service
+      port: 9010
+retriever-canonical:
+  applicationSpecs:
+    canonical-deployment:
+      containers:
+        retriever-canonical:
+          env:
+          - name: EXAMPLE_PATH
+            value: src/retrievers/unstructured_data
+          - name: APP_VECTORSTORE_URL
+            value: http://milvus-milvus-deployment-milvus-service:19530
+          - name: APP_VECTORSTORE_NAME
+            value: milvus
+          - name: APP_LLM_MODELNAME
+            value: meta/llama-3.1-8b-instruct
+          - name: APP_LLM_MODELENGINE
+            value: nvidia-ai-endpoints
+          - name: APP_LLM_SERVERURL
+            value: nemollm-inference-nemollm-infer-deployment-llm-service:8000
+          - name: APP_EMBEDDINGS_MODELNAME
+            value: nvidia/llama-3.2-nv-embedqa-1b-v2
+          - name: APP_EMBEDDINGS_MODELENGINE
+            value: nvidia-ai-endpoints
+          - name: APP_EMBEDDINGS_SERVERURL
+            value: nemollm-embedding-embedding-deployment-embedding-service:9080
+          - name: APP_RANKING_MODELNAME
+            value: nvidia/llama-3.2-nv-rerankqa-1b-v2
+          - name: APP_RANKING_MODELENGINE
+            value: nvidia-ai-endpoints
+          - name: APP_RANKING_SERVERURL
+            value: ranking-ms-ranking-deployment-ranking-service:1976
+          - name: APP_TEXTSPLITTER_MODELNAME
+            value: Snowflake/snowflake-arctic-embed-l
+          - name: APP_TEXTSPLITTER_CHUNKSIZE
+            value: '506'
+          - name: APP_TEXTSPLITTER_CHUNKOVERLAP
+            value: '200'
+          - name: NVIDIA_API_KEY # Manually update your key here if connecting to hosted nvidia endpoint
+            value: "<OPTIONAL: ADD NVIDIA API KEY if using NVIDIA Endpoint>"
+          - name: COLLECTION_NAME
+            value: unstructured_data
+          - name: APP_RETRIEVER_TOPK
+            value: '4'
+          - name: APP_RETRIEVER_SCORETHRESHOLD
+            value: '0.25'
+          - name: VECTOR_DB_TOPK
+            value: '20'
+          - name: LOGLEVEL
+            value: INFO
+          resources:
+            requests:
+              cpu: "1"
+              memory: "1Gi"
+            limits:
+              cpu: "4"
+              memory: "16Gi"
+  egress:
+    llm-nim:
+      address: nemollm-inference-nemollm-infer-deployment-llm-service
+      port: 8000
+    embedding-nim:
+      address: nemollm-embedding-embedding-deployment-embedding-service
+      port: 9080
+    ranking-nim:
+      address: ranking-ms-ranking-deployment-ranking-service
+      port: 1976
+    milvus:
+      address: milvus-milvus-deployment-milvus-service
+      port: 19530
+retriever-structured:
+  applicationSpecs:
+    structured-deployment:
+      containers:
+        retriever-structured:
+          env:
+          - name: EXAMPLE_PATH
+            value: src/retrievers/structured_data
+          - name: APP_LLM_MODELNAME
+            value: meta/llama-3.1-8b-instruct
+          - name: APP_LLM_MODELENGINE
+            value: nvidia-ai-endpoints
+          - name: APP_LLM_SERVERURL
+            value: nemollm-inference-nemollm-infer-deployment-llm-service:8000
+          - name: APP_LLM_MODELNAMEPANDASAI
+            value: meta/llama-3.1-8b-instruct
+          - name: APP_EMBEDDINGS_MODELNAME
+            value: nvidia/llama-3.2-nv-embedqa-1b-v2
+          - name: APP_EMBEDDINGS_MODELENGINE
+            value: nvidia-ai-endpoints
+          - name: APP_EMBEDDINGS_SERVERURL
+            value: nemollm-embedding-embedding-deployment-embedding-service:9080
+          - name: APP_PROMPTS_CHATTEMPLATE
+            value: You are a helpful, respectful and honest assistant. Always answer
+              as helpfully as possible, while being safe. Please ensure that your
+              responses are positive in nature.
+          - name: APP_PROMPTS_RAGTEMPLATE
+            value: You are a helpful AI assistant named Envie. You will reply to questions
+              only based on the context that you are provided. If something is out
+              of context, you will refrain from replying and politely decline to respond
+              to the user.
+          - name: NVIDIA_API_KEY # Manually update your key here if connecting to hosted nvidia endpoint
+            value: "<OPTIONAL: ADD NVIDIA API KEY if using NVIDIA Endpoint>"
+          - name: COLLECTION_NAME
+            value: structured_data
+          - name: APP_DATABASE_NAME
+            value: postgres
+          - name: APP_DATABASE_URL
+            value: postgres-postgres-deployment-postgres-service:5432
+          - name: APP_VECTORSTORE_URL
+            value: http://milvus-milvus-deployment-milvus-service:19530
+          - name: APP_VECTORSTORE_NAME
+            value: milvus
+          - name: POSTGRES_USER
+            value: postgres_readonly
+          - name: POSTGRES_PASSWORD
+            value: readonly_password
+          - name: POSTGRES_DB
+            value: customer_data
+          - name: CSV_NAME
+            value: PdM_machines
+          - name: LOGLEVEL
+            value: INFO
+          resources:
+            requests:
+              cpu: "1"
+              memory: "1Gi"
+            limits:
+              cpu: "4"
+              memory: "16Gi"
+  egress:
+    llm-nim:
+      address: nemollm-inference-nemollm-infer-deployment-llm-service
+      port: 8000
+    postgres:
+      address: postgres-postgres-deployment-postgres-service
+      port: 5432
+api-gateway:
+  applicationSpecs:
+    api-gateway-deployment:
+      containers:
+        api-gateway-container:
+          env:
+          - name: AGENT_SERVER_URL
+            value: http://agent-services-agent-services-deployment-agent-service:8081
+          - name: ANALYTICS_SERVER_URL
+            value: http://analytics-services-analytics-deployment-analytics-service:8082
+          resources:
+            requests:
+              cpu: "1"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "8Gi"
+  egress:
+    chain-server-agent:
+      address: agent-services-agent-services-deployment-agent-service
+      port: 8081
+    analytics-service:
+      address: analytics-services-analytics-deployment-analytics-service
+      port: 8082
+ingest-client:
+  applicationSpecs:
+    ingest-client-deployment:
+      initContainers:
+      - command:
+        - /bin/bash
+        - -c
+        - "until curl -sf http://retriever-structured-structured-deployment-structured-service:8087/health\
+          \  && curl -sf http://retriever-canonical-canonical-deployment-canonical-service:8086/health\
+          \ ; do\n  echo \"Waiting for all APIs to be healthy...\"\n  sleep 10\ndone\n\
+          echo \"Grace time for all services to be ready after health check passes..\"\
+          \nsleep 30\n"
+        image: nvcr.io/nvidia/blueprint/aiva-customer-service-ingest-client:1.1.0
+        imagePullPolicy: IfNotPresent
+        name: init-check
+      - args:
+        - import_csv_to_sql.py
+        - --host
+        - postgres-postgres-deployment-postgres-service
+        - --port
+        - '5432'
+        command:
+        - python3
+        image: nvcr.io/nvidia/blueprint/aiva-customer-service-ingest-client:1.1.0
+        imagePullPolicy: IfNotPresent
+        name: ingest-csv-to-postgres
+      - args:
+        - ingest_doc.py
+        - --host
+        - retriever-canonical-canonical-deployment-canonical-service
+        - --port
+        - '8086'
+        command:
+        - python3
+        image: nvcr.io/nvidia/blueprint/aiva-customer-service-ingest-client:1.1.0
+        imagePullPolicy: IfNotPresent
+        name: ingest-pdf-to-canonical
+        resources:
+          requests:
+            cpu: "1"
+            memory: "1Gi"
+          limits:
+            cpu: "4"
+            memory: "16Gi"
+
+  egress:
+    postgres:
+      address: postgres-postgres-deployment-postgres-service
+      port: 5432
+    chain-server-canonical:
+      address: retriever-canonical-canonical-deployment-canonical-service
+      port: 8086
+    chain-server-structured:
+      address: retriever-structured-structured-deployment-structured-service
+      port: 8087
+
+ranking-ms:
+  applicationSpecs:
+    ranking-deployment:
+      containers:
+        ranking-container:
+          env:
+          - name: NGC_API_KEY
+            value: "<REQUIRED: ADD NGC API KEY>"
+          resources:
+            requests:
+              cpu: "1"
+              memory: "8Gi"
+              nvidia.com/gpu: 1
+            limits:
+              cpu: "4"
+              memory: "32Gi"
+              nvidia.com/gpu: 1
+
+nemollm-inference:
+  applicationSpecs:
+    nemollm-infer-deployment:
+      containers:
+        nemollm-infer-container:
+          env:
+          - name: NGC_API_KEY
+            value: "<REQUIRED: ADD NGC API KEY>"
+          resources:
+            requests:
+              cpu: "2"
+              memory: "48Gi"
+              nvidia.com/gpu: 1
+            limits:
+              cpu: "8"
+              memory: "48Gi"
+              nvidia.com/gpu: 1
+
+
+nemollm-embedding:
+  applicationSpecs:
+    embedding-deployment:
+      containers:
+        embedding-container:
+          env:
+          - name: NGC_API_KEY
+            value: "<REQUIRED: ADD NGC API KEY>"
+          resources:
+            requests:
+              cpu: "1"
+              memory: "8Gi"
+              nvidia.com/gpu: 1
+            limits:
+              cpu: "4"
+              memory: "32Gi"
+              nvidia.com/gpu: 1

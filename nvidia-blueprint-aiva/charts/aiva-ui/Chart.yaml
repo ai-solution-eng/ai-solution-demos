@@ -1,0 +1,6 @@
+apiVersion: v2
+appVersion: 0.0.1
+description: A Helm chart for AIVA UI service.
+name: aiva-ui
+type: application
+version: 0.0.1

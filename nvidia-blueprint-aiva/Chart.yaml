@@ -1,0 +1,54 @@
+apiVersion: v2
+dependencies:
+- name: agent-services
+  repository: ""
+  version: 0.0.1
+- name: analytics-services
+  repository: ""
+  version: 0.0.1
+- name: cache-services
+  repository: ""
+  version: 0.0.1
+- name: etcd
+  repository: ""
+  version: 0.0.1
+- name: milvus
+  repository: ""
+  version: 0.0.1
+- name: minio
+  repository: ""
+  version: 0.0.1
+- name: pgadmin
+  repository: ""
+  version: 0.0.1
+- name: postgres
+  repository: ""
+  version: 0.0.1
+- name: retriever-canonical
+  repository: ""
+  version: 0.0.1
+- name: retriever-structured
+  repository: ""
+  version: 0.0.1
+- name: nemollm-inference
+  repository: ""
+  version: 0.0.1
+- name: nemollm-embedding
+  repository: ""
+  version: 0.0.1
+- name: ranking-ms
+  repository: ""
+  version: 0.0.1
+- name: api-gateway
+  repository: ""
+  version: 0.0.1
+- name: ingest-client
+  repository: ""
+  version: 0.0.1
+- name: aiva-ui
+  repository: ""
+  version: 0.0.1
+description: AI-VirtualAssistant RAG on NIMs
+name: aiva
+type: application
+version: 1.2.0
