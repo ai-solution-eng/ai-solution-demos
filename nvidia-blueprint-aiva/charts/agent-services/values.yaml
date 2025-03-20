@@ -1,0 +1,166 @@
+# Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+#
+# NVIDIA CORPORATION and its licensors retain all intellectual property
+# and proprietary rights in and to this software, related documentation
+# and any modifications thereto.  Any use, reproduction, disclosure or
+# distribution of this software and related documentation without an express
+# license agreement from NVIDIA CORPORATION is strictly prohibited.
+
+Component:
+  app-version: 0.0.1
+  description: default description
+  helmUrlLocationPath: https://helm.ngc.nvidia.com/myorg/myteam/charts
+  name: agent-services
+  version: 0.0.1
+affinity: {}
+applicationSpecs:
+  agent-services-deployment:
+    apptype: stateless
+    initContainers:
+    - name: init-check
+      imagePullPolicy: IfNotPresent
+      image: nvcr.io/nvidia/blueprint/aiva-customer-service-ingest-client:1.1.0
+      command:
+      - /bin/bash
+      - -c
+      - |
+        until curl -sf http://retriever-canonical-canonical-deployment-canonical-service:8086/health  && curl -sf http://retriever-structured-structured-deployment-structured-service:8087/health && curl -sf http://nemollm-inference-nemollm-infer-deployment-llm-service:8000/v1/health/ready; do
+          echo "Waiting for all APIs to be healthy..."
+          sleep 10
+        done
+        echo "Grace time for all services to be ready after health check passes.."
+        sleep 30
+    containers:
+      agent-services-container:
+        args:
+        - --port
+        - '8081'
+        - --host
+        - 0.0.0.0
+        - --workers
+        - '32'
+        - --loop
+        - asyncio
+        env:
+        - name: EXAMPLE_PATH
+          value: ./src/agent
+        - name: APP_LLM_MODELNAME
+          value: meta/llama-3.1-70b-instruct
+        - name: APP_LLM_MODELENGINE
+          value: nvidia-ai-endpoints
+        - name: APP_LLM_SERVERURL
+          value: $egress.llm-nim.address:$egress.llm-nim.port
+        - name: APP_CACHE_NAME
+          value: redis
+        - name: APP_CACHE_URL
+          value: $egress.redis.address:$egress.redis.port
+        - name: APP_DATABASE_NAME
+          value: postgres
+        - name: APP_DATABASE_URL
+          value: $egress.postgres.address:$egress.postgres.port
+        - name: APP_CHECKPOINTER_NAME
+          value: postgres
+        - name: APP_CHECKPOINTER_URL
+          value: $egress.postgres.address:$egress.postgres.port
+        - name: POSTGRES_USER
+          value: postgres
+        - name: POSTGRES_PASSWORD
+          value: password
+        - name: POSTGRES_DB
+          value: postgres
+        - name: POSTGRES_USER_READONLY
+          value: postgres_readonly
+        - name: POSTGRES_PASSWORD_READONLY
+          value: readonly_password
+        - name: CUSTOMER_DATA_DB
+          value: customer_data
+        - name: CANONICAL_RAG_URL
+          value: http://$egress.chain-server-canonical.address:$egress.chain-server-canonical.port
+        - name: STRUCTURED_RAG_URI
+          value: http://$egress.chain-server-structured.address:$egress.chain-server-structured.port
+        - name: NVIDIA_API_KEY
+          value: ""
+        - name: GRAPH_RECURSION_LIMIT
+          value: '20'
+        - name: RETURN_WINDOW_CURRENT_DATE
+          value: '2024-10-23'
+        - name: RETURN_WINDOW_THRESHOLD_DAYS
+          value: '30'
+        - name: LOGLEVEL
+          value: INFO
+        - name: REDIS_SESSION_EXPIRY
+          value: '12'
+        image:
+          pullPolicy: IfNotPresent
+          repository: nvcr.io/nvidia/blueprint/aiva-customer-service-agent
+          tag: 1.1.0
+        ports:
+        - containerPort: 8081
+          name: http
+    services:
+      agent-service:
+        # externalTrafficPolicy: Local
+        ports:
+        - name: http-api
+          # nodePort: 30081
+          port: 8081
+        # type: NodePort
+defaultVolumeMounts:
+- mountPath: /opt/workload-config
+  name: workload-cm-volume
+- mountPath: /opt/configs
+  name: configs-volume
+- mountPath: /opt/scripts
+  name: scripts-cm-volume
+defaultVolumes:
+- configMap:
+    name: agent-services-workload-cm
+  name: workload-cm-volume
+- configMap:
+    name: agent-services-configs-cm
+  name: configs-volume
+- configMap:
+    name: agent-services-scripts-cm
+  name: scripts-cm-volume
+egress:
+  chain-server-canonical:
+    address: <PLACEHOLDER>
+    port: 0
+  chain-server-structured:
+    address: <PLACEHOLDER>
+    port: 0
+  llm-nim:
+    address: <PLACEHOLDER>
+    port: 0
+  postgres:
+    address: <PLACEHOLDER>
+    port: 0
+  redis:
+    address: <PLACEHOLDER>
+    port: 0
+externalFiles: []
+image:
+  pullPolicy: IfNotPresent
+# imagePullSecrets:
+# - name: ngc-docker-reg-secret
+ingress:
+  enabled: false
+metrics: {}
+nodeSelector: {}
+podAnnotations: {}
+podSecurityContext: {}
+replicaCount: 1
+resources: {}
+securityContext: {}
+storageClaims: {}
+tolerations: []
+workloadSpecs:
+  dummy: {}
+
+
+
+configs:
+  config.yaml:
+    SampleConfig:
+      sampleValue: 0
+

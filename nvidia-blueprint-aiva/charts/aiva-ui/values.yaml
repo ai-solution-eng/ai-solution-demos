@@ -1,0 +1,60 @@
+# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
+#
+# NVIDIA CORPORATION and its licensors retain all intellectual property
+# and proprietary rights in and to this software, related documentation
+# and any modifications thereto.  Any use, reproduction, disclosure or
+# distribution of this software and related documentation without an express
+# license agreement from NVIDIA CORPORATION is strictly prohibited.
+
+replicaCount: 1
+
+image:
+  repository: nvcr.io/nvidia/blueprint/aiva-customer-service-ui
+  pullPolicy: IfNotPresent
+  tag: "1.1.0"
+
+initContainers:
+- name: init-check
+  imagePullPolicy: IfNotPresent
+  image: nvcr.io/nvidia/blueprint/aiva-customer-service-ingest-client:1.1.0
+  command:
+  - /bin/bash
+  - -c
+  - |
+    until curl -sf http://api-gateway-api-gateway-deployment-api-gateway-service:9000/agent/health ; do
+      echo "Waiting for all APIs to be healthy..."
+      sleep 10
+    done
+    echo "Grace time for all services to be ready after health check passes.."
+    sleep 30
+
+env:
+  - name: INFERENCE_ORIGIN
+    value: "http://api-gateway-api-gateway-deployment-api-gateway-service:9000"
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+podAnnotations: {}
+podLabels: {}
+resources:
+  requests:
+    cpu: "1"
+    memory: 1Gi
+  limits:
+    cpu: "4"
+    memory: 16Gi
+podSecurityContext: {}
+
+tolerations:
+  - key: "node-role.kubernetes.io/control-plane"
+    operator: "Exists"
+    effect: "NoSchedule"
+
+securityContext: {}
+
+service:
+  type: ClusterIP
+  port: 3001

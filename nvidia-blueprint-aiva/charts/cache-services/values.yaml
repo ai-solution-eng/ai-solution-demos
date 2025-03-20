@@ -1,0 +1,96 @@
+# Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+#
+# NVIDIA CORPORATION and its licensors retain all intellectual property
+# and proprietary rights in and to this software, related documentation
+# and any modifications thereto.  Any use, reproduction, disclosure or
+# distribution of this software and related documentation without an express
+# license agreement from NVIDIA CORPORATION is strictly prohibited.
+
+Component:
+  app-version: 0.0.1
+  description: default description
+  helmUrlLocationPath: https://helm.ngc.nvidia.com/myorg/myteam/charts
+  name: cache-services
+  version: 0.0.1
+affinity: {}
+applicationSpecs:
+  cache-services-deployment:
+    apptype: stateless
+    containers:
+      redis-container:
+        image:
+          repository: redis
+          tag: "7.0.13"
+        ports:
+        - containerPort: 6379
+          name: tcp
+      rediscommander-container:
+        env:
+        - name: REDIS_HOSTS
+          value: $ingress.redis.address:$ingress.redis.port
+        image:
+          repository: rediscommander/redis-commander
+          tag: latest
+        ports:
+        - containerPort: 8081
+          name: tcp
+    services:
+      cache-services-service:
+        ports:
+        - name: redis
+          port: 6379
+          protocol: TCP
+          targetPort: 6379
+        - name: rediscommander
+          port: 9092
+          protocol: TCP
+          targetPort: 8081
+defaultVolumeMounts:
+- mountPath: /opt/workload-config
+  name: workload-cm-volume
+- mountPath: /opt/configs
+  name: configs-volume
+- mountPath: /opt/scripts
+  name: scripts-cm-volume
+defaultVolumes:
+- configMap:
+    name: cache-services-workload-cm
+  name: workload-cm-volume
+- configMap:
+    name: cache-services-configs-cm
+  name: configs-volume
+- configMap:
+    name: cache-services-scripts-cm
+  name: scripts-cm-volume
+egress: {}
+externalFiles: []
+image:
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+ingress:
+  enabled: false
+metrics: {}
+nodeSelector: {}
+podAnnotations: {}
+podSecurityContext: {}
+replicaCount: 1
+resources:
+  requests:
+    cpu: "1"
+    memory: 1Gi
+  limits:
+    cpu: "4"
+    memory: 16Gi
+securityContext: {}
+storageClaims: {}
+tolerations: []
+workloadSpecs:
+  dummy: {}
+
+
+
+configs:
+  config.yaml:
+    SampleConfig:
+      sampleValue: 0
+

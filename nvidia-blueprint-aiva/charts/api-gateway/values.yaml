@@ -1,0 +1,113 @@
+# Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+#
+# NVIDIA CORPORATION and its licensors retain all intellectual property
+# and proprietary rights in and to this software, related documentation
+# and any modifications thereto.  Any use, reproduction, disclosure or
+# distribution of this software and related documentation without an express
+# license agreement from NVIDIA CORPORATION is strictly prohibited.
+
+Component:
+  app-version: 0.0.1
+  description: default description
+  helmUrlLocationPath: https://helm.ngc.nvidia.com/myorg/myteam/charts
+  name: api-gateway
+  version: 0.0.1
+affinity: {}
+applicationSpecs:
+  api-gateway-deployment:
+    apptype: stateless
+    initContainers:
+    - name: init-check
+      imagePullPolicy: IfNotPresent
+      image: nvcr.io/nvidia/blueprint/aiva-customer-service-ingest-client:1.1.0
+      command:
+      - /bin/bash
+      - -c
+      - |
+        until curl -sf http://agent-services-agent-services-deployment-agent-service:8081/health  && curl -sf http://analytics-services-analytics-deployment-analytics-service:8082/health ; do
+          echo "Waiting for all APIs to be healthy..."
+          sleep 10
+        done
+        echo "Grace time for all services to be ready after health check passes.."
+        sleep 30
+    containers:
+      api-gateway-container:
+        args:
+        - --port
+        - '9000'
+        - --host
+        - 0.0.0.0
+        - --workers
+        - '32'
+        env:
+        - name: AGENT_SERVER_URL
+          value: http://$egress.chain-server-agent.address:$egress.chain-server-agent.port
+        - name: ANALYTICS_SERVER_URL
+          value: http://$egress.analytics-service.address:$egress.analytics-service.port
+        - name: REQUEST_TIMEOUT
+          value: "180"
+        image:
+          repository: nvcr.io/nvidia/blueprint/aiva-customer-service-api-gateway
+          tag: "1.1.0"
+        ports:
+        - containerPort: 9000
+          name: http
+    services:
+      api-gateway-service:
+        # externalTrafficPolicy: Local
+        ports:
+        - name: http-api
+          # nodePort: 30009
+          port: 9000
+          targetPort: 9000
+        # type: NodePort
+defaultVolumeMounts:
+- mountPath: /opt/workload-config
+  name: workload-cm-volume
+- mountPath: /opt/configs
+  name: configs-volume
+- mountPath: /opt/scripts
+  name: scripts-cm-volume
+defaultVolumes:
+- configMap:
+    name: api-gateway-workload-cm
+  name: workload-cm-volume
+- configMap:
+    name: api-gateway-configs-cm
+  name: configs-volume
+- configMap:
+    name: api-gateway-scripts-cm
+  name: scripts-cm-volume
+egress:
+  analytics-service:
+    address: <PLACEHOLDER>
+    port: 0
+  chain-server-agent:
+    address: <PLACEHOLDER>
+    port: 0
+externalFiles: []
+image:
+  pullPolicy: IfNotPresent
+# imagePullSecrets:
+# - name: ngc-docker-reg-secret
+ingress:
+  enabled: false
+metrics: {}
+nodeSelector: {}
+podAnnotations: {}
+podSecurityContext: {}
+replicaCount: 1
+resources: {}
+securityContext: {}
+storageClaims: {}
+tolerations: []
+workloadSpecs:
+  dummy: {}
+
+
+
+configs:
+  config.yaml:
+    SampleConfig:
+      sampleValue: 0
+

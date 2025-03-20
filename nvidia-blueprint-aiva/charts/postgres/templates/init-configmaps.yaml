@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: init-script-cm
+data:
+  init.sql: |
+{{ .Files.Get "init-script/init.sql" | indent 4 }}

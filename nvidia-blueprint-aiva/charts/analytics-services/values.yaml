@@ -1,0 +1,117 @@
+# Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+#
+# NVIDIA CORPORATION and its licensors retain all intellectual property
+# and proprietary rights in and to this software, related documentation
+# and any modifications thereto.  Any use, reproduction, disclosure or
+# distribution of this software and related documentation without an express
+# license agreement from NVIDIA CORPORATION is strictly prohibited.
+
+Component:
+  app-version: 0.0.1
+  description: default description
+  helmUrlLocationPath: https://helm.ngc.nvidia.com/myorg/myteam/charts
+  name: analytics-services
+  version: 0.0.1
+affinity: {}
+applicationSpecs:
+  analytics-deployment:
+    apptype: stateless
+    containers:
+      analytics-services-container:
+        args:
+        - --port
+        - '8081'
+        - --host
+        - 0.0.0.0
+        - --workers
+        - '32'
+        env:
+        - name: EXAMPLE_PATH
+          value: ./src/analytics
+        - name: APP_LLM_MODELNAME
+          value: meta/llama-3.1-70b-instruct
+        - name: APP_LLM_MODELENGINE
+          value: nvidia-ai-endpoints
+        - name: APP_LLM_SERVERURL
+          value: $egress.llm-nim.address:$egress.llm-nim.port
+        - name: APP_DATABASE_NAME
+          value: postgres
+        - name: APP_DATABASE_URL
+          value: $egress.postgres.address:$egress.postgres.port
+        - name: POSTGRES_USER
+          value: postgres
+        - name: POSTGRES_PASSWORD
+          value: password
+        - name: POSTGRES_DB
+          value: postgres
+        - name: CUSTOMER_DATA_DB
+          value: customer_data
+        - name: PERSIST_DATA
+          value: 'false'
+        - name: NVIDIA_API_KEY
+          value: ""
+        - name: LOGLEVEL
+          value: INFO
+        image:
+          pullPolicy: IfNotPresent
+          repository: nvcr.io/nvidia/blueprint/aiva-customer-service-analytics
+          tag: 1.1.0
+        ports:
+        - containerPort: 8081
+          name: http
+    services:
+      analytics-service:
+        ports:
+        - name: http-api
+          port: 8082
+          targetPort: 8081
+defaultVolumeMounts:
+- mountPath: /opt/workload-config
+  name: workload-cm-volume
+- mountPath: /opt/configs
+  name: configs-volume
+- mountPath: /opt/scripts
+  name: scripts-cm-volume
+defaultVolumes:
+- configMap:
+    name: analytics-services-workload-cm
+  name: workload-cm-volume
+- configMap:
+    name: analytics-services-configs-cm
+  name: configs-volume
+- configMap:
+    name: analytics-services-scripts-cm
+  name: scripts-cm-volume
+egress:
+  llm-nim:
+    address: <PLACEHOLDER>
+    port: 0
+  postgres:
+    address: <PLACEHOLDER>
+    port: 0
+externalFiles: []
+image:
+  pullPolicy: IfNotPresent
+# imagePullSecrets:
+# - name: ngc-docker-reg-secret
+ingress:
+  enabled: false
+metrics: {}
+nodeSelector: {}
+podAnnotations: {}
+podSecurityContext: {}
+replicaCount: 1
+resources: {}
+securityContext: {}
+storageClaims: {}
+tolerations: []
+workloadSpecs:
+  dummy: {}
+
+
+
+configs:
+  config.yaml:
+    SampleConfig:
+      sampleValue: 0
+

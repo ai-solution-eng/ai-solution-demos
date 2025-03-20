@@ -1,0 +1,116 @@
+# Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+#
+# NVIDIA CORPORATION and its licensors retain all intellectual property
+# and proprietary rights in and to this software, related documentation
+# and any modifications thereto.  Any use, reproduction, disclosure or
+# distribution of this software and related documentation without an express
+# license agreement from NVIDIA CORPORATION is strictly prohibited.
+
+Component:
+  app-version: 0.0.1
+  description: default description
+  helmUrlLocationPath: https://helm.ngc.nvidia.com/myorg/myteam/charts
+  name: postgres
+  version: 0.0.1
+affinity: {}
+applicationSpecs:
+  postgres-deployment:
+    apptype: stateless
+    containers:
+      postgres-container:
+        env:
+        - name: POSTGRES_USER
+          value: postgres
+        - name: POSTGRES_PASSWORD
+          value: password
+        - name: POSTGRES_DB
+          value: customer_data
+        image:
+          pullPolicy: IfNotPresent
+          repository: postgres
+          tag: 17.1
+        command:
+          - "docker-entrypoint.sh"
+          - "-c"
+          - "shared_buffers=256MB"
+          - "-c"
+          - "max_connections=200"
+        livenessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - postgres
+            - -d
+            - postgres
+          failureThreshold: 3
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 3
+        ports:
+        - containerPort: 5432
+          name: http
+    services:
+      postgres-service:
+        # externalTrafficPolicy: Local
+        ports:
+        - name: http-api
+          # nodePort: 30432
+          port: 5432
+        # type: NodePort
+defaultVolumeMounts:
+- mountPath: /opt/workload-config
+  name: workload-cm-volume
+- mountPath: /opt/configs
+  name: configs-volume
+- mountPath: /opt/scripts
+  name: scripts-cm-volume
+- mountPath: /docker-entrypoint-initdb.d/init.sql
+  name: init-script-volume
+  subPath: init.sql
+defaultVolumes:
+- configMap:
+    name: postgres-workload-cm
+  name: workload-cm-volume
+- configMap:
+    name: postgres-configs-cm
+  name: configs-volume
+- configMap:
+    name: postgres-scripts-cm
+  name: scripts-cm-volume
+- configMap:
+    name: init-script-cm
+    defaultMode: 0555
+  name: init-script-volume
+egress: {}
+externalFiles: []
+image:
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+ingress:
+  enabled: false
+metrics: {}
+nodeSelector: {}
+podAnnotations: {}
+podSecurityContext: {}
+replicaCount: 1
+resources:
+  requests:
+    cpu: "1"
+    memory: "1Gi"
+  limits:
+    cpu: "8"
+    memory: "16Gi"
+securityContext: {}
+storageClaims: {}
+tolerations: []
+workloadSpecs:
+  dummy: {}
+
+
+
+configs:
+  config.yaml:
+    SampleConfig:
+      sampleValue: 0
+

@@ -1,0 +1,142 @@
+# Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+#
+# NVIDIA CORPORATION and its licensors retain all intellectual property
+# and proprietary rights in and to this software, related documentation
+# and any modifications thereto.  Any use, reproduction, disclosure or
+# distribution of this software and related documentation without an express
+# license agreement from NVIDIA CORPORATION is strictly prohibited.
+
+Component:
+  app-version: 0.0.1
+  description: default description
+  helmUrlLocationPath: https://helm.ngc.nvidia.com/myorg/myteam/charts
+  name: retriever-structured
+  version: 0.0.1
+affinity: {}
+applicationSpecs:
+  structured-deployment:
+    apptype: stateless
+    initContainers:
+    - name: init-check
+      imagePullPolicy: IfNotPresent
+      image: nvcr.io/nvidia/blueprint/aiva-customer-service-ingest-client:1.1.0
+      command:
+      - /bin/bash
+      - -c
+      - |
+        until curl -sf ranking-ms-ranking-deployment-ranking-service:1976/v1/health/ready  && curl -sf nemollm-embedding-embedding-deployment-embedding-service:9080/v1/health/ready && curl -sf milvus-milvus-deployment-milvus-service:9091/healthz ; do
+          echo "Waiting for all APIs to be healthy..."
+          sleep 10
+        done
+        echo "Grace time for all services to be ready after health check passes.."
+        sleep 30
+    containers:
+      retriever-structured:
+        args:
+        - --port
+        - '8081'
+        - --host
+        - 0.0.0.0
+        - --workers
+        - '32'
+        env:
+        - name: EXAMPLE_PATH
+          value: src/retrievers/structured_data
+        - name: APP_LLM_MODELNAME
+          value: meta/llama-3.1-70b-instruct
+        - name: APP_LLM_MODELENGINE
+          value: nvidia-ai-endpoints
+        - name: APP_LLM_SERVERURL
+          value: $egress.llm-nim.address:$egress.llm-nim.port
+        - name: APP_LLM_MODELNAMEPANDASAI
+          value: meta/llama-3.1-70b-instruct
+        - name: APP_PROMPTS_CHATTEMPLATE
+          value: You are a helpful, respectful and honest assistant. Always answer
+            as helpfully as possible, while being safe. Please ensure that your responses
+            are positive in nature.
+        - name: APP_PROMPTS_RAGTEMPLATE
+          value: You are a helpful AI assistant named Envie. You will reply to questions
+            only based on the context that you are provided. If something is out of
+            context, you will refrain from replying and politely decline to respond
+            to the user.
+        - name: NVIDIA_API_KEY
+          value: ""
+        - name: COLLECTION_NAME
+          value: structured_data
+        - name: APP_DATABASE_NAME
+          value: postgres
+        - name: APP_DATABASE_URL
+          value: $egress.postgres.address:$egress.postgres.port
+        - name: POSTGRES_USER
+          value: postgres_readonly
+        - name: POSTGRES_PASSWORD
+          value: readonly_password
+        - name: POSTGRES_DB
+          value: customer_data
+        - name: CSV_NAME
+          value: PdM_machines
+        - name: LOGLEVEL
+          value: INFO
+        image:
+          pullPolicy: IfNotPresent
+          repository: nvcr.io/nvidia/blueprint/aiva-customer-service-structured-retriever
+          tag: 1.1.0
+        ports:
+        - containerPort: 8081
+          name: http
+    services:
+      structured-service:
+        ports:
+        - name: http-api
+          port: 8087
+          targetPort: 8081
+defaultVolumeMounts:
+- mountPath: /opt/workload-config
+  name: workload-cm-volume
+- mountPath: /opt/configs
+  name: configs-volume
+- mountPath: /opt/scripts
+  name: scripts-cm-volume
+defaultVolumes:
+- configMap:
+    name: retriever-structured-workload-cm
+  name: workload-cm-volume
+- configMap:
+    name: retriever-structured-configs-cm
+  name: configs-volume
+- configMap:
+    name: retriever-structured-scripts-cm
+  name: scripts-cm-volume
+egress:
+  llm-nim:
+    address: <PLACEHOLDER>
+    port: 0
+  postgres:
+    address: <PLACEHOLDER>
+    port: 0
+externalFiles: []
+image:
+  pullPolicy: IfNotPresent
+# imagePullSecrets:
+# - name: ngc-docker-reg-secret
+ingress:
+  enabled: false
+metrics: {}
+nodeSelector: {}
+podAnnotations: {}
+podSecurityContext: {}
+replicaCount: 1
+resources: {}
+securityContext: {}
+storageClaims: {}
+tolerations: []
+workloadSpecs:
+  dummy: {}
+
+
+
+configs:
+  config.yaml:
+    SampleConfig:
+      sampleValue: 0
+
