@@ -1,6 +1,0 @@
-apiVersion: v2
-appVersion: 2.2.0
-description: VSS microservice
-name: vss
-type: application
-version: 2.2.0
