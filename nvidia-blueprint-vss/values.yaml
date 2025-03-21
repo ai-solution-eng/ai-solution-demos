@@ -90,6 +90,7 @@ vss:
   resources:
     limits:
       cpu: "4"
+      memory: "10Gi"
       nvidia.com/gpu: 2
 
   vlmModelPath: ngc:nim/nvidia/vila-1.5-40b:vila-yi-34b-siglip-stage3_1003_video_v8
@@ -223,6 +224,7 @@ nim-llm:
   resources:
     limits:
       cpu: "4"
+      memory: "10Gi"
       nvidia.com/gpu: 4
   model:
     name: meta/llama-3.1-70b-instruct
@@ -238,10 +240,12 @@ nemo-embedding:
   resources:
     limits:
       cpu: "4"
+      memory: "10Gi"
       nvidia.com/gpu: 1
 
 nemo-rerank:
   resources:
     limits:
       cpu: "4"
+      memory: "10Gi"
       nvidia.com/gpu: 1
