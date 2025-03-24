@@ -83,7 +83,11 @@ nodeSelector: {}
 podAnnotations: {}
 podSecurityContext: {}
 replicaCount: 1
-resources: {}
+resources:
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+
 securityContext: {}
 storageClaims: {}
 tolerations: []
