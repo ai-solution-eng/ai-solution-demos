@@ -39,6 +39,8 @@ applicationSpecs:
           name: http2
         resources:
           limits:
+            cpu: "1"
+            memory: "2Gi"
             nvidia.com/gpu: 0
     services:
       milvus-service:
