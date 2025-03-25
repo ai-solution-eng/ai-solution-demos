@@ -85,8 +85,8 @@ vss:
         - -c
         image: curlimages/curl:latest
         name: check-llm-up
-  llmModel: meta/llama-3.1-70b-instruct
-  llmModelChat: meta/llama-3.1-70b-instruct
+  llmModel: meta/llama-3.1-8b-instruct
+  llmModelChat: meta/llama-3.1-8b-instruct
   resources:
     limits:
       cpu: "4"
@@ -102,23 +102,23 @@ vss:
           base_url: http://nemo-embedding-embedding-deployment-embedding-service:8000/v1
         llm:
           base_url: http://llm-nim-svc:8000/v1
-          model: meta/llama-3.1-70b-instruct
+          model: meta/llama-3.1-8b-instruct
         reranker:
           base_url: http://nemo-rerank-ranking-deployment-ranking-service:8000/v1
       notification:
         llm:
           base_url: http://llm-nim-svc:8000/v1
-          model: meta/llama-3.1-70b-instruct
+          model: meta/llama-3.1-8b-instruct
       summarization:
         embedding:
           base_url: http://nemo-embedding-embedding-deployment-embedding-service:8000/v1
         llm:
           base_url: http://llm-nim-svc:8000/v1
-          model: meta/llama-3.1-70b-instruct
+          model: meta/llama-3.1-8b-instruct
     guardrails_config.yaml:
       models:
       - engine: nim
-        model: meta/llama-3.1-70b-instruct
+        model: meta/llama-3.1-8b-instruct
         parameters:
           base_url: http://llm-nim-svc:8000/v1
         type: main
@@ -219,7 +219,7 @@ neo4j:
     readOnly: true
 nim-llm:
   image:
-    repository: nvcr.io/nim/meta/llama-3.1-70b-instruct
+    repository: nvcr.io/nim/meta/llama-3.1-8b-instruct
     tag: 1.3.0
   resources:
     limits:
@@ -227,7 +227,7 @@ nim-llm:
       memory: "192Gi"
       nvidia.com/gpu: 4
   model:
-    name: meta/llama-3.1-70b-instruct
+    name: meta/llama-3.1-8b-instruct
     ngcAPISecret: ngc-api-key-secret
   persistence:
     enabled: true
@@ -235,7 +235,7 @@ nim-llm:
     enabled: true
   service:
     name: llm-nim-svc
-  llmModel: meta/llama-3.1-70b-instruct
+  llmModel: meta/llama-3.1-8b-instruct
 nemo-embedding:
   resources:
     limits:
