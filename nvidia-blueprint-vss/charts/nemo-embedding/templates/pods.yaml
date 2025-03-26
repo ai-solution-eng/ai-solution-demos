@@ -25,7 +25,8 @@ metadata:
   {{- end }}
   labels:
     app: {{ $.Chart.Name }}-{{ $appname }}
-    
+    "hpe-ezua/app": {{ .Chart.Name }}
+    "hpe-ezua/type": vendor-service
 {{ include "microservice.hb.labels.standard" . | indent 4 }}
 {{- include "std-helm.labels" $ | nindent 4 }}
     {{- if $appData.podLabels }}

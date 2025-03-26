@@ -84,6 +84,10 @@ ingress:
 metrics: {}
 nodeSelector: {}
 podAnnotations: {}
+podLabels:
+  "hpe-ezua/app": {{ .Chart.Name }}
+  "hpe-ezua/type": vendor-service
+
 podSecurityContext: {}
 replicaCount: 1
 resources: {}
