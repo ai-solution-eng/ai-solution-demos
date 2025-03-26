@@ -322,7 +322,7 @@ persistence:
   stsPersistentVolumeClaimRetentionPolicy:
     whenDeleted: Retain
     whenScaled: Retain
-  size: 50Gi  # size of claim in bytes (for example 8Gi)
+  size: 300Gi  # size of claim in bytes (for example 8Gi)
   annotations: {}
 
 ## @extra hostPath Configures model cache on local disk on the nodes using `hostPath` -- for special cases. You should understand the security implications before using this option.
