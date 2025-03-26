@@ -25,6 +25,7 @@ metadata:
   {{- end }}
   labels:
     app: {{ $.Chart.Name }}-{{ $appname }}
+    
 {{ include "microservice.hb.labels.standard" . | indent 4 }}
 {{- include "std-helm.labels" $ | nindent 4 }}
     {{- if $appData.podLabels }}
