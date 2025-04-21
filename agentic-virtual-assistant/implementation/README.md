@@ -56,7 +56,7 @@
 4. Upload the [provided flow](langflow-agent.json) into any project by clicking the upload button
 ![alt text](imgs/flowupload.png)
 5. Finally, make sure to [re-upload the flight policy file](data/delta_refund_policy.pdf) to the `File` component
-![alt text](imgs/fileupload.png) ![alt text](image.png)
+![alt text](imgs/fileupload.png)
 6. Open the playground and test the workflow with a question like:
     > "My name is John and my flight is A105, I was downgraded to coach from first class, what is my refund?"
     - The model should return the correct answer of $90 after calling both tools included (`FlightPolicy` and `FlightPassenger`)
