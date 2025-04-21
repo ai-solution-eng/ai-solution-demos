@@ -1,13 +1,13 @@
 {
-  "id": "502dfb7e-d8ef-402e-9f12-e17cf0021cb6",
+  "id": "34be45ab-0062-40d5-99f1-9b3cbccbab75",
   "data": {
     "nodes": [
       {
-        "id": "ChatInput-gMtfk",
+        "id": "ChatInput-m3pc9",
         "type": "genericNode",
         "position": {
-          "x": 527.5692444279707,
-          "y": -93.41318862322584
+          "x": 283.78725476187503,
+          "y": 387.421490008946
         },
         "data": {
           "node": {
@@ -301,21 +301,21 @@
           },
           "showNode": false,
           "type": "ChatInput",
-          "id": "ChatInput-gMtfk"
+          "id": "ChatInput-m3pc9"
         },
         "selected": false,
         "measured": {
           "width": 192,
-          "height": 66
+          "height": 65
         },
         "dragging": false
       },
       {
-        "id": "ChatOutput-PdXZT",
+        "id": "ChatOutput-9TQMd",
         "type": "genericNode",
         "position": {
-          "x": 2348.3314732517174,
-          "y": 317.6077858681864
+          "x": 2194.593407016117,
+          "y": 904.068699087795
         },
         "data": {
           "node": {
@@ -608,222 +608,21 @@
           },
           "showNode": false,
           "type": "ChatOutput",
-          "id": "ChatOutput-PdXZT"
+          "id": "ChatOutput-9TQMd"
         },
         "selected": false,
         "measured": {
           "width": 192,
-          "height": 66
+          "height": 65
         },
         "dragging": false
       },
       {
-        "id": "SplitText-uLCIr",
+        "id": "File-4yRq6",
         "type": "genericNode",
         "position": {
-          "x": 393.12654160062993,
-          "y": 125.75598194092387
-        },
-        "data": {
-          "node": {
-            "template": {
-              "_type": "Component",
-              "data_inputs": {
-                "trace_as_metadata": true,
-                "list": false,
-                "list_add_label": "Add More",
-                "required": true,
-                "placeholder": "",
-                "show": true,
-                "name": "data_inputs",
-                "value": "",
-                "display_name": "Input Documents",
-                "advanced": false,
-                "input_types": [
-                  "Data",
-                  "DataFrame"
-                ],
-                "dynamic": false,
-                "info": "The data to split.",
-                "title_case": false,
-                "type": "other",
-                "_input_type": "HandleInput"
-              },
-              "chunk_overlap": {
-                "tool_mode": false,
-                "trace_as_metadata": true,
-                "list": false,
-                "list_add_label": "Add More",
-                "required": false,
-                "placeholder": "",
-                "show": true,
-                "name": "chunk_overlap",
-                "value": 50,
-                "display_name": "Chunk Overlap",
-                "advanced": false,
-                "dynamic": false,
-                "info": "Number of characters to overlap between chunks.",
-                "title_case": false,
-                "type": "int",
-                "_input_type": "IntInput"
-              },
-              "chunk_size": {
-                "tool_mode": false,
-                "trace_as_metadata": true,
-                "list": false,
-                "list_add_label": "Add More",
-                "required": false,
-                "placeholder": "",
-                "show": true,
-                "name": "chunk_size",
-                "value": 500,
-                "display_name": "Chunk Size",
-                "advanced": false,
-                "dynamic": false,
-                "info": "The maximum number of characters in each chunk.",
-                "title_case": false,
-                "type": "int",
-                "_input_type": "IntInput"
-              },
-              "code": {
-                "type": "code",
-                "required": true,
-                "placeholder": "",
-                "list": false,
-                "show": true,
-                "multiline": true,
-                "value": "from langchain_text_splitters import CharacterTextSplitter\n\nfrom langflow.custom import Component\nfrom langflow.io import HandleInput, IntInput, MessageTextInput, Output\nfrom langflow.schema import Data, DataFrame\nfrom langflow.utils.util import unescape_string\n\n\nclass SplitTextComponent(Component):\n    display_name: str = \"Split Text\"\n    description: str = \"Split text into chunks based on specified criteria.\"\n    icon = \"scissors-line-dashed\"\n    name = \"SplitText\"\n\n    inputs = [\n        HandleInput(\n            name=\"data_inputs\",\n            display_name=\"Input Documents\",\n            info=\"The data to split.\",\n            input_types=[\"Data\", \"DataFrame\"],\n            required=True,\n        ),\n        IntInput(\n            name=\"chunk_overlap\",\n            display_name=\"Chunk Overlap\",\n            info=\"Number of characters to overlap between chunks.\",\n            value=200,\n        ),\n        IntInput(\n            name=\"chunk_size\",\n            display_name=\"Chunk Size\",\n            info=\"The maximum number of characters in each chunk.\",\n            value=1000,\n        ),\n        MessageTextInput(\n            name=\"separator\",\n            display_name=\"Separator\",\n            info=\"The character to split on. Defaults to newline.\",\n            value=\"\\n\",\n        ),\n        MessageTextInput(\n            name=\"text_key\",\n            display_name=\"Text Key\",\n            info=\"The key to use for the text column.\",\n            value=\"text\",\n            advanced=True,\n        ),\n    ]\n\n    outputs = [\n        Output(display_name=\"Chunks\", name=\"chunks\", method=\"split_text\"),\n        Output(display_name=\"DataFrame\", name=\"dataframe\", method=\"as_dataframe\"),\n    ]\n\n    def _docs_to_data(self, docs) -> list[Data]:\n        return [Data(text=doc.page_content, data=doc.metadata) for doc in docs]\n\n    def _docs_to_dataframe(self, docs):\n        data_dicts = [{self.text_key: doc.page_content, **doc.metadata} for doc in docs]\n        return DataFrame(data_dicts)\n\n    def split_text_base(self):\n        separator = unescape_string(self.separator)\n        if isinstance(self.data_inputs, DataFrame):\n            if not len(self.data_inputs):\n                msg = \"DataFrame is empty\"\n                raise TypeError(msg)\n\n            self.data_inputs.text_key = self.text_key\n            try:\n                documents = self.data_inputs.to_lc_documents()\n            except Exception as e:\n                msg = f\"Error converting DataFrame to documents: {e}\"\n                raise TypeError(msg) from e\n        else:\n            if not self.data_inputs:\n                msg = \"No data inputs provided\"\n                raise TypeError(msg)\n\n            documents = []\n            if isinstance(self.data_inputs, Data):\n                self.data_inputs.text_key = self.text_key\n                documents = [self.data_inputs.to_lc_document()]\n            else:\n                try:\n                    documents = [input_.to_lc_document() for input_ in self.data_inputs if isinstance(input_, Data)]\n                    if not documents:\n                        msg = f\"No valid Data inputs found in {type(self.data_inputs)}\"\n                        raise TypeError(msg)\n                except AttributeError as e:\n                    msg = f\"Invalid input type in collection: {e}\"\n                    raise TypeError(msg) from e\n        try:\n            splitter = CharacterTextSplitter(\n                chunk_overlap=self.chunk_overlap,\n                chunk_size=self.chunk_size,\n                separator=separator,\n            )\n            return splitter.split_documents(documents)\n        except Exception as e:\n            msg = f\"Error splitting text: {e}\"\n            raise TypeError(msg) from e\n\n    def split_text(self) -> list[Data]:\n        return self._docs_to_data(self.split_text_base())\n\n    def as_dataframe(self) -> DataFrame:\n        return self._docs_to_dataframe(self.split_text_base())\n",
-                "fileTypes": [],
-                "file_path": "",
-                "password": false,
-                "name": "code",
-                "advanced": true,
-                "dynamic": true,
-                "info": "",
-                "load_from_db": false,
-                "title_case": false
-              },
-              "separator": {
-                "tool_mode": false,
-                "trace_as_input": true,
-                "trace_as_metadata": true,
-                "load_from_db": false,
-                "list": false,
-                "list_add_label": "Add More",
-                "required": false,
-                "placeholder": "",
-                "show": true,
-                "name": "separator",
-                "value": "\n",
-                "display_name": "Separator",
-                "advanced": false,
-                "input_types": [
-                  "Message"
-                ],
-                "dynamic": false,
-                "info": "The character to split on. Defaults to newline.",
-                "title_case": false,
-                "type": "str",
-                "_input_type": "MessageTextInput"
-              },
-              "text_key": {
-                "tool_mode": false,
-                "trace_as_input": true,
-                "trace_as_metadata": true,
-                "load_from_db": false,
-                "list": false,
-                "list_add_label": "Add More",
-                "required": false,
-                "placeholder": "",
-                "show": true,
-                "name": "text_key",
-                "value": "text",
-                "display_name": "Text Key",
-                "advanced": true,
-                "input_types": [
-                  "Message"
-                ],
-                "dynamic": false,
-                "info": "The key to use for the text column.",
-                "title_case": false,
-                "type": "str",
-                "_input_type": "MessageTextInput"
-              }
-            },
-            "description": "Split text into chunks based on specified criteria.",
-            "icon": "scissors-line-dashed",
-            "base_classes": [
-              "Data",
-              "DataFrame"
-            ],
-            "display_name": "Split Text",
-            "documentation": "",
-            "minimized": false,
-            "custom_fields": {},
-            "output_types": [],
-            "pinned": false,
-            "conditional_paths": [],
-            "frozen": false,
-            "outputs": [
-              {
-                "types": [
-                  "Data"
-                ],
-                "selected": "Data",
-                "name": "chunks",
-                "display_name": "Chunks",
-                "method": "split_text",
-                "value": "__UNDEFINED__",
-                "cache": true,
-                "allows_loop": false,
-                "tool_mode": true
-              },
-              {
-                "types": [
-                  "DataFrame"
-                ],
-                "selected": "DataFrame",
-                "name": "dataframe",
-                "display_name": "DataFrame",
-                "method": "as_dataframe",
-                "value": "__UNDEFINED__",
-                "cache": true,
-                "allows_loop": false,
-                "tool_mode": true
-              }
-            ],
-            "field_order": [
-              "data_inputs",
-              "chunk_overlap",
-              "chunk_size",
-              "separator",
-              "text_key"
-            ],
-            "beta": false,
-            "legacy": false,
-            "edited": false,
-            "metadata": {},
-            "tool_mode": false,
-            "lf_version": "1.2.0",
-            "official": false
-          },
-          "showNode": true,
-          "type": "SplitText",
-          "id": "SplitText-uLCIr"
-        },
-        "selected": false,
-        "measured": {
-          "width": 320,
-          "height": 506
-        },
-        "dragging": false
-      },
-      {
-        "id": "File-qmyoV",
-        "type": "genericNode",
-        "position": {
-          "x": 39,
-          "y": 228
+          "x": -190.27964384941782,
+          "y": 628.5978408466403
         },
         "data": {
           "node": {
@@ -852,7 +651,7 @@
               },
               "path": {
                 "trace_as_metadata": true,
-                "file_path": "502dfb7e-d8ef-402e-9f12-e17cf0021cb6/2025-03-26_19-19-58_Delta_Refund_Policy_France_en.pdf",
+                "file_path": "34be45ab-0062-40d5-99f1-9b3cbccbab75/2025-04-17_14-55-29_Delta_Refund_Policy_France_en.pdf",
                 "fileTypes": [
                   "txt",
                   "md",
@@ -1064,25 +863,399 @@
             "edited": false,
             "metadata": {},
             "tool_mode": false,
+            "official": false,
             "lf_version": "1.2.0"
           },
           "showNode": true,
           "type": "File",
-          "id": "File-qmyoV"
+          "id": "File-4yRq6"
         },
         "selected": false,
         "measured": {
           "width": 320,
-          "height": 227
+          "height": 226
         },
         "dragging": false
       },
       {
-        "id": "Chroma-UeugU",
+        "id": "SplitText-yYB32",
         "type": "genericNode",
         "position": {
-          "x": 782.6263557494369,
-          "y": 352.1527901820461
+          "x": 156.98116047076934,
+          "y": 589.629556742439
+        },
+        "data": {
+          "node": {
+            "template": {
+              "_type": "Component",
+              "data_inputs": {
+                "trace_as_metadata": true,
+                "list": false,
+                "list_add_label": "Add More",
+                "required": true,
+                "placeholder": "",
+                "show": true,
+                "name": "data_inputs",
+                "value": "",
+                "display_name": "Input Documents",
+                "advanced": false,
+                "input_types": [
+                  "Data",
+                  "DataFrame"
+                ],
+                "dynamic": false,
+                "info": "The data to split.",
+                "title_case": false,
+                "type": "other",
+                "_input_type": "HandleInput"
+              },
+              "chunk_overlap": {
+                "tool_mode": false,
+                "trace_as_metadata": true,
+                "list": false,
+                "list_add_label": "Add More",
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "chunk_overlap",
+                "value": 200,
+                "display_name": "Chunk Overlap",
+                "advanced": false,
+                "dynamic": false,
+                "info": "Number of characters to overlap between chunks.",
+                "title_case": false,
+                "type": "int",
+                "_input_type": "IntInput"
+              },
+              "chunk_size": {
+                "tool_mode": false,
+                "trace_as_metadata": true,
+                "list": false,
+                "list_add_label": "Add More",
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "chunk_size",
+                "value": 1000,
+                "display_name": "Chunk Size",
+                "advanced": false,
+                "dynamic": false,
+                "info": "The maximum number of characters in each chunk.",
+                "title_case": false,
+                "type": "int",
+                "_input_type": "IntInput"
+              },
+              "code": {
+                "type": "code",
+                "required": true,
+                "placeholder": "",
+                "list": false,
+                "show": true,
+                "multiline": true,
+                "value": "from langchain_text_splitters import CharacterTextSplitter\n\nfrom langflow.custom import Component\nfrom langflow.io import HandleInput, IntInput, MessageTextInput, Output\nfrom langflow.schema import Data, DataFrame\nfrom langflow.utils.util import unescape_string\n\n\nclass SplitTextComponent(Component):\n    display_name: str = \"Split Text\"\n    description: str = \"Split text into chunks based on specified criteria.\"\n    icon = \"scissors-line-dashed\"\n    name = \"SplitText\"\n\n    inputs = [\n        HandleInput(\n            name=\"data_inputs\",\n            display_name=\"Input Documents\",\n            info=\"The data to split.\",\n            input_types=[\"Data\", \"DataFrame\"],\n            required=True,\n        ),\n        IntInput(\n            name=\"chunk_overlap\",\n            display_name=\"Chunk Overlap\",\n            info=\"Number of characters to overlap between chunks.\",\n            value=200,\n        ),\n        IntInput(\n            name=\"chunk_size\",\n            display_name=\"Chunk Size\",\n            info=\"The maximum number of characters in each chunk.\",\n            value=1000,\n        ),\n        MessageTextInput(\n            name=\"separator\",\n            display_name=\"Separator\",\n            info=\"The character to split on. Defaults to newline.\",\n            value=\"\\n\",\n        ),\n        MessageTextInput(\n            name=\"text_key\",\n            display_name=\"Text Key\",\n            info=\"The key to use for the text column.\",\n            value=\"text\",\n            advanced=True,\n        ),\n    ]\n\n    outputs = [\n        Output(display_name=\"Chunks\", name=\"chunks\", method=\"split_text\"),\n        Output(display_name=\"DataFrame\", name=\"dataframe\", method=\"as_dataframe\"),\n    ]\n\n    def _docs_to_data(self, docs) -> list[Data]:\n        return [Data(text=doc.page_content, data=doc.metadata) for doc in docs]\n\n    def _docs_to_dataframe(self, docs):\n        data_dicts = [{self.text_key: doc.page_content, **doc.metadata} for doc in docs]\n        return DataFrame(data_dicts)\n\n    def split_text_base(self):\n        separator = unescape_string(self.separator)\n        if isinstance(self.data_inputs, DataFrame):\n            if not len(self.data_inputs):\n                msg = \"DataFrame is empty\"\n                raise TypeError(msg)\n\n            self.data_inputs.text_key = self.text_key\n            try:\n                documents = self.data_inputs.to_lc_documents()\n            except Exception as e:\n                msg = f\"Error converting DataFrame to documents: {e}\"\n                raise TypeError(msg) from e\n        else:\n            if not self.data_inputs:\n                msg = \"No data inputs provided\"\n                raise TypeError(msg)\n\n            documents = []\n            if isinstance(self.data_inputs, Data):\n                self.data_inputs.text_key = self.text_key\n                documents = [self.data_inputs.to_lc_document()]\n            else:\n                try:\n                    documents = [input_.to_lc_document() for input_ in self.data_inputs if isinstance(input_, Data)]\n                    if not documents:\n                        msg = f\"No valid Data inputs found in {type(self.data_inputs)}\"\n                        raise TypeError(msg)\n                except AttributeError as e:\n                    msg = f\"Invalid input type in collection: {e}\"\n                    raise TypeError(msg) from e\n        try:\n            splitter = CharacterTextSplitter(\n                chunk_overlap=self.chunk_overlap,\n                chunk_size=self.chunk_size,\n                separator=separator,\n            )\n            return splitter.split_documents(documents)\n        except Exception as e:\n            msg = f\"Error splitting text: {e}\"\n            raise TypeError(msg) from e\n\n    def split_text(self) -> list[Data]:\n        return self._docs_to_data(self.split_text_base())\n\n    def as_dataframe(self) -> DataFrame:\n        return self._docs_to_dataframe(self.split_text_base())\n",
+                "fileTypes": [],
+                "file_path": "",
+                "password": false,
+                "name": "code",
+                "advanced": true,
+                "dynamic": true,
+                "info": "",
+                "load_from_db": false,
+                "title_case": false
+              },
+              "separator": {
+                "tool_mode": false,
+                "trace_as_input": true,
+                "trace_as_metadata": true,
+                "load_from_db": false,
+                "list": false,
+                "list_add_label": "Add More",
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "separator",
+                "value": "-",
+                "display_name": "Separator",
+                "advanced": false,
+                "input_types": [
+                  "Message"
+                ],
+                "dynamic": false,
+                "info": "The character to split on. Defaults to newline.",
+                "title_case": false,
+                "type": "str",
+                "_input_type": "MessageTextInput"
+              },
+              "text_key": {
+                "tool_mode": false,
+                "trace_as_input": true,
+                "trace_as_metadata": true,
+                "load_from_db": false,
+                "list": false,
+                "list_add_label": "Add More",
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "text_key",
+                "value": "text",
+                "display_name": "Text Key",
+                "advanced": true,
+                "input_types": [
+                  "Message"
+                ],
+                "dynamic": false,
+                "info": "The key to use for the text column.",
+                "title_case": false,
+                "type": "str",
+                "_input_type": "MessageTextInput"
+              }
+            },
+            "description": "Split text into chunks based on specified criteria.",
+            "icon": "scissors-line-dashed",
+            "base_classes": [
+              "Data",
+              "DataFrame"
+            ],
+            "display_name": "Split Text",
+            "documentation": "",
+            "minimized": false,
+            "custom_fields": {},
+            "output_types": [],
+            "pinned": false,
+            "conditional_paths": [],
+            "frozen": false,
+            "outputs": [
+              {
+                "types": [
+                  "Data"
+                ],
+                "selected": "Data",
+                "name": "chunks",
+                "display_name": "Chunks",
+                "method": "split_text",
+                "value": "__UNDEFINED__",
+                "cache": true,
+                "allows_loop": false,
+                "tool_mode": true
+              },
+              {
+                "types": [
+                  "DataFrame"
+                ],
+                "selected": "DataFrame",
+                "name": "dataframe",
+                "display_name": "DataFrame",
+                "method": "as_dataframe",
+                "value": "__UNDEFINED__",
+                "cache": true,
+                "allows_loop": false,
+                "tool_mode": true
+              }
+            ],
+            "field_order": [
+              "data_inputs",
+              "chunk_overlap",
+              "chunk_size",
+              "separator",
+              "text_key"
+            ],
+            "beta": false,
+            "legacy": false,
+            "edited": false,
+            "metadata": {},
+            "tool_mode": false,
+            "lf_version": "1.2.0",
+            "official": false
+          },
+          "showNode": true,
+          "type": "SplitText",
+          "id": "SplitText-yYB32"
+        },
+        "selected": true,
+        "measured": {
+          "width": 320,
+          "height": 503
+        },
+        "dragging": false
+      },
+      {
+        "id": "NVIDIAEmbeddingsComponent-TCFea",
+        "type": "genericNode",
+        "position": {
+          "x": 146.7715194770895,
+          "y": 1203.7274279948192
+        },
+        "data": {
+          "node": {
+            "template": {
+              "_type": "Component",
+              "base_url": {
+                "tool_mode": false,
+                "trace_as_input": true,
+                "trace_as_metadata": true,
+                "load_from_db": true,
+                "list": false,
+                "list_add_label": "Add More",
+                "required": true,
+                "placeholder": "",
+                "show": true,
+                "name": "base_url",
+                "value": "NV_EMBEDQA_E5_V5_NIM",
+                "display_name": "NVIDIA Base URL",
+                "advanced": false,
+                "input_types": [
+                  "Message"
+                ],
+                "dynamic": false,
+                "info": "",
+                "refresh_button": true,
+                "title_case": false,
+                "type": "str",
+                "_input_type": "MessageTextInput"
+              },
+              "code": {
+                "type": "code",
+                "required": true,
+                "placeholder": "",
+                "list": false,
+                "show": true,
+                "multiline": true,
+                "value": "from typing import Any\n\nfrom langflow.base.embeddings.model import LCEmbeddingsModel\nfrom langflow.field_typing import Embeddings\nfrom langflow.inputs.inputs import DropdownInput, SecretStrInput\nfrom langflow.io import FloatInput, MessageTextInput\nfrom langflow.schema.dotdict import dotdict\n\n\nclass NVIDIAEmbeddingsComponent(LCEmbeddingsModel):\n    display_name: str = \"NVIDIA Embeddings\"\n    description: str = \"Generate embeddings using NVIDIA models.\"\n    icon = \"NVIDIA\"\n\n    inputs = [\n        DropdownInput(\n            name=\"model\",\n            display_name=\"Model\",\n            options=[\n                \"nvidia/nv-embed-v1\",\n                \"snowflake/arctic-embed-I\",\n            ],\n            value=\"nvidia/nv-embed-v1\",\n            required=True,\n        ),\n        MessageTextInput(\n            name=\"base_url\",\n            display_name=\"NVIDIA Base URL\",\n            refresh_button=True,\n            value=\"https://integrate.api.nvidia.com/v1\",\n            required=True,\n        ),\n        SecretStrInput(\n            name=\"nvidia_api_key\",\n            display_name=\"NVIDIA API Key\",\n            info=\"The NVIDIA API Key.\",\n            advanced=False,\n            value=\"NVIDIA_API_KEY\",\n            required=True,\n        ),\n        FloatInput(\n            name=\"temperature\",\n            display_name=\"Model Temperature\",\n            value=0.1,\n            advanced=True,\n        ),\n    ]\n\n    def update_build_config(self, build_config: dotdict, field_value: Any, field_name: str | None = None):\n        if field_name == \"base_url\" and field_value:\n            try:\n                build_model = self.build_embeddings()\n                ids = [model.id for model in build_model.available_models]\n                build_config[\"model\"][\"options\"] = ids\n                build_config[\"model\"][\"value\"] = ids[0]\n            except Exception as e:\n                msg = f\"Error getting model names: {e}\"\n                raise ValueError(msg) from e\n        return build_config\n\n    def build_embeddings(self) -> Embeddings:\n        try:\n            from langchain_nvidia_ai_endpoints import NVIDIAEmbeddings\n        except ImportError as e:\n            msg = \"Please install langchain-nvidia-ai-endpoints to use the Nvidia model.\"\n            raise ImportError(msg) from e\n        try:\n            output = NVIDIAEmbeddings(\n                model=self.model,\n                base_url=self.base_url,\n                temperature=self.temperature,\n                nvidia_api_key=self.nvidia_api_key,\n            )\n        except Exception as e:\n            msg = f\"Could not connect to NVIDIA API. Error: {e}\"\n            raise ValueError(msg) from e\n        return output\n",
+                "fileTypes": [],
+                "file_path": "",
+                "password": false,
+                "name": "code",
+                "advanced": true,
+                "dynamic": true,
+                "info": "",
+                "load_from_db": false,
+                "title_case": false
+              },
+              "model": {
+                "tool_mode": false,
+                "trace_as_metadata": true,
+                "options": [
+                  "nvidia/nv-embedqa-e5-v5"
+                ],
+                "options_metadata": [],
+                "combobox": false,
+                "dialog_inputs": {},
+                "required": true,
+                "placeholder": "",
+                "show": true,
+                "name": "model",
+                "value": "nvidia/nv-embedqa-e5-v5",
+                "display_name": "Model",
+                "advanced": false,
+                "dynamic": false,
+                "info": "",
+                "title_case": false,
+                "type": "str",
+                "_input_type": "DropdownInput"
+              },
+              "nvidia_api_key": {
+                "load_from_db": true,
+                "required": true,
+                "placeholder": "",
+                "show": true,
+                "name": "nvidia_api_key",
+                "value": "NV_EMBEDQA_E5_V5_NIM_TOKEN",
+                "display_name": "NVIDIA API Key",
+                "advanced": false,
+                "input_types": [
+                  "Message"
+                ],
+                "dynamic": false,
+                "info": "The NVIDIA API Key.",
+                "title_case": false,
+                "password": true,
+                "type": "str",
+                "_input_type": "SecretStrInput"
+              },
+              "temperature": {
+                "tool_mode": false,
+                "trace_as_metadata": true,
+                "list": false,
+                "list_add_label": "Add More",
+                "required": false,
+                "placeholder": "",
+                "show": true,
+                "name": "temperature",
+                "value": 0.1,
+                "display_name": "Model Temperature",
+                "advanced": true,
+                "dynamic": false,
+                "info": "",
+                "title_case": false,
+                "type": "float",
+                "_input_type": "FloatInput"
+              }
+            },
+            "description": "Generate embeddings using NVIDIA models.",
+            "icon": "NVIDIA",
+            "base_classes": [
+              "Embeddings"
+            ],
+            "display_name": "Local Embeddings",
+            "documentation": "",
+            "minimized": false,
+            "custom_fields": {},
+            "output_types": [],
+            "pinned": false,
+            "conditional_paths": [],
+            "frozen": false,
+            "outputs": [
+              {
+                "types": [
+                  "Embeddings"
+                ],
+                "selected": "Embeddings",
+                "name": "embeddings",
+                "hidden": null,
+                "display_name": "Embeddings",
+                "method": "build_embeddings",
+                "value": "__UNDEFINED__",
+                "cache": true,
+                "required_inputs": [
+                  "base_url",
+                  "model",
+                  "nvidia_api_key"
+                ],
+                "allows_loop": false,
+                "tool_mode": true
+              }
+            ],
+            "field_order": [
+              "model",
+              "base_url",
+              "nvidia_api_key",
+              "temperature"
+            ],
+            "beta": false,
+            "legacy": false,
+            "edited": false,
+            "metadata": {},
+            "tool_mode": false,
+            "official": false,
+            "lf_version": "1.2.0"
+          },
+          "showNode": true,
+          "type": "NVIDIAEmbeddingsComponent",
+          "id": "NVIDIAEmbeddingsComponent-TCFea"
+        },
+        "selected": false,
+        "measured": {
+          "width": 320,
+          "height": 391
+        },
+        "dragging": false
+      },
+      {
+        "id": "Chroma-uSeL1",
+        "type": "genericNode",
+        "position": {
+          "x": 530.7851236656252,
+          "y": 1042.6134415664503
         },
         "data": {
           "node": {
@@ -1471,193 +1644,21 @@
           },
           "showNode": true,
           "type": "Chroma",
-          "id": "Chroma-UeugU"
+          "id": "Chroma-uSeL1"
         },
         "selected": false,
         "measured": {
           "width": 320,
-          "height": 613
+          "height": 609
         },
         "dragging": false
       },
       {
-        "id": "NVIDIAEmbeddingsComponent-14C1O",
+        "id": "ParseData-aJhl2",
         "type": "genericNode",
         "position": {
-          "x": 331.62653917291834,
-          "y": 717.3895729657415
-        },
-        "data": {
-          "node": {
-            "template": {
-              "_type": "Component",
-              "base_url": {
-                "tool_mode": false,
-                "trace_as_input": true,
-                "trace_as_metadata": true,
-                "load_from_db": true,
-                "list": false,
-                "list_add_label": "Add More",
-                "required": true,
-                "placeholder": "",
-                "show": true,
-                "name": "base_url",
-                "value": "NV_EMBEDQA_E5_V5_NIM",
-                "display_name": "NVIDIA Base URL",
-                "advanced": false,
-                "input_types": [
-                  "Message"
-                ],
-                "dynamic": false,
-                "info": "",
-                "refresh_button": true,
-                "title_case": false,
-                "type": "str",
-                "_input_type": "MessageTextInput"
-              },
-              "code": {
-                "type": "code",
-                "required": true,
-                "placeholder": "",
-                "list": false,
-                "show": true,
-                "multiline": true,
-                "value": "from typing import Any\n\nfrom langflow.base.embeddings.model import LCEmbeddingsModel\nfrom langflow.field_typing import Embeddings\nfrom langflow.inputs.inputs import DropdownInput, SecretStrInput\nfrom langflow.io import FloatInput, MessageTextInput\nfrom langflow.schema.dotdict import dotdict\n\n\nclass NVIDIAEmbeddingsComponent(LCEmbeddingsModel):\n    display_name: str = \"NVIDIA Embeddings\"\n    description: str = \"Generate embeddings using NVIDIA models.\"\n    icon = \"NVIDIA\"\n\n    inputs = [\n        DropdownInput(\n            name=\"model\",\n            display_name=\"Model\",\n            options=[\n                \"nvidia/nv-embed-v1\",\n                \"snowflake/arctic-embed-I\",\n            ],\n            value=\"nvidia/nv-embed-v1\",\n            required=True,\n        ),\n        MessageTextInput(\n            name=\"base_url\",\n            display_name=\"NVIDIA Base URL\",\n            refresh_button=True,\n            value=\"https://integrate.api.nvidia.com/v1\",\n            required=True,\n        ),\n        SecretStrInput(\n            name=\"nvidia_api_key\",\n            display_name=\"NVIDIA API Key\",\n            info=\"The NVIDIA API Key.\",\n            advanced=False,\n            value=\"NVIDIA_API_KEY\",\n            required=True,\n        ),\n        FloatInput(\n            name=\"temperature\",\n            display_name=\"Model Temperature\",\n            value=0.1,\n            advanced=True,\n        ),\n    ]\n\n    def update_build_config(self, build_config: dotdict, field_value: Any, field_name: str | None = None):\n        if field_name == \"base_url\" and field_value:\n            try:\n                build_model = self.build_embeddings()\n                ids = [model.id for model in build_model.available_models]\n                build_config[\"model\"][\"options\"] = ids\n                build_config[\"model\"][\"value\"] = ids[0]\n            except Exception as e:\n                msg = f\"Error getting model names: {e}\"\n                raise ValueError(msg) from e\n        return build_config\n\n    def build_embeddings(self) -> Embeddings:\n        try:\n            from langchain_nvidia_ai_endpoints import NVIDIAEmbeddings\n        except ImportError as e:\n            msg = \"Please install langchain-nvidia-ai-endpoints to use the Nvidia model.\"\n            raise ImportError(msg) from e\n        try:\n            output = NVIDIAEmbeddings(\n                model=self.model,\n                base_url=self.base_url,\n                temperature=self.temperature,\n                nvidia_api_key=self.nvidia_api_key,\n            )\n        except Exception as e:\n            msg = f\"Could not connect to NVIDIA API. Error: {e}\"\n            raise ValueError(msg) from e\n        return output\n",
-                "fileTypes": [],
-                "file_path": "",
-                "password": false,
-                "name": "code",
-                "advanced": true,
-                "dynamic": true,
-                "info": "",
-                "load_from_db": false,
-                "title_case": false
-              },
-              "model": {
-                "tool_mode": false,
-                "trace_as_metadata": true,
-                "options": [
-                  "nvidia/nv-embedqa-e5-v5"
-                ],
-                "options_metadata": [],
-                "combobox": false,
-                "dialog_inputs": {},
-                "required": true,
-                "placeholder": "",
-                "show": true,
-                "name": "model",
-                "value": "nvidia/nv-embedqa-e5-v5",
-                "display_name": "Model",
-                "advanced": false,
-                "dynamic": false,
-                "info": "",
-                "title_case": false,
-                "type": "str",
-                "_input_type": "DropdownInput"
-              },
-              "nvidia_api_key": {
-                "load_from_db": true,
-                "required": true,
-                "placeholder": "",
-                "show": true,
-                "name": "nvidia_api_key",
-                "value": "NV_EMBEDQA_E5_V5_NIM_TOKEN",
-                "display_name": "NVIDIA API Key",
-                "advanced": false,
-                "input_types": [
-                  "Message"
-                ],
-                "dynamic": false,
-                "info": "The NVIDIA API Key.",
-                "title_case": false,
-                "password": true,
-                "type": "str",
-                "_input_type": "SecretStrInput"
-              },
-              "temperature": {
-                "tool_mode": false,
-                "trace_as_metadata": true,
-                "list": false,
-                "list_add_label": "Add More",
-                "required": false,
-                "placeholder": "",
-                "show": true,
-                "name": "temperature",
-                "value": 0.1,
-                "display_name": "Model Temperature",
-                "advanced": true,
-                "dynamic": false,
-                "info": "",
-                "title_case": false,
-                "type": "float",
-                "_input_type": "FloatInput"
-              }
-            },
-            "description": "Generate embeddings using NVIDIA models.",
-            "icon": "NVIDIA",
-            "base_classes": [
-              "Embeddings"
-            ],
-            "display_name": "Local Embeddings",
-            "documentation": "",
-            "minimized": false,
-            "custom_fields": {},
-            "output_types": [],
-            "pinned": false,
-            "conditional_paths": [],
-            "frozen": false,
-            "outputs": [
-              {
-                "types": [
-                  "Embeddings"
-                ],
-                "selected": "Embeddings",
-                "name": "embeddings",
-                "hidden": null,
-                "display_name": "Embeddings",
-                "method": "build_embeddings",
-                "value": "__UNDEFINED__",
-                "cache": true,
-                "required_inputs": [
-                  "base_url",
-                  "model",
-                  "nvidia_api_key"
-                ],
-                "allows_loop": false,
-                "tool_mode": true
-              }
-            ],
-            "field_order": [
-              "model",
-              "base_url",
-              "nvidia_api_key",
-              "temperature"
-            ],
-            "beta": false,
-            "legacy": false,
-            "edited": false,
-            "metadata": {},
-            "tool_mode": false,
-            "official": false,
-            "lf_version": "1.2.0"
-          },
-          "showNode": true,
-          "type": "NVIDIAEmbeddingsComponent",
-          "id": "NVIDIAEmbeddingsComponent-14C1O"
-        },
-        "selected": false,
-        "measured": {
-          "width": 320,
-          "height": 394
-        },
-        "dragging": false
-      },
-      {
-        "id": "ParseData-eOAPF",
-        "type": "genericNode",
-        "position": {
-          "x": 1190.0565058950021,
-          "y": 545.8820340600125
+          "x": 897.0240135970519,
+          "y": 1165.936379087559
         },
         "data": {
           "node": {
@@ -1806,21 +1807,21 @@
           },
           "showNode": true,
           "type": "ParseData",
-          "id": "ParseData-eOAPF"
+          "id": "ParseData-aJhl2"
         },
         "selected": false,
         "measured": {
           "width": 320,
-          "height": 342
+          "height": 339
         },
         "dragging": false
       },
       {
-        "id": "Prompt-rPERl",
+        "id": "Prompt-P7JDC",
         "type": "genericNode",
         "position": {
-          "x": 1578.914002620001,
-          "y": 374.68302489000905
+          "x": 1280.346282435142,
+          "y": 923.0495497893081
         },
         "data": {
           "node": {
@@ -2076,21 +2077,21 @@
           },
           "showNode": true,
           "type": "Prompt",
-          "id": "Prompt-rPERl"
+          "id": "Prompt-P7JDC"
         },
         "selected": false,
         "measured": {
           "width": 320,
-          "height": 505
+          "height": 501
         },
         "dragging": false
       },
       {
-        "id": "Agent-jcvtx",
+        "id": "Agent-82JOY",
         "type": "genericNode",
         "position": {
-          "x": 1963.3710039300017,
-          "y": -115.89441943497052
+          "x": 1711.1880627633648,
+          "y": 719.8220736305027
         },
         "data": {
           "node": {
@@ -2698,21 +2699,21 @@
           },
           "showNode": true,
           "type": "Agent",
-          "id": "Agent-jcvtx"
+          "id": "Agent-82JOY"
         },
         "selected": false,
         "measured": {
           "width": 320,
-          "height": 794
+          "height": 788
         },
         "dragging": false
       },
       {
-        "id": "AstraDBToolComponent-MhWx6",
+        "id": "AstraDBToolComponent-61EwU",
         "type": "genericNode",
         "position": {
-          "x": 1573.3710039300013,
-          "y": -435.95092532997273
+          "x": 1281.3564188290093,
+          "y": 1490.019140607706
         },
         "data": {
           "node": {
@@ -3011,26 +3012,26 @@
           },
           "showNode": true,
           "type": "AstraDBToolComponent",
-          "id": "AstraDBToolComponent-MhWx6"
+          "id": "AstraDBToolComponent-61EwU"
         },
         "selected": false,
         "measured": {
           "width": 320,
-          "height": 759
+          "height": 755
         },
         "dragging": false
       }
     ],
     "edges": [
       {
-        "source": "File-qmyoV",
-        "sourceHandle": "{œdataTypeœ:œFileœ,œidœ:œFile-qmyoVœ,œnameœ:œdataœ,œoutput_typesœ:[œDataœ]}",
-        "target": "SplitText-uLCIr",
-        "targetHandle": "{œfieldNameœ:œdata_inputsœ,œidœ:œSplitText-uLCIrœ,œinputTypesœ:[œDataœ,œDataFrameœ],œtypeœ:œotherœ}",
+        "source": "File-4yRq6",
+        "sourceHandle": "{œdataTypeœ:œFileœ,œidœ:œFile-4yRq6œ,œnameœ:œdataœ,œoutput_typesœ:[œDataœ]}",
+        "target": "SplitText-yYB32",
+        "targetHandle": "{œfieldNameœ:œdata_inputsœ,œidœ:œSplitText-yYB32œ,œinputTypesœ:[œDataœ,œDataFrameœ],œtypeœ:œotherœ}",
         "data": {
           "targetHandle": {
             "fieldName": "data_inputs",
-            "id": "SplitText-uLCIr",
+            "id": "SplitText-yYB32",
             "inputTypes": [
               "Data",
               "DataFrame"
@@ -3039,26 +3040,26 @@
           },
           "sourceHandle": {
             "dataType": "File",
-            "id": "File-qmyoV",
+            "id": "File-4yRq6",
             "name": "data",
             "output_types": [
               "Data"
             ]
           }
         },
-        "id": "xy-edge__File-qmyoV{œdataTypeœ:œFileœ,œidœ:œFile-qmyoVœ,œnameœ:œdataœ,œoutput_typesœ:[œDataœ]}-SplitText-uLCIr{œfieldNameœ:œdata_inputsœ,œidœ:œSplitText-uLCIrœ,œinputTypesœ:[œDataœ,œDataFrameœ],œtypeœ:œotherœ}",
+        "id": "xy-edge__File-4yRq6{œdataTypeœ:œFileœ,œidœ:œFile-4yRq6œ,œnameœ:œdataœ,œoutput_typesœ:[œDataœ]}-SplitText-yYB32{œfieldNameœ:œdata_inputsœ,œidœ:œSplitText-yYB32œ,œinputTypesœ:[œDataœ,œDataFrameœ],œtypeœ:œotherœ}",
         "animated": false,
         "className": ""
       },
       {
-        "source": "SplitText-uLCIr",
-        "sourceHandle": "{œdataTypeœ:œSplitTextœ,œidœ:œSplitText-uLCIrœ,œnameœ:œchunksœ,œoutput_typesœ:[œDataœ]}",
-        "target": "Chroma-UeugU",
-        "targetHandle": "{œfieldNameœ:œingest_dataœ,œidœ:œChroma-UeugUœ,œinputTypesœ:[œDataœ],œtypeœ:œotherœ}",
+        "source": "SplitText-yYB32",
+        "sourceHandle": "{œdataTypeœ:œSplitTextœ,œidœ:œSplitText-yYB32œ,œnameœ:œchunksœ,œoutput_typesœ:[œDataœ]}",
+        "target": "Chroma-uSeL1",
+        "targetHandle": "{œfieldNameœ:œingest_dataœ,œidœ:œChroma-uSeL1œ,œinputTypesœ:[œDataœ],œtypeœ:œotherœ}",
         "data": {
           "targetHandle": {
             "fieldName": "ingest_data",
-            "id": "Chroma-UeugU",
+            "id": "Chroma-uSeL1",
             "inputTypes": [
               "Data"
             ],
@@ -3066,26 +3067,26 @@
           },
           "sourceHandle": {
             "dataType": "SplitText",
-            "id": "SplitText-uLCIr",
+            "id": "SplitText-yYB32",
             "name": "chunks",
             "output_types": [
               "Data"
             ]
           }
         },
-        "id": "xy-edge__SplitText-uLCIr{œdataTypeœ:œSplitTextœ,œidœ:œSplitText-uLCIrœ,œnameœ:œchunksœ,œoutput_typesœ:[œDataœ]}-Chroma-UeugU{œfieldNameœ:œingest_dataœ,œidœ:œChroma-UeugUœ,œinputTypesœ:[œDataœ],œtypeœ:œotherœ}",
+        "id": "xy-edge__SplitText-yYB32{œdataTypeœ:œSplitTextœ,œidœ:œSplitText-yYB32œ,œnameœ:œchunksœ,œoutput_typesœ:[œDataœ]}-Chroma-uSeL1{œfieldNameœ:œingest_dataœ,œidœ:œChroma-uSeL1œ,œinputTypesœ:[œDataœ],œtypeœ:œotherœ}",
         "animated": false,
         "className": ""
       },
       {
-        "source": "NVIDIAEmbeddingsComponent-14C1O",
-        "sourceHandle": "{œdataTypeœ:œNVIDIAEmbeddingsComponentœ,œidœ:œNVIDIAEmbeddingsComponent-14C1Oœ,œnameœ:œembeddingsœ,œoutput_typesœ:[œEmbeddingsœ]}",
-        "target": "Chroma-UeugU",
-        "targetHandle": "{œfieldNameœ:œembeddingœ,œidœ:œChroma-UeugUœ,œinputTypesœ:[œEmbeddingsœ],œtypeœ:œotherœ}",
+        "source": "NVIDIAEmbeddingsComponent-TCFea",
+        "sourceHandle": "{œdataTypeœ:œNVIDIAEmbeddingsComponentœ,œidœ:œNVIDIAEmbeddingsComponent-TCFeaœ,œnameœ:œembeddingsœ,œoutput_typesœ:[œEmbeddingsœ]}",
+        "target": "Chroma-uSeL1",
+        "targetHandle": "{œfieldNameœ:œembeddingœ,œidœ:œChroma-uSeL1œ,œinputTypesœ:[œEmbeddingsœ],œtypeœ:œotherœ}",
         "data": {
           "targetHandle": {
             "fieldName": "embedding",
-            "id": "Chroma-UeugU",
+            "id": "Chroma-uSeL1",
             "inputTypes": [
               "Embeddings"
             ],
@@ -3093,26 +3094,26 @@
           },
           "sourceHandle": {
             "dataType": "NVIDIAEmbeddingsComponent",
-            "id": "NVIDIAEmbeddingsComponent-14C1O",
+            "id": "NVIDIAEmbeddingsComponent-TCFea",
             "name": "embeddings",
             "output_types": [
               "Embeddings"
             ]
           }
         },
-        "id": "xy-edge__NVIDIAEmbeddingsComponent-14C1O{œdataTypeœ:œNVIDIAEmbeddingsComponentœ,œidœ:œNVIDIAEmbeddingsComponent-14C1Oœ,œnameœ:œembeddingsœ,œoutput_typesœ:[œEmbeddingsœ]}-Chroma-UeugU{œfieldNameœ:œembeddingœ,œidœ:œChroma-UeugUœ,œinputTypesœ:[œEmbeddingsœ],œtypeœ:œotherœ}",
+        "id": "xy-edge__NVIDIAEmbeddingsComponent-TCFea{œdataTypeœ:œNVIDIAEmbeddingsComponentœ,œidœ:œNVIDIAEmbeddingsComponent-TCFeaœ,œnameœ:œembeddingsœ,œoutput_typesœ:[œEmbeddingsœ]}-Chroma-uSeL1{œfieldNameœ:œembeddingœ,œidœ:œChroma-uSeL1œ,œinputTypesœ:[œEmbeddingsœ],œtypeœ:œotherœ}",
         "animated": false,
         "className": ""
       },
       {
-        "source": "Chroma-UeugU",
-        "sourceHandle": "{œdataTypeœ:œChromaœ,œidœ:œChroma-UeugUœ,œnameœ:œsearch_resultsœ,œoutput_typesœ:[œDataœ]}",
-        "target": "ParseData-eOAPF",
-        "targetHandle": "{œfieldNameœ:œdataœ,œidœ:œParseData-eOAPFœ,œinputTypesœ:[œDataœ],œtypeœ:œotherœ}",
+        "source": "Chroma-uSeL1",
+        "sourceHandle": "{œdataTypeœ:œChromaœ,œidœ:œChroma-uSeL1œ,œnameœ:œsearch_resultsœ,œoutput_typesœ:[œDataœ]}",
+        "target": "ParseData-aJhl2",
+        "targetHandle": "{œfieldNameœ:œdataœ,œidœ:œParseData-aJhl2œ,œinputTypesœ:[œDataœ],œtypeœ:œotherœ}",
         "data": {
           "targetHandle": {
             "fieldName": "data",
-            "id": "ParseData-eOAPF",
+            "id": "ParseData-aJhl2",
             "inputTypes": [
               "Data"
             ],
@@ -3120,26 +3121,26 @@
           },
           "sourceHandle": {
             "dataType": "Chroma",
-            "id": "Chroma-UeugU",
+            "id": "Chroma-uSeL1",
             "name": "search_results",
             "output_types": [
               "Data"
             ]
           }
         },
-        "id": "xy-edge__Chroma-UeugU{œdataTypeœ:œChromaœ,œidœ:œChroma-UeugUœ,œnameœ:œsearch_resultsœ,œoutput_typesœ:[œDataœ]}-ParseData-eOAPF{œfieldNameœ:œdataœ,œidœ:œParseData-eOAPFœ,œinputTypesœ:[œDataœ],œtypeœ:œotherœ}",
+        "id": "xy-edge__Chroma-uSeL1{œdataTypeœ:œChromaœ,œidœ:œChroma-uSeL1œ,œnameœ:œsearch_resultsœ,œoutput_typesœ:[œDataœ]}-ParseData-aJhl2{œfieldNameœ:œdataœ,œidœ:œParseData-aJhl2œ,œinputTypesœ:[œDataœ],œtypeœ:œotherœ}",
         "animated": false,
         "className": ""
       },
       {
-        "source": "ChatInput-gMtfk",
-        "sourceHandle": "{œdataTypeœ:œChatInputœ,œidœ:œChatInput-gMtfkœ,œnameœ:œmessageœ,œoutput_typesœ:[œMessageœ]}",
-        "target": "Chroma-UeugU",
-        "targetHandle": "{œfieldNameœ:œsearch_queryœ,œidœ:œChroma-UeugUœ,œinputTypesœ:[œMessageœ],œtypeœ:œstrœ}",
+        "source": "ChatInput-m3pc9",
+        "sourceHandle": "{œdataTypeœ:œChatInputœ,œidœ:œChatInput-m3pc9œ,œnameœ:œmessageœ,œoutput_typesœ:[œMessageœ]}",
+        "target": "Chroma-uSeL1",
+        "targetHandle": "{œfieldNameœ:œsearch_queryœ,œidœ:œChroma-uSeL1œ,œinputTypesœ:[œMessageœ],œtypeœ:œstrœ}",
         "data": {
           "targetHandle": {
             "fieldName": "search_query",
-            "id": "Chroma-UeugU",
+            "id": "Chroma-uSeL1",
             "inputTypes": [
               "Message"
             ],
@@ -3147,26 +3148,26 @@
           },
           "sourceHandle": {
             "dataType": "ChatInput",
-            "id": "ChatInput-gMtfk",
+            "id": "ChatInput-m3pc9",
             "name": "message",
             "output_types": [
               "Message"
             ]
           }
         },
-        "id": "xy-edge__ChatInput-gMtfk{œdataTypeœ:œChatInputœ,œidœ:œChatInput-gMtfkœ,œnameœ:œmessageœ,œoutput_typesœ:[œMessageœ]}-Chroma-UeugU{œfieldNameœ:œsearch_queryœ,œidœ:œChroma-UeugUœ,œinputTypesœ:[œMessageœ],œtypeœ:œstrœ}",
+        "id": "xy-edge__ChatInput-m3pc9{œdataTypeœ:œChatInputœ,œidœ:œChatInput-m3pc9œ,œnameœ:œmessageœ,œoutput_typesœ:[œMessageœ]}-Chroma-uSeL1{œfieldNameœ:œsearch_queryœ,œidœ:œChroma-uSeL1œ,œinputTypesœ:[œMessageœ],œtypeœ:œstrœ}",
         "animated": false,
         "className": ""
       },
       {
-        "source": "ParseData-eOAPF",
-        "sourceHandle": "{œdataTypeœ:œParseDataœ,œidœ:œParseData-eOAPFœ,œnameœ:œtextœ,œoutput_typesœ:[œMessageœ]}",
-        "target": "Prompt-rPERl",
-        "targetHandle": "{œfieldNameœ:œresultsœ,œidœ:œPrompt-rPERlœ,œinputTypesœ:[œMessageœ],œtypeœ:œstrœ}",
+        "source": "ParseData-aJhl2",
+        "sourceHandle": "{œdataTypeœ:œParseDataœ,œidœ:œParseData-aJhl2œ,œnameœ:œtextœ,œoutput_typesœ:[œMessageœ]}",
+        "target": "Prompt-P7JDC",
+        "targetHandle": "{œfieldNameœ:œresultsœ,œidœ:œPrompt-P7JDCœ,œinputTypesœ:[œMessageœ],œtypeœ:œstrœ}",
         "data": {
           "targetHandle": {
             "fieldName": "results",
-            "id": "Prompt-rPERl",
+            "id": "Prompt-P7JDC",
             "inputTypes": [
               "Message"
             ],
@@ -3174,53 +3175,26 @@
           },
           "sourceHandle": {
             "dataType": "ParseData",
-            "id": "ParseData-eOAPF",
+            "id": "ParseData-aJhl2",
             "name": "text",
             "output_types": [
               "Message"
             ]
           }
         },
-        "id": "xy-edge__ParseData-eOAPF{œdataTypeœ:œParseDataœ,œidœ:œParseData-eOAPFœ,œnameœ:œtextœ,œoutput_typesœ:[œMessageœ]}-Prompt-rPERl{œfieldNameœ:œresultsœ,œidœ:œPrompt-rPERlœ,œinputTypesœ:[œMessageœ],œtypeœ:œstrœ}",
+        "id": "xy-edge__ParseData-aJhl2{œdataTypeœ:œParseDataœ,œidœ:œParseData-aJhl2œ,œnameœ:œtextœ,œoutput_typesœ:[œMessageœ]}-Prompt-P7JDC{œfieldNameœ:œresultsœ,œidœ:œPrompt-P7JDCœ,œinputTypesœ:[œMessageœ],œtypeœ:œstrœ}",
         "animated": false,
         "className": ""
       },
       {
-        "source": "ChatInput-gMtfk",
-        "sourceHandle": "{œdataTypeœ:œChatInputœ,œidœ:œChatInput-gMtfkœ,œnameœ:œmessageœ,œoutput_typesœ:[œMessageœ]}",
-        "target": "Prompt-rPERl",
-        "targetHandle": "{œfieldNameœ:œquestionœ,œidœ:œPrompt-rPERlœ,œinputTypesœ:[œMessageœ],œtypeœ:œstrœ}",
-        "data": {
-          "targetHandle": {
-            "fieldName": "question",
-            "id": "Prompt-rPERl",
-            "inputTypes": [
-              "Message"
-            ],
-            "type": "str"
-          },
-          "sourceHandle": {
-            "dataType": "ChatInput",
-            "id": "ChatInput-gMtfk",
-            "name": "message",
-            "output_types": [
-              "Message"
-            ]
-          }
-        },
-        "id": "xy-edge__ChatInput-gMtfk{œdataTypeœ:œChatInputœ,œidœ:œChatInput-gMtfkœ,œnameœ:œmessageœ,œoutput_typesœ:[œMessageœ]}-Prompt-rPERl{œfieldNameœ:œquestionœ,œidœ:œPrompt-rPERlœ,œinputTypesœ:[œMessageœ],œtypeœ:œstrœ}",
-        "animated": false,
-        "className": ""
-      },
-      {
-        "source": "Prompt-rPERl",
-        "sourceHandle": "{œdataTypeœ:œPromptœ,œidœ:œPrompt-rPERlœ,œnameœ:œcomponent_as_toolœ,œoutput_typesœ:[œToolœ]}",
-        "target": "Agent-jcvtx",
-        "targetHandle": "{œfieldNameœ:œtoolsœ,œidœ:œAgent-jcvtxœ,œinputTypesœ:[œToolœ],œtypeœ:œotherœ}",
+        "source": "Prompt-P7JDC",
+        "sourceHandle": "{œdataTypeœ:œPromptœ,œidœ:œPrompt-P7JDCœ,œnameœ:œcomponent_as_toolœ,œoutput_typesœ:[œToolœ]}",
+        "target": "Agent-82JOY",
+        "targetHandle": "{œfieldNameœ:œtoolsœ,œidœ:œAgent-82JOYœ,œinputTypesœ:[œToolœ],œtypeœ:œotherœ}",
         "data": {
           "targetHandle": {
             "fieldName": "tools",
-            "id": "Agent-jcvtx",
+            "id": "Agent-82JOY",
             "inputTypes": [
               "Tool"
             ],
@@ -3228,26 +3202,26 @@
           },
           "sourceHandle": {
             "dataType": "Prompt",
-            "id": "Prompt-rPERl",
+            "id": "Prompt-P7JDC",
             "name": "component_as_tool",
             "output_types": [
               "Tool"
             ]
           }
         },
-        "id": "xy-edge__Prompt-rPERl{œdataTypeœ:œPromptœ,œidœ:œPrompt-rPERlœ,œnameœ:œcomponent_as_toolœ,œoutput_typesœ:[œToolœ]}-Agent-jcvtx{œfieldNameœ:œtoolsœ,œidœ:œAgent-jcvtxœ,œinputTypesœ:[œToolœ],œtypeœ:œotherœ}",
+        "id": "xy-edge__Prompt-P7JDC{œdataTypeœ:œPromptœ,œidœ:œPrompt-P7JDCœ,œnameœ:œcomponent_as_toolœ,œoutput_typesœ:[œToolœ]}-Agent-82JOY{œfieldNameœ:œtoolsœ,œidœ:œAgent-82JOYœ,œinputTypesœ:[œToolœ],œtypeœ:œotherœ}",
         "animated": false,
         "className": ""
       },
       {
-        "source": "ChatInput-gMtfk",
-        "sourceHandle": "{œdataTypeœ:œChatInputœ,œidœ:œChatInput-gMtfkœ,œnameœ:œmessageœ,œoutput_typesœ:[œMessageœ]}",
-        "target": "Agent-jcvtx",
-        "targetHandle": "{œfieldNameœ:œinput_valueœ,œidœ:œAgent-jcvtxœ,œinputTypesœ:[œMessageœ],œtypeœ:œstrœ}",
+        "source": "ChatInput-m3pc9",
+        "sourceHandle": "{œdataTypeœ:œChatInputœ,œidœ:œChatInput-m3pc9œ,œnameœ:œmessageœ,œoutput_typesœ:[œMessageœ]}",
+        "target": "Agent-82JOY",
+        "targetHandle": "{œfieldNameœ:œinput_valueœ,œidœ:œAgent-82JOYœ,œinputTypesœ:[œMessageœ],œtypeœ:œstrœ}",
         "data": {
           "targetHandle": {
             "fieldName": "input_value",
-            "id": "Agent-jcvtx",
+            "id": "Agent-82JOY",
             "inputTypes": [
               "Message"
             ],
@@ -3255,26 +3229,53 @@
           },
           "sourceHandle": {
             "dataType": "ChatInput",
-            "id": "ChatInput-gMtfk",
+            "id": "ChatInput-m3pc9",
             "name": "message",
             "output_types": [
               "Message"
             ]
           }
         },
-        "id": "xy-edge__ChatInput-gMtfk{œdataTypeœ:œChatInputœ,œidœ:œChatInput-gMtfkœ,œnameœ:œmessageœ,œoutput_typesœ:[œMessageœ]}-Agent-jcvtx{œfieldNameœ:œinput_valueœ,œidœ:œAgent-jcvtxœ,œinputTypesœ:[œMessageœ],œtypeœ:œstrœ}",
+        "id": "xy-edge__ChatInput-m3pc9{œdataTypeœ:œChatInputœ,œidœ:œChatInput-m3pc9œ,œnameœ:œmessageœ,œoutput_typesœ:[œMessageœ]}-Agent-82JOY{œfieldNameœ:œinput_valueœ,œidœ:œAgent-82JOYœ,œinputTypesœ:[œMessageœ],œtypeœ:œstrœ}",
         "animated": false,
         "className": ""
       },
       {
-        "source": "Agent-jcvtx",
-        "sourceHandle": "{œdataTypeœ:œAgentœ,œidœ:œAgent-jcvtxœ,œnameœ:œresponseœ,œoutput_typesœ:[œMessageœ]}",
-        "target": "ChatOutput-PdXZT",
-        "targetHandle": "{œfieldNameœ:œinput_valueœ,œidœ:œChatOutput-PdXZTœ,œinputTypesœ:[œDataœ,œDataFrameœ,œMessageœ],œtypeœ:œotherœ}",
+        "source": "AstraDBToolComponent-61EwU",
+        "sourceHandle": "{œdataTypeœ:œAstraDBToolComponentœ,œidœ:œAstraDBToolComponent-61EwUœ,œnameœ:œapi_build_toolœ,œoutput_typesœ:[œToolœ]}",
+        "target": "Agent-82JOY",
+        "targetHandle": "{œfieldNameœ:œtoolsœ,œidœ:œAgent-82JOYœ,œinputTypesœ:[œToolœ],œtypeœ:œotherœ}",
+        "data": {
+          "targetHandle": {
+            "fieldName": "tools",
+            "id": "Agent-82JOY",
+            "inputTypes": [
+              "Tool"
+            ],
+            "type": "other"
+          },
+          "sourceHandle": {
+            "dataType": "AstraDBToolComponent",
+            "id": "AstraDBToolComponent-61EwU",
+            "name": "api_build_tool",
+            "output_types": [
+              "Tool"
+            ]
+          }
+        },
+        "id": "xy-edge__AstraDBToolComponent-61EwU{œdataTypeœ:œAstraDBToolComponentœ,œidœ:œAstraDBToolComponent-61EwUœ,œnameœ:œapi_build_toolœ,œoutput_typesœ:[œToolœ]}-Agent-82JOY{œfieldNameœ:œtoolsœ,œidœ:œAgent-82JOYœ,œinputTypesœ:[œToolœ],œtypeœ:œotherœ}",
+        "animated": false,
+        "className": ""
+      },
+      {
+        "source": "Agent-82JOY",
+        "sourceHandle": "{œdataTypeœ:œAgentœ,œidœ:œAgent-82JOYœ,œnameœ:œresponseœ,œoutput_typesœ:[œMessageœ]}",
+        "target": "ChatOutput-9TQMd",
+        "targetHandle": "{œfieldNameœ:œinput_valueœ,œidœ:œChatOutput-9TQMdœ,œinputTypesœ:[œDataœ,œDataFrameœ,œMessageœ],œtypeœ:œotherœ}",
         "data": {
           "targetHandle": {
             "fieldName": "input_value",
-            "id": "ChatOutput-PdXZT",
+            "id": "ChatOutput-9TQMd",
             "inputTypes": [
               "Data",
               "DataFrame",
@@ -3284,53 +3285,26 @@
           },
           "sourceHandle": {
             "dataType": "Agent",
-            "id": "Agent-jcvtx",
+            "id": "Agent-82JOY",
             "name": "response",
             "output_types": [
               "Message"
             ]
           }
         },
-        "id": "xy-edge__Agent-jcvtx{œdataTypeœ:œAgentœ,œidœ:œAgent-jcvtxœ,œnameœ:œresponseœ,œoutput_typesœ:[œMessageœ]}-ChatOutput-PdXZT{œfieldNameœ:œinput_valueœ,œidœ:œChatOutput-PdXZTœ,œinputTypesœ:[œDataœ,œDataFrameœ,œMessageœ],œtypeœ:œotherœ}",
-        "animated": false,
-        "className": ""
-      },
-      {
-        "source": "AstraDBToolComponent-MhWx6",
-        "sourceHandle": "{œdataTypeœ:œAstraDBToolComponentœ,œidœ:œAstraDBToolComponent-MhWx6œ,œnameœ:œapi_build_toolœ,œoutput_typesœ:[œToolœ]}",
-        "target": "Agent-jcvtx",
-        "targetHandle": "{œfieldNameœ:œtoolsœ,œidœ:œAgent-jcvtxœ,œinputTypesœ:[œToolœ],œtypeœ:œotherœ}",
-        "data": {
-          "targetHandle": {
-            "fieldName": "tools",
-            "id": "Agent-jcvtx",
-            "inputTypes": [
-              "Tool"
-            ],
-            "type": "other"
-          },
-          "sourceHandle": {
-            "dataType": "AstraDBToolComponent",
-            "id": "AstraDBToolComponent-MhWx6",
-            "name": "api_build_tool",
-            "output_types": [
-              "Tool"
-            ]
-          }
-        },
-        "id": "xy-edge__AstraDBToolComponent-MhWx6{œdataTypeœ:œAstraDBToolComponentœ,œidœ:œAstraDBToolComponent-MhWx6œ,œnameœ:œapi_build_toolœ,œoutput_typesœ:[œToolœ]}-Agent-jcvtx{œfieldNameœ:œtoolsœ,œidœ:œAgent-jcvtxœ,œinputTypesœ:[œToolœ],œtypeœ:œotherœ}",
+        "id": "xy-edge__Agent-82JOY{œdataTypeœ:œAgentœ,œidœ:œAgent-82JOYœ,œnameœ:œresponseœ,œoutput_typesœ:[œMessageœ]}-ChatOutput-9TQMd{œfieldNameœ:œinput_valueœ,œidœ:œChatOutput-9TQMdœ,œinputTypesœ:[œDataœ,œDataFrameœ,œMessageœ],œtypeœ:œotherœ}",
         "animated": false,
         "className": ""
       }
     ],
     "viewport": {
-      "x": -144.3666439849706,
-      "y": 158.2638919039536,
-      "zoom": 0.3608155281740059
+      "x": 214.55643072882356,
+      "y": -94.62455976210481,
+      "zoom": 0.3924244126666414
     }
   },
-  "description": "Create, Connect, Converse.",
-  "name": "AgenticWorkflow",
+  "description": "",
+  "name": "Agentic example from scratch",
   "last_tested_version": "1.2.0",
   "endpoint_name": null,
   "is_component": false
