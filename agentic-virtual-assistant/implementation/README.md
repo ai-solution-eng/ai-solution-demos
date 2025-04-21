@@ -1,17 +1,22 @@
 # Langflow Agent Flight Assistant Demo
 
-## Demo overview video
+## Summary
+- [Demo overview video](#demo-overview-video)
+- [Langflow setup in PCAI](#langflow-setup-in-pcai)
+- [MLIS setup in PCAI](#mlis-setup-in-pcai)
+
+### Demo overview video
 
 - [Short version](https://hpe-my.sharepoint.com/:v:/p/hoang_phan/ETTbL85pQ-VIohgLUTD4sMgBcLXQeHdDHaFekOtubfLTTA?e=dS352V&nav=eyJyZWZlcnJhbEluZm8iOnsicmVmZXJyYWxBcHAiOiJTdHJlYW1XZWJBcHAiLCJyZWZlcnJhbFZpZXciOiJTaGFyZURpYWxvZy1MaW5rIiwicmVmZXJyYWxBcHBQbGF0Zm9ybSI6IldlYiIsInJlZmVycmFsTW9kZSI6InZpZXcifX0%3D)
 - [Long version](https://hpe-my.sharepoint.com/:v:/p/hoang_phan/EUVnjGRr8wJGlCk2Hw5IwOkB8WQ0gpZ5zV9KKUXIHCSl5g?e=uexDHe&nav=eyJyZWZlcnJhbEluZm8iOnsicmVmZXJyYWxBcHAiOiJTdHJlYW1XZWJBcHAiLCJyZWZlcnJhbFZpZXciOiJTaGFyZURpYWxvZy1MaW5rIiwicmVmZXJyYWxBcHBQbGF0Zm9ybSI6IldlYiIsInJlZmVycmFsTW9kZSI6InZpZXcifX0%3D)
 
-## Langflow setup in PCAI
+### Langflow setup in PCAI
 
 1. [Install Langflow within a PCAI environment using the following chart](https://github.com/ai-solution-eng/frameworks/tree/main/langflow)
 
 2. [Follow these instructions to install the helm chart](https://support.hpe.com/hpesc/public/docDisplay?docId=a00aie16hen_us&docLocale=en_US&page=ManageClusters/importing-applications.html)
 
-## MLIS setup in PCAI
+### MLIS setup in PCAI
 
 1. Deploy the `Qwen/Qwen2.5-7B-Instruct` model using the following configuration:
     - General:
@@ -56,4 +61,5 @@
     > "My name is John and my flight is A105, I was downgraded to coach from first class, what is my refund?"
     - The model should return the correct answer of $90 after calling both tools included (`FlightPolicy` and `FlightPassenger`)
 
+### tseting
 
