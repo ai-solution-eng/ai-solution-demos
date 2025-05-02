@@ -2,15 +2,16 @@
 
 ## Summary
 - [Demo overview video](#demo-overview-video)
-- [Langflow setup in PCAI](#langflow-setup-in-pcai)
+- [Langflow installation in PCAI](#langflow-installation-in-pcai)
 - [MLIS setup in PCAI](#mlis-setup-in-pcai)
+- [Langflow setup in PCAI](#setup-before-the-demo)
 
 ### Demo overview video
 
 - [Short version](https://hpe-my.sharepoint.com/:v:/p/hoang_phan/ETTbL85pQ-VIohgLUTD4sMgBcLXQeHdDHaFekOtubfLTTA?e=dS352V&nav=eyJyZWZlcnJhbEluZm8iOnsicmVmZXJyYWxBcHAiOiJTdHJlYW1XZWJBcHAiLCJyZWZlcnJhbFZpZXciOiJTaGFyZURpYWxvZy1MaW5rIiwicmVmZXJyYWxBcHBQbGF0Zm9ybSI6IldlYiIsInJlZmVycmFsTW9kZSI6InZpZXcifX0%3D)
 - [Long version](https://hpe-my.sharepoint.com/:v:/p/hoang_phan/EUVnjGRr8wJGlCk2Hw5IwOkB8WQ0gpZ5zV9KKUXIHCSl5g?e=uexDHe&nav=eyJyZWZlcnJhbEluZm8iOnsicmVmZXJyYWxBcHAiOiJTdHJlYW1XZWJBcHAiLCJyZWZlcnJhbFZpZXciOiJTaGFyZURpYWxvZy1MaW5rIiwicmVmZXJyYWxBcHBQbGF0Zm9ybSI6IldlYiIsInJlZmVycmFsTW9kZSI6InZpZXcifX0%3D)
 
-### Langflow setup in PCAI
+### Langflow installation in PCAI
 
 1. [Install Langflow within a PCAI environment using the following chart](https://github.com/ai-solution-eng/frameworks/tree/main/langflow)
 
@@ -39,7 +40,7 @@
 6. Once the data is uploaded, copy the endpoint and generate a token, you will need both of these for later
 ![alt text](imgs/astradb.png)
 
-## Setup before the demo
+### Setup before the demo
 
 1. Once Langflow has been deployed, go to the top right menu next to the profile picture as shown in the image below:
 ![alt text](imgs/settings.png)
