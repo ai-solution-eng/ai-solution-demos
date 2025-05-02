@@ -53,7 +53,7 @@
     - `QWEN_2_5_INSTRUCT_TOKEN`
     - `ASTRA_DB_ENDPOINT`
     - `ASTRA_DB_TOKEN`
-4. Upload the [provided flow](langflow-agent.json) into any project by clicking the upload button
+4. Upload the [provided flow if using `Langflow 1.3.X`](langflow-agent-v1-3.json) (or [this older flow if using `Langflow 1.2.X`](langflow-agent-v1-2.json)) into any project by clicking the upload button
 ![alt text](imgs/flowupload.png)
 5. Finally, make sure to [re-upload the flight policy file](data/delta_refund_policy.pdf) to the `File` component
 ![alt text](imgs/fileupload.png)
