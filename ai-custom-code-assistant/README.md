@@ -44,6 +44,7 @@
   DEBUG                : TICK
   
 - Review
+  
 - Submit
 
 ![Import Framework Step 1](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/import_framework_step_1.PNG)
@@ -91,6 +92,7 @@ At the end copy the Model Endpoints and the API tokens to a text file as we will
 **4. Open-WebUI Settings.**
 
 You will see the **code_generation_pipeline** set as default pipeline.
+
 ** Refer the images below.**
 
 - Navigate to **Admin Panel >> Settings >> Pipelines**
