@@ -14,7 +14,7 @@ class Pipeline:
             description="Model name",
         )
         API_TOKEN: str = Field(
-            default="eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTA4NjA2MTIsImlhdCI6MTc0ODI2ODYxNCwiaXNzIjoiYWlvbGlAaHBlLmNvbSIsInN1YiI6IjM1MTJlNzc2LTZkZDAtNGU5Zi1iYTVjLTU4YzY0Njg4MmMwYSIsInVzZXIiOiJhZG1pbiJ9.bhbFhyvjN-gRoQIRxvbmAhK_G1qQ9zBb-SpTnNna7m60gtb3e6rKRpXl7jqzlgM8QZPsVEr3tuTsnVK3CtIdxG0y9CUfxWthNjI13MSKuDuo2MtC3YPxqe3WIAUHMSqiqrAI6MU4M62rDyf6qdEHHbbwNgY7krBbEG0tiwMYpCLy3GTn7JJBMc1EwvOBy_5Icmusiq6sfVb58sKJVhOzs3y5UwWDxJtW0AjhhY9itpSp8RieXe7ZUfZ-HsuKwvjAkvlunbvv9QApU6TOhXGU8R_vzwGQmLhzSdvXIacpg2pmo3uVkviPpIpr4-MiulWkU3wLrYUGkEoZlNnZEbCIUQ",
+            default="",
             description="API key for authenticating requests to the MLIS API.",
         )
       
