@@ -105,11 +105,15 @@ You will see the **code_generation_pipeline** set as default pipeline.
 
 - Save
 
+- Navigate to Admin Console >> Settings >> Connections and copy the pipeline key.
+
 ![Open WebUI Pipelines Step 1](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/open_webui_pipelines_step_1.PNG)
 
 ![Open WebUI Pipelines Step 2](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/open_webui_pipelines_step_2.PNG)
 
 ![Open WebUI Pipelines Step 3](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/open_webui_pipelines_step_3.PNG)
+
+![Open WebUI Pipelines key_Step 4](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/open_webui_pipelines_key.PNG)
 
 **5. Install and configure Continue Dev extension on VSCODE on your laptop**
 
@@ -117,7 +121,9 @@ You will see the **code_generation_pipeline** set as default pipeline.
 
 1. Install the Continue Dev extension on VS Code.
 
-2. Open the config file and replace the entire content of the file with the entry in the file continue_dev_config.yaml
+2. Open the config file and replace the entire content of the file with the entry in the file [continue_dev_config.yaml](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/continue_dev_config.yaml)
+
+**NOTE : Remeber to fill/replace the correct apiBase and apikey for qwen25-coder-7b-instruct in the config yaml file**
 
 3. Save the configuration and you are ready.
 
