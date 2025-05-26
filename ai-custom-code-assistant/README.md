@@ -58,11 +58,13 @@
 
 **3. Model depployment on HPE MLIS.**
 
-Here in the example we have selected to deploy **NIM codellama/codellama-13b-instruct.**
+1. Deploy **NIM codellama/codellama-13b-instruct.**
 
-One is however independent to choose model of their preference and deploy for usage.
+2. Deploy **Qwen/Qwen2.5-Coder-7B-Instruct** :  This model has been deployed to enable **autocomplete** feature.
 
-At the end copy the Model Endpoint and the API token to a text file as we will need them in next steps.
+One is however independent to choose models of their preference and deploy for usage.
+
+At the end copy the Model Endpoints and the API tokens to a text file as we will need them in next steps.
 
 - Follow the below images to deploy the NIM codellama/codellama-13b-instruct.
 
@@ -95,9 +97,9 @@ You will see the **code_generation_pipeline** set as default pipeline.
 
 - Fill in the details below (Remember you saved the endpoint url and api token in the previosu step):
 
-  Mlis Endpoint : Replace the model endpoint link from MLIS.
+  Mlis Endpoint : Replace the NIM codellama/codellama-13b-instruct model endpoint link from MLIS.
   
-  Model Id      : Add the actual model-id/model-name
+  Model Id      : Add the actual model-id/model-name i.e **codellama/codellama-13b-instruct**
 
   Api Token     : Add the API Token generated from HPE MLIS for the model deployment.
 
@@ -109,9 +111,19 @@ You will see the **code_generation_pipeline** set as default pipeline.
 
 ![Open WebUI Pipelines Step 3](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/open_webui_pipelines_step_3.PNG)
 
-**5. Install Continue Dev extension on VSCODE on your laptop**
+**5. Install and configure Continue Dev extension on VSCODE on your laptop**
 
-  
+**Refer the below images.**
+
+1. Install the Continue Dev extension on VS Code.
+
+2. Open the config file and replace the entire content of the file with the entry in the file continue_dev_config.yaml
+
+3. Save the configuration and you are ready.
+
+![Install VSCODE Extension Continue Dev](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/install_vscode_extension_continue_dev.PNG)
+
+![Config of Continue Dev](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/config_vscode_extension_continue_dev.PNG)
 
   
 
