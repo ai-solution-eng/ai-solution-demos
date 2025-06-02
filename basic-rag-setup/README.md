@@ -5,8 +5,8 @@ This document will go through all the necessary steps to enable interaction with
 Commands provided in this document assumes that your distribution is __Ubuntu__.
 
 The chosen combination of software components to achieve this are:
-* Open WebUI, to provide chat interface, as well as built-in RAG capabilities with embedding model and Chroma Vector DB bundled in
-* Ollama, to run the chat models locally, as well as for its ease of integration with Open WebUI and ability to quickly download multiple models from a UI
+* __Open WebUI__, to provide chat interface, as well as built-in RAG capabilities with embedding model and Chroma Vector DB bundled in
+* __Ollama__, to run the chat models locally, as well as for its ease of integration with Open WebUI and ability to quickly download multiple models from a UI
 
 # Prerequisites
 
@@ -55,10 +55,13 @@ Once Ollama has been installed, Open WebUI should automatically connect to it.
 
 You can manage the Open WebUI's connection to Ollama from the Admin Settings section:
 * Go to Admin Settings in Open WebUI.
-* Navigate to Connections > Ollama > Manage (click the wrench icon).
-* From here, you can download models, configure settings, and manage your connection to Ollama.
+* Navigate to Connections > Ollama > Manage (click the wrench icon):
+![Ollama-manage](images/manage-ollama.png)
+* From here, you can download models, configure settings, and manage your connection to Ollama:
+![Ollama-manage2](images/manage-ollama2.png)
 
-Alternatively, to get started even faster, you can download models directly from the Model Selector. Simply type the name of the model you want, and if it’s not already available, Open WebUI will prompt you to download it from Ollama.
+__Alternatively__, to get started even faster, you can download models directly from the Model Selector. Simply type the name of the model you want, and if it’s not already available, Open WebUI will prompt you to download it from Ollama:
+![model-selector-ollama](images/model-selector-ollama.png)
 
 Once downloaded, you can chat with them on Open WebUI.
 
