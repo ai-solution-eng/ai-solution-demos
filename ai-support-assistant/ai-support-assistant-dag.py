@@ -7,14 +7,16 @@ from airflow.decorators import dag, task
 
 DAG_ID = "ai-support-assistant-dag"
 
-@dag(
+with DAG(
     dag_id=DAG_ID,
     start_date=datetime.datetime(1970, 1, 1),
+    params={
+         "question": "Why is the sky blue?"
+     },
     schedule=None,
     catchup=False,
-)
+) as dag:
 
-def my_dag():
     @task(task_id="ask_ai")
     def ask_ai():
         import requests
@@ -33,13 +35,17 @@ def my_dag():
           "messages": [
             {
               "role": "user",
-              "content": "Why is the sky blue?"
+              "content": params["question"]
             }
           ]
         }
+
+        logger.info(params["question"])
+
         response = requests.post(url, headers=headers, json=data)
         data = response.json()
         answer = data["choices"][0]["message"]["content"]
+        
         logger.info(answer)
 
         # print("\n\n" + answer)
