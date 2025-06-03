@@ -1,79 +1,97 @@
-import textwrap
-from datetime import datetime, timedelta
+import datetime
+import pendulum
+import os
 
-# Operators; we need this to operate!
-from airflow.providers.standard.operators.bash import BashOperator
+import requests
+from airflow.decorators import dag, task
+from airflow.providers.postgres.hooks.postgres import PostgresHook
+from airflow.providers.postgres.operators.postgres import PostgresOperator
 
-# The DAG object; we'll need this to instantiate a DAG
-from airflow.sdk import DAG
-with DAG(
-    "tutorial",
-    # These args will get passed on to each operator
-    # You can override them on a per-task basis during operator initialization
-    default_args={
-        "depends_on_past": False,
-        "retries": 1,
-        "retry_delay": timedelta(minutes=5),
-        # 'queue': 'bash_queue',
-        # 'pool': 'backfill',
-        # 'priority_weight': 10,
-        # 'end_date': datetime(2016, 1, 1),
-        # 'wait_for_downstream': False,
-        # 'execution_timeout': timedelta(seconds=300),
-        # 'on_failure_callback': some_function, # or list of functions
-        # 'on_success_callback': some_other_function, # or list of functions
-        # 'on_retry_callback': another_function, # or list of functions
-        # 'sla_miss_callback': yet_another_function, # or list of functions
-        # 'on_skipped_callback': another_function, #or list of functions
-        # 'trigger_rule': 'all_success'
-    },
-    description="A simple tutorial DAG",
-    schedule=timedelta(days=1),
-    start_date=datetime(2021, 1, 1),
+
+@dag(
+    dag_id="process_employees",
+    schedule_interval="0 0 * * *",
+    start_date=pendulum.datetime(2021, 1, 1, tz="UTC"),
     catchup=False,
-    tags=["example"],
-) as dag:
-
-    # t1, t2 and t3 are examples of tasks created by instantiating operators
-    t1 = BashOperator(
-        task_id="print_date",
-        bash_command="date",
+    dagrun_timeout=datetime.timedelta(minutes=60),
+)
+def ProcessEmployees():
+    create_employees_table = PostgresOperator(
+        task_id="create_employees_table",
+        postgres_conn_id="tutorial_pg_conn",
+        sql="""
+            CREATE TABLE IF NOT EXISTS employees (
+                "Serial Number" NUMERIC PRIMARY KEY,
+                "Company Name" TEXT,
+                "Employee Markme" TEXT,
+                "Description" TEXT,
+                "Leave" INTEGER
+            );""",
     )
 
-    t2 = BashOperator(
-        task_id="sleep",
-        depends_on_past=False,
-        bash_command="sleep 5",
-        retries=3,
-    )
-    t1.doc_md = textwrap.dedent(
-        """\
-    #### Task Documentation
-    You can document your task using the attributes `doc_md` (markdown),
-    `doc` (plain text), `doc_rst`, `doc_json`, `doc_yaml` which gets
-    rendered in the UI's Task Instance Details page.
-    ![img](https://imgs.xkcd.com/comics/fixing_problems.png)
-    **Image Credit:** Randall Munroe, [XKCD](https://xkcd.com/license.html)
-    """
+    create_employees_temp_table = PostgresOperator(
+        task_id="create_employees_temp_table",
+        postgres_conn_id="tutorial_pg_conn",
+        sql="""
+            DROP TABLE IF EXISTS employees_temp;
+            CREATE TABLE employees_temp (
+                "Serial Number" NUMERIC PRIMARY KEY,
+                "Company Name" TEXT,
+                "Employee Markme" TEXT,
+                "Description" TEXT,
+                "Leave" INTEGER
+            );""",
     )
 
-    dag.doc_md = __doc__  # providing that you have a docstring at the beginning of the DAG; OR
-    dag.doc_md = """
-    This is a documentation placed anywhere
-    """  # otherwise, type it like this
-    templated_command = textwrap.dedent(
+    @task
+    def get_data():
+        # NOTE: configure this as appropriate for your airflow environment
+        data_path = "/opt/airflow/dags/files/employees.csv"
+        os.makedirs(os.path.dirname(data_path), exist_ok=True)
+
+        url = "https://raw.githubusercontent.com/apache/airflow/main/docs/apache-airflow/tutorial/pipeline_example.csv"
+
+        response = requests.request("GET", url)
+
+        with open(data_path, "w") as file:
+            file.write(response.text)
+
+        postgres_hook = PostgresHook(postgres_conn_id="tutorial_pg_conn")
+        conn = postgres_hook.get_conn()
+        cur = conn.cursor()
+        with open(data_path, "r") as file:
+            cur.copy_expert(
+                "COPY employees_temp FROM STDIN WITH CSV HEADER DELIMITER AS ',' QUOTE '\"'",
+                file,
+            )
+        conn.commit()
+
+    @task
+    def merge_data():
+        query = """
+            INSERT INTO employees
+            SELECT *
+            FROM (
+                SELECT DISTINCT *
+                FROM employees_temp
+            ) t
+            ON CONFLICT ("Serial Number") DO UPDATE
+            SET
+              "Employee Markme" = excluded."Employee Markme",
+              "Description" = excluded."Description",
+              "Leave" = excluded."Leave";
         """
-    {% for i in range(5) %}
-        echo "{{ ds }}"
-        echo "{{ macros.ds_add(ds, 7)}}"
-    {% endfor %}
-    """
-    )
+        try:
+            postgres_hook = PostgresHook(postgres_conn_id="tutorial_pg_conn")
+            conn = postgres_hook.get_conn()
+            cur = conn.cursor()
+            cur.execute(query)
+            conn.commit()
+            return 0
+        except Exception as e:
+            return 1
 
-    t3 = BashOperator(
-        task_id="templated",
-        depends_on_past=False,
-        bash_command=templated_command,
-    )
+    [create_employees_table, create_employees_temp_table] >> get_data() >> merge_data()
 
-    t1 >> [t2, t3]
+
+dag = ProcessEmployees()
