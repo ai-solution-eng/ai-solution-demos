@@ -43,5 +43,7 @@ def my_dag():
         logger.info(answer)
 
         # print("\n\n" + answer)
+
+    ask_ai()
     
 my_dag()
