@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import datetime
@@ -37,3 +36,4 @@ with DAG(
         answer = data["choices"][0]["message"]["content"]
 
         print("\n\n" + answer)
+    ask_ai()
