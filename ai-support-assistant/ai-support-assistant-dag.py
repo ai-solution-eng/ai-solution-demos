@@ -3,8 +3,7 @@ from __future__ import annotations
 
 import datetime
 import os
-
-from airflow import DAG
+import airflow
 
 DAG_ID = "ai-support-assistant-dag"
 
