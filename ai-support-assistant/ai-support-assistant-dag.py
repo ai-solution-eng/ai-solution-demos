@@ -4,6 +4,7 @@ import datetime
 import os
 from airflow.decorators import dag, task
 
+
 DAG_ID = "ai-support-assistant-dag"
 
 @dag(
@@ -17,6 +18,10 @@ def my_dag():
     @task
     def ask_ai():
         import requests
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.info("This is a log message")
 
         url = 'http://host.docker.internal:8888/api/chat/completions'
         headers = {
@@ -35,7 +40,8 @@ def my_dag():
         response = requests.post(url, headers=headers, json=data)
         data = response.json()
         answer = data["choices"][0]["message"]["content"]
+        logger.info(answer)
 
-        print("\n\n" + answer)
+        // print("\n\n" + answer)
     
 my_dag()
