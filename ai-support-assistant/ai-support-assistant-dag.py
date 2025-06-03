@@ -23,6 +23,8 @@ with DAG(
         import requests
         import logging
 
+        question = params["question"]
+
         logger = logging.getLogger(__name__)
         logger.info("This is a log message")
 
@@ -36,12 +38,12 @@ with DAG(
           "messages": [
             {
               "role": "user",
-              "content": params["question"]
+              "content": question
             }
           ]
         }
 
-        logger.info(dag.params["question"])
+        logger.info(question)
 
         response = requests.post(url, headers=headers, json=data)
         data = response.json()
