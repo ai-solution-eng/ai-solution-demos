@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 import os
-from airflow import dag, task
+from airflow.decorators import dag, task
 
 DAG_ID = "ai-support-assistant-dag"
 
