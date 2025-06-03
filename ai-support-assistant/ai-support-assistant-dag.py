@@ -2,18 +2,19 @@ from __future__ import annotations
 
 import datetime
 import os
-from airflow import DAG
+from airflow.sdk import dag, task
 
 DAG_ID = "ai-support-assistant-dag"
 
-with DAG(
+@dag(
     dag_id=DAG_ID,
     start_date=datetime.datetime(1970, 1, 1),
     schedule="@once",
     catchup=False,
-) as dag:
+)
 
-    @task
+def my_dag():
+    @task(task_id="ask_ai")
     def ask_ai():
         import requests
 
@@ -36,4 +37,5 @@ with DAG(
         answer = data["choices"][0]["message"]["content"]
 
         print("\n\n" + answer)
-    ask_ai()
+    
+    run_this >> ask_ai
