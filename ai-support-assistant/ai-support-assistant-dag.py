@@ -52,5 +52,3 @@ with DAG(
         # print("\n\n" + answer)
 
     ask_ai()
-    
-my_dag()
