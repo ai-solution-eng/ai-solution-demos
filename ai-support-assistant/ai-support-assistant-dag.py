@@ -41,7 +41,7 @@ with DAG(
           ]
         }
 
-        logger.info(params["question"])
+        logger.info(dag.params["question"])
 
         response = requests.post(url, headers=headers, json=data)
         data = response.json()
