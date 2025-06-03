@@ -34,7 +34,7 @@ with DAG(
         's3_bucket': Param("ce-dougdet-pcaiexer", type="string"),
         's3_prefix': Param(f"documents/", type="string"),
         'shared_vol_base': Param(f"/mnt/shared/", type="string"),
-        'dnld_path': Param("ce-team/dougdet", type="string"),
+        'dnld_path': Param("dougdet", type="string"),
         'dnld_dir': Param("from_airflow", type="string")
     },
     access_control={
