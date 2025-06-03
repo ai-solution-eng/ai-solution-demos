@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import datetime
 import os
-from airflow.decorators import dag, task
+from airflow import DAG
+from airflow.decorators import task
 
 
 DAG_ID = "ai-support-assistant-dag"
@@ -45,7 +46,7 @@ with DAG(
         response = requests.post(url, headers=headers, json=data)
         data = response.json()
         answer = data["choices"][0]["message"]["content"]
-        
+
         logger.info(answer)
 
         # print("\n\n" + answer)
