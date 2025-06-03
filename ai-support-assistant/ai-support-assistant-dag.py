@@ -19,7 +19,7 @@ with DAG(
 ) as dag:
 
     @task(task_id="ask_ai")
-    def ask_ai():
+    def ask_ai(params: dict):
         import requests
         import logging
 
@@ -36,7 +36,7 @@ with DAG(
           "messages": [
             {
               "role": "user",
-              "content": dag.params["question"]
+              "content": params["question"]
             }
           ]
         }
