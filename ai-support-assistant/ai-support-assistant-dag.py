@@ -9,12 +9,12 @@ DAG_ID = "ai-support-assistant-dag"
 @dag(
     dag_id=DAG_ID,
     start_date=datetime.datetime(1970, 1, 1),
-    schedule="@once",
+    schedule=None,
     catchup=False,
 )
 
 def my_dag():
-    @task(task_id="ask_ai")
+    @task
     def ask_ai():
         import requests
 
@@ -38,4 +38,4 @@ def my_dag():
 
         print("\n\n" + answer)
     
-    run_this >> ask_ai
+my_dag()
