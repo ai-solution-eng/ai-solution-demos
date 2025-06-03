@@ -36,7 +36,7 @@ with DAG(
           "messages": [
             {
               "role": "user",
-              "content": params["question"]
+              "content": dag.params["question"]
             }
           ]
         }
