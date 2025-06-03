@@ -42,6 +42,6 @@ def my_dag():
         answer = data["choices"][0]["message"]["content"]
         logger.info(answer)
 
-        // print("\n\n" + answer)
+        # print("\n\n" + answer)
     
 my_dag()
