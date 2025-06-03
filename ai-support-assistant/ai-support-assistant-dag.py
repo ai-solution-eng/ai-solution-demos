@@ -15,7 +15,7 @@ DAG_ID = "ai-support-assistant-dag"
 )
 
 def my_dag():
-    @task
+    @task(task_id="ask_ai")
     def ask_ai():
         import requests
         import logging
