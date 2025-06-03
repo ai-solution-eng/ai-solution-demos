@@ -1,97 +1,92 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+from __future__ import annotations
+
 import datetime
-import pendulum
 import os
 
-import requests
-from airflow.decorators import dag, task
-from airflow.providers.postgres.hooks.postgres import PostgresHook
-from airflow.providers.postgres.operators.postgres import PostgresOperator
+from airflow import DAG
+from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
+
+# [START postgres_sql_execute_query_operator_howto_guide]
 
 
-@dag(
-    dag_id="process_employees",
-    schedule_interval="0 0 * * *",
-    start_date=pendulum.datetime(2021, 1, 1, tz="UTC"),
+# create_pet_table, populate_pet_table, get_all_pets, and get_birth_date are examples of tasks created by
+# instantiating the Postgres Operator
+
+[docs]ENV_ID = os.environ.get("SYSTEM_TESTS_ENV_ID")
+[docs]DAG_ID = "postgres_operator_dag"
+
+with DAG(
+    dag_id=DAG_ID,
+    start_date=datetime.datetime(2020, 2, 2),
+    schedule="@once",
     catchup=False,
-    dagrun_timeout=datetime.timedelta(minutes=60),
-)
-def ProcessEmployees():
-    create_employees_table = PostgresOperator(
-        task_id="create_employees_table",
-        postgres_conn_id="tutorial_pg_conn",
+) as dag:
+    # [START postgres_sql_execute_query_operator_howto_guide_create_pet_table]
+[docs]    create_pet_table = SQLExecuteQueryOperator(
+        task_id="create_pet_table",
         sql="""
-            CREATE TABLE IF NOT EXISTS employees (
-                "Serial Number" NUMERIC PRIMARY KEY,
-                "Company Name" TEXT,
-                "Employee Markme" TEXT,
-                "Description" TEXT,
-                "Leave" INTEGER
-            );""",
+            CREATE TABLE IF NOT EXISTS pet (
+            pet_id SERIAL PRIMARY KEY,
+            name VARCHAR NOT NULL,
+            pet_type VARCHAR NOT NULL,
+            birth_date DATE NOT NULL,
+            OWNER VARCHAR NOT NULL);
+          """,
     )
-
-    create_employees_temp_table = PostgresOperator(
-        task_id="create_employees_temp_table",
-        postgres_conn_id="tutorial_pg_conn",
+    # [END postgres_sql_execute_query_operator_howto_guide_create_pet_table]
+    # [START postgres_sql_execute_query_operator_howto_guide_populate_pet_table]
+    populate_pet_table = SQLExecuteQueryOperator(
+        task_id="populate_pet_table",
         sql="""
-            DROP TABLE IF EXISTS employees_temp;
-            CREATE TABLE employees_temp (
-                "Serial Number" NUMERIC PRIMARY KEY,
-                "Company Name" TEXT,
-                "Employee Markme" TEXT,
-                "Description" TEXT,
-                "Leave" INTEGER
-            );""",
+            INSERT INTO pet (name, pet_type, birth_date, OWNER)
+            VALUES ( 'Max', 'Dog', '2018-07-05', 'Jane');
+            INSERT INTO pet (name, pet_type, birth_date, OWNER)
+            VALUES ( 'Susie', 'Cat', '2019-05-01', 'Phil');
+            INSERT INTO pet (name, pet_type, birth_date, OWNER)
+            VALUES ( 'Lester', 'Hamster', '2020-06-23', 'Lily');
+            INSERT INTO pet (name, pet_type, birth_date, OWNER)
+            VALUES ( 'Quincy', 'Parrot', '2013-08-11', 'Anne');
+            """,
     )
+    # [END postgres_sql_execute_query_operator_howto_guide_populate_pet_table]
+    # [START postgres_sql_execute_query_operator_howto_guide_get_all_pets]
+    get_all_pets = SQLExecuteQueryOperator(task_id="get_all_pets", sql="SELECT * FROM pet;")
+    # [END postgres_sql_execute_query_operator_howto_guide_get_all_pets]
+    # [START postgres_sql_execute_query_operator_howto_guide_get_birth_date]
+    get_birth_date = SQLExecuteQueryOperator(
+        task_id="get_birth_date",
+        sql="SELECT * FROM pet WHERE birth_date BETWEEN SYMMETRIC %(begin_date)s AND %(end_date)s",
+        parameters={"begin_date": "2020-01-01", "end_date": "2020-12-31"},
+        hook_params={"options": "-c statement_timeout=3000ms"},
+    )
+    # [END postgres_sql_execute_query_operator_howto_guide_get_birth_date]
 
-    @task
-    def get_data():
-        # NOTE: configure this as appropriate for your airflow environment
-        data_path = "/opt/airflow/dags/files/employees.csv"
-        os.makedirs(os.path.dirname(data_path), exist_ok=True)
+    create_pet_table >> populate_pet_table >> get_all_pets >> get_birth_date
+    # [END postgres_sql_execute_query_operator_howto_guide]
 
-        url = "https://raw.githubusercontent.com/apache/airflow/main/docs/apache-airflow/tutorial/pipeline_example.csv"
+    from tests_common.test_utils.watcher import watcher
 
-        response = requests.request("GET", url)
+    # This test needs watcher in order to properly mark success/failure
+    # when "tearDown" task with trigger rule is part of the DAG
+    list(dag.tasks) >> watcher()
 
-        with open(data_path, "w") as file:
-            file.write(response.text)
+from tests_common.test_utils.system_tests import get_test_run  # noqa: E402
 
-        postgres_hook = PostgresHook(postgres_conn_id="tutorial_pg_conn")
-        conn = postgres_hook.get_conn()
-        cur = conn.cursor()
-        with open(data_path, "r") as file:
-            cur.copy_expert(
-                "COPY employees_temp FROM STDIN WITH CSV HEADER DELIMITER AS ',' QUOTE '\"'",
-                file,
-            )
-        conn.commit()
-
-    @task
-    def merge_data():
-        query = """
-            INSERT INTO employees
-            SELECT *
-            FROM (
-                SELECT DISTINCT *
-                FROM employees_temp
-            ) t
-            ON CONFLICT ("Serial Number") DO UPDATE
-            SET
-              "Employee Markme" = excluded."Employee Markme",
-              "Description" = excluded."Description",
-              "Leave" = excluded."Leave";
-        """
-        try:
-            postgres_hook = PostgresHook(postgres_conn_id="tutorial_pg_conn")
-            conn = postgres_hook.get_conn()
-            cur = conn.cursor()
-            cur.execute(query)
-            conn.commit()
-            return 0
-        except Exception as e:
-            return 1
-
-    [create_employees_table, create_employees_temp_table] >> get_data() >> merge_data()
-
-
-dag = ProcessEmployees()
+# Needed to run the example DAG with pytest (see: tests/system/README.md#run_via_pytest)
+[docs]test_run = get_test_run(dag)
