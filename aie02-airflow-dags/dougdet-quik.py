@@ -58,7 +58,9 @@ with DAG(
         export_dir = path.join(shared_vol_base, dnld_path, dnld_dir)
         logger = logging.getLogger(__name__)
         logger.info('auth_bkends = "' + auth_bkends + '"')
-        logger.info('envvar AIRFLOW__API__AUTH_BACKENDS is "' + os.environ['AIRFLOW__API__AUTH_BACKENDS'] + '"')
+        logger.info('Environment variables:')
+        for (k, v) in os.environ.items():
+            logger.info(''.join(("\t", k, '="', v, '"')))
         if path.exists(export_dir):
             shutil.rmtree(export_dir)
             return f"Deleted directory {export_path}"
