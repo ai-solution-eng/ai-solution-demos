@@ -1,17 +1,20 @@
 # Airflow
 import os
 import getpass
+import logging
 import shutil
 from datetime import datetime, timedelta
 from os import path
 from airflow import DAG
 from airflow.decorators import task
+from airflow.models import Variable
 from airflow.models.param import Param
 from airflow.utils.dates import days_ago
 from airflow.operators.python import get_current_context
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 from airflow.providers.weaviate.hooks.weaviate import WeaviateHook
 
+auth_bkends = Variable.get("AIRFLOW__API__AUTH_BACKENDS")
 
 default_args = {
     'owner': 'airflow',
@@ -53,6 +56,8 @@ with DAG(
         dnld_path = context['params']['dnld_path']
         dnld_dir = context['params']['dnld_dir']
         export_dir = path.join(shared_vol_base, dnld_path, dnld_dir)
+        logger = logging.getLogger(__name__)
+        logger.info('auth_bkends = "' + auth_backends + '"')
         if path.exists(export_dir):
             shutil.rmtree(export_dir)
             return f"Deleted directory {export_path}"
