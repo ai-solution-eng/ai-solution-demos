@@ -57,7 +57,7 @@ with DAG(
         dnld_dir = context['params']['dnld_dir']
         export_dir = path.join(shared_vol_base, dnld_path, dnld_dir)
         logger = logging.getLogger(__name__)
-        logger.info('auth_bkends = "' + auth_backends + '"')
+        logger.info('auth_bkends = "' + auth_bkends + '"')
         if path.exists(export_dir):
             shutil.rmtree(export_dir)
             return f"Deleted directory {export_path}"
