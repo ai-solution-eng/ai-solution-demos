@@ -17,7 +17,7 @@ from airflow.providers.weaviate.hooks.weaviate import WeaviateHook
 auth_bkends = Variable.get("AIRFLOW__API__AUTH_BACKENDS")
 
 default_args = {
-    'owner': 'airflow',
+    'owner': 'doug',
     'depends_on_past': False,
     'start_date': days_ago(1),
     'email': ['doug.parrish@hpe.com'],
@@ -56,11 +56,11 @@ with DAG(
         dnld_path = context['params']['dnld_path']
         dnld_dir = context['params']['dnld_dir']
         export_dir = path.join(shared_vol_base, dnld_path, dnld_dir)
-        logger = logging.getLogger(__name__)
-        logger.info('auth_bkends = "' + auth_bkends + '"')
-        logger.info('Environment variables:')
-        for (k, v) in os.environ.items():
-            logger.info(''.join(("\t", k, '="', v, '"')))
+        #logger = logging.getLogger(__name__)
+        #logger.info('auth_bkends = "' + auth_bkends + '"')
+        #logger.info('Environment variables:')
+        #for (k, v) in os.environ.items():
+        #    logger.info(''.join(("\t", k, '="', v, '"')))
         if path.exists(export_dir):
             shutil.rmtree(export_dir)
             return f"Deleted directory {export_path}"
