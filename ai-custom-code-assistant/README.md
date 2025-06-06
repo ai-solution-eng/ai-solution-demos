@@ -59,7 +59,7 @@
 
 **3. Model depployment on HPE MLIS.**
 
-1. Deploy **NIM codellama/codellama-13b-instruct.**
+1. Deploy **deepseek-ai/DeepSeek-R1-Distill-Llama-8B.**
 
 2. Deploy **Qwen/Qwen2.5-Coder-7B-Instruct** :  This model has been deployed to enable **autocomplete** feature.
 
