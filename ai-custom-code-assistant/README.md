@@ -67,7 +67,8 @@ One is however independent to choose models of their preference and deploy for u
 
 At the end copy the Model Endpoints and the API tokens to a text file as we will need them in next steps.
 
-- Follow the below images to deploy the NIM codellama/codellama-13b-instruct.
+- Follow the below images to deploy the vllm model deepseek-ai/DeepSeek-R1-Distill-Llama-8B.
+- You can follow simialr steps to dpeloy the Qwen/Qwen2.5-Coder-7B-Instruct model too.
 
 ![Hpe Mlis Packaged M0del Deployment Step 1](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_packaged_model_deployment_step_1.PNG)
 
@@ -83,11 +84,13 @@ At the end copy the Model Endpoints and the API tokens to a text file as we will
 
 ![Hpe Mlis Packaged Model Deployment Step 7](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_packaged_model_deployment_step_7.PNG)
 
-![Hpe Mlis Model Endpoint Step 8](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_model_endpoint_step_8.PNG)
+![Hpe Mlis Packaged Model Deployment Step 8](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_packaged_model_deployment_step_8.PNG)
 
-![Hpe Mlis Model Api Token Step 9](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_api_token_step_9.PNG)
+![Hpe Mlis Model Endpoint Step 9](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_model_endpoint_step_9.PNG)
 
 ![Hpe Mlis Model Api Token Step 10](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_api_token_step_10.PNG)
+
+![Hpe Mlis Model Api Token Step 10](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_api_token_step_11.PNG)
 
 **4. Open-WebUI Settings.**
 
