@@ -19,7 +19,7 @@ models:
       verifySsl: false
   - name: qwen25-coder-7b-instruct
     provider: vllm
-    apiBase: https://qwen25-coder-7b-instruct-predictor-nishant-chanduk-5a31eb6f.ingress.pcai0201.fr2.hpecolo.net/v1
+    apiBase: https://qwen25-coder-7b-instruct-predictor-santosh-nagaraj-5e85d353.ingress.pcai0103.sy6.hpecolo.net/v1
     model: Qwen/Qwen2.5-Coder-7B-Instruct 
     apiKey: ***********************
     roles:
