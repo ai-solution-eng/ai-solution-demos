@@ -6,11 +6,11 @@ class Pipeline:
 
     class Valves(BaseModel):
         MLIS_ENDPOINT: str = Field(
-            default="https://codellama-13b-instruct-predictor-nishant-chanduk-5a31eb6f.ingress.pcai0201.fr2.hpecolo.net/v1",
+            default="https://deepseek-r1-distill-llama-8b-predictor-nishant-chanduk-cc427e73.ingress.pcai0103.sy6.hpecolo.net/v1",
             description="MLIS MLIS API compatible endpoints.",
         )
         MODEL_ID: str = Field(
-            default="codellama/codellama-13b-instruct",
+            default="deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
             description="Model name",
         )
         API_TOKEN: str = Field(
