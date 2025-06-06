@@ -1,7 +1,8 @@
 #!/bin/bash
 
-REF=/mnt/shared/genome-sequencing-acceleration-pcai/data_preparation_scripts/data_source_arabidopsis_thaliana/TAIR10_chr_all.fasta
+DATA_DIR="$HOME/ai-solution-demos/genome-sequencing-acceleration-pcai/data_preparation_scripts/data_source_arabidopsis_thaliana"
 
+REF="$DATA_DIR/TAIR10_chr_all.fasta"
 TDR_BAM=TDr-7_10M_cpu_sorted_marked.bam
 
 # Number of threads for GATK to use
