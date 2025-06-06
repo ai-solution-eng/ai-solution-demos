@@ -102,9 +102,9 @@ You will see the **code_generation_pipeline** set as default pipeline.
 
 - Fill in the details below (Remember you saved the endpoint url and api token in the previosu step):
 
-  Mlis Endpoint : Replace the NIM codellama/codellama-13b-instruct model endpoint link from MLIS.
+  Mlis Endpoint : Replace the vllm **deepseek-ai/DeepSeek-R1-Distill-Llama-8B** model endpoint link from MLIS.
   
-  Model Id      : Add the actual model-id/model-name i.e **codellama/codellama-13b-instruct**
+  Model Id      : Add the actual model-id/model-name i.e **deepseek-ai/DeepSeek-R1-Distill-Llama-8B**
 
   Api Token     : Add the API Token generated from HPE MLIS for the model deployment.
 
