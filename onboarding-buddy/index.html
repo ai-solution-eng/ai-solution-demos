@@ -1,0 +1,28 @@
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="New Hire Onboarding Platform" />
+    <meta name="author" content="Claudio Calderon" />
+    <meta property="og:title" content="New Hire Onboarding" />
+    <meta property="og:description" content="A comprehensive platform for managing employee onboarding tasks, reviews, and AI-assisted personalized training." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- Load environment variables first -->
+    <script>
+      // Initialize window.env from environment variables
+      window.env = {
+        VITE_AI_ENDPOINT: '${VITE_AI_ENDPOINT}',
+        VITE_AI_API_KEY: '${VITE_AI_API_KEY}',
+        VITE_AI_MODEL: '${VITE_AI_MODEL}'
+      };
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
