@@ -90,7 +90,7 @@ At the end copy the Model Endpoints and the API tokens to a text file as we will
 
 ![Hpe Mlis Model Api Token Step 10](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_api_token_step_10.PNG)
 
-![Hpe Mlis Model Api Token Step 10](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_api_token_step_11.PNG)
+![Hpe Mlis Model Api Token Step 11](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_api_token_step_11.PNG)
 
 **4. Open-WebUI Settings.**
 
