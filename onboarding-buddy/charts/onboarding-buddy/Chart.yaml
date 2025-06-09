@@ -1,0 +1,25 @@
+apiVersion: v2
+name: onboarding-buddy-8
+description: A Helm chart for Onboarding Buddy AI application
+type: application
+version: 0.0.8
+appVersion: "0.0.8"
+
+# Annotations for Helm Hub and artifact hub
+annotations:
+  artifacthub.io/links: |
+    - name: Source
+      url: https://github.com/your-org/onboarding-buddy
+  artifacthub.io/operator: "true"
+  artifacthub.io/prerelease: "false"
+  artifacthub.io/containsSecurityUpdates: "false"
+
+keywords:
+  - react
+  - onboarding
+  - ai
+  - kubernetes
+
+maintainers:
+  - name: Your Name
+    email: your.email@example.com

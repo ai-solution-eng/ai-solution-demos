@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "onboarding-buddy.fullname" . }}
+  labels:
+    {{- include "onboarding-buddy.labels" . | nindent 4 }}
+    service: {{ include "onboarding-buddy.name" . }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http  # This references the port name in the container
+      protocol: TCP
+      name: http  # Standard name for HTTP traffic
+  selector:
+    {{- include "onboarding-buddy.selectorLabels" . | nindent 4 }}
