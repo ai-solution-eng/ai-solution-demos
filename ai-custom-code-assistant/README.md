@@ -129,7 +129,9 @@ You will see the **code_generation_pipeline** set as default pipeline.
 2. Open the config file and replace the entire content of the file with the entry in the file [continue_dev_config.yaml](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/continue_dev_config.yaml)
 
 **NOTE : Remeber to fill/replace the correct apiBase for the open-webui pipeline in the config yaml file.**
+
 **The format is https://open-webui-pipelines.<cluster_domain_name>**
+
 **NOTE : Remeber to fill/replace the correct apiBase and apikey for qwen25-coder-7b-instruct in the config yaml file**
 
 3. Save the configuration and you are ready.
