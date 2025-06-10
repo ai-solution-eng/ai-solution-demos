@@ -11,6 +11,7 @@ We worked with a customer in the networking industry to streamline detecting ano
 This customer was looking for an end to end pipeline that automatically aggregate server logs, clean logs with malformed input, train a machine learning model to predict anomalies, and deploy the model to detect anomalies on live logs. They wanted all orchestrated as a scalable pipeline that can scale as data volume increases.
 
 # Demo Recording
+Download and watch `static/final_juniper_compressed.mp4` to see recorded demo. 
 
 <video width="720" height="480" controls>
   <source src="static/final_juniper_compressed.mp4" type="video/mp4">
