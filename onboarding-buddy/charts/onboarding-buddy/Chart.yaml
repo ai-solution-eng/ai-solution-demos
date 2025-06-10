@@ -1,9 +1,9 @@
 apiVersion: v2
-name: onboarding-buddy-8
+name: onboarding-buddy-7
 description: A Helm chart for Onboarding Buddy AI application
 type: application
-version: 0.0.8
-appVersion: "0.0.8"
+version: 0.0.7
+appVersion: "0.0.7"
 
 # Annotations for Helm Hub and artifact hub
 annotations:
