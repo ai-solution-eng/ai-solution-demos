@@ -1,0 +1,17 @@
+inputs/
+tests/simple/*.pt
+backend/models/yolo11n.pt
+backend/models/yolo11s.pt
+backend/.EasyOCR
+finetune/yolo11*.pt
+workspace/datasets/License\ Plate\ Recognition.v4-resized640_aug3x-accurate.yolov11
+workspace/artifact_downloads
+models/artifact_downloads/14be0ff37e03403b9f50b3cd4e8dd7a5/weights/converted
+*.zip
+.DS_Store
+coco/
+__pycache__
+*.csv*
+*.tar.gz
+*.mp4
+.temp
