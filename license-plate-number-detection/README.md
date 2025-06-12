@@ -136,15 +136,15 @@ To use PCAI's Machine Learning Inference Service (MLIS):
 
 The Helm chart includes the following configurable parameters:
 
-|Parameter|Description|Examples|
+|Parameter|Description|Values|
 |:---|:---|:---|
-|frontend.appConfig.logo_url|Configure the App Logo|assets/hpe_pri_grn_pos_rgb.png|
-|backend.appConfig.detectors.option|Detector deployment type|mlis|
+|frontend.appConfig.logo_url|Configure the App Logo|assets/hpe_pri_grn_pos_rgb.png or A URL (string) for a hosted image.|
+|backend.appConfig.detectors.option|Detector deployment type|mlis or embedded|
 |backend.appConfig.detectors.mlis_deployment_name|MLIS Deployment Name|license-detectors|
-|backend.appConfig.detectors.mlis_deployment_namespace|MLIS Deployment Namespace|geuntak-6d6b6531|
-|backend.appConfig.detectors.server_token|MLIS Token for Detector deployment|MLIS Token |
-|backend.appConfig.detectors.vehicle_detector|Triton Engine Name for Vehicle detection Model|vehicle_detector|
-|backend.appConfig.detectors.license_detector|Triton Engine Name for license plate detection Model|license_detector|
+|backend.appConfig.detectors.mlis_deployment_namespace|MLIS Deployment Namespace|User Namespace in PCAI|
+|backend.appConfig.detectors.server_token|MLIS Token for Detector deployment|MLIS Token|
+|backend.appConfig.detectors.vehicle_detector|Model Name for Vehicle detection|vehicle_detector or yolo11s.pt|
+|backend.appConfig.detectors.license_detector|Model Name for license plate detection|license_detector or yolo11s_20epochs_best.pt|
 |ezua.virtualService.endpoint|Virtual service hostname|lp-number-detection.${DOMAIN_NAME}|
 |ezua.virtualService.istioGateway|Istio gateway reference|istio-system/ezaf-gateway|
 
