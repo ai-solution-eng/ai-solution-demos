@@ -1,0 +1,4 @@
+streamlit==1.45.1
+ultralytics==8.3.77
+websocket-client==1.8.0
+tritonclient[all]

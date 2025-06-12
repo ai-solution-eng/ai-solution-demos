@@ -1,0 +1,10 @@
+# detectors:
+#   server_url: "https://triton-test-predictor-geun-tak-roh-hp-57f69d47.ingress.pcai0103.sy6.hpecolo.net" # ./models/
+#   server_token: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3NDg1OTU0MzksImlzcyI6ImFpb2xpQGhwZS5jb20iLCJzdWIiOiIwNDZjYTMyMS04NTIzLTRjOWEtYmIzMy04MDI0Y2Q0MmI0ZGUiLCJ1c2VyIjoiZ2V1bi10YWsucm9oLWhwZS5jb20ifQ.RucnjRc6nV0x1maAYkZ9sha-32Ja1H0Vkxl5kJCvuKHJ5141ySZ8BxQ6DfjorTDQNYtKqIXytPPorEux_N6W8DhmpfLEj2Cta7FhWDo13LwwO91sBA32DnsJz8Ir1XBPlW5DzW1STRZn0t2ojzkPsvSJXjp6HvwfQl5d0bD0shPGlWTDzepvlCR28Vy04cBH4Ul9uBF0q-3NuQvpV3F_OMeUovvnc4C-wBPdqBALZ9HX0-pOp1YK6KDxNekdAcqBtNnCa94SueCU6d2EOj_NHzp_EmR--yBgnwdbBUmDBuE2BTiPc3eROX4cgKE4vSxLQBvoCcz8vUo1Mvpqk_rewg"
+#   vehicle_detector : "vehicle_detector" # yolo11s.pt
+#   license_detector : "license_detector" # yolo11s_20epochs_best.pt
+detectors:
+  server_url: "./models"
+  server_token: ""
+  vehicle_detector : "yolo11s.pt" 
+  license_detector : "yolo11s_20epochs_best.pt"

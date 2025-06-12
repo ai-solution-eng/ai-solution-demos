@@ -1,0 +1,40 @@
+
+Benchmarks complete for runs/detect/train/weights/best.pt on ./resources/datasets/data.yaml at imgsz=160 (35.29s)
+Benchmarks legend:  - ✅ Success  - ❎ Export passed but validation failed  - ❌️ Export failed
+    Format Status❔  Size (MB)  metrics/mAP50-95(B)  Inference time (ms/im)   FPS
+0  PyTorch       ✅       18.3               0.4049                   12.51  79.9
+
+Benchmarks complete for runs/detect/train/weights/best.pt on ./resources/datasets/data.yaml at imgsz=160 (38.93s)
+Benchmarks legend:  - ✅ Success  - ❎ Export passed but validation failed  - ❌️ Export failed
+    Format Status❔  Size (MB)  metrics/mAP50-95(B)  Inference time (ms/im)   FPS
+0  PyTorch       ✅       18.3               0.4051                   14.02  71.3
+
+Benchmarks complete for runs/detect/train/weights/best.pt on ./resources/datasets/data.yaml at imgsz=160 (28.49s)
+Benchmarks legend:  - ✅ Success  - ❎ Export passed but validation failed  - ❌️ Export failed
+        Format Status❔  Size (MB)  metrics/mAP50-95(B)  Inference time (ms/im)     FPS
+0  TorchScript       ✅       36.4               0.3922                    6.02  165.99
+
+Benchmarks complete for runs/detect/train/weights/best.pt on ./resources/datasets/data.yaml at imgsz=160 (27.12s)
+Benchmarks legend:  - ✅ Success  - ❎ Export passed but validation failed  - ❌️ Export failed
+        Format Status❔  Size (MB)  metrics/mAP50-95(B)  Inference time (ms/im)     FPS
+0  TorchScript       ✅       36.4               0.3915                    6.52  153.32
+
+Benchmarks complete for runs/detect/train/weights/best.pt on ./resources/datasets/data.yaml at imgsz=160 (26.70s)
+Benchmarks legend:  - ✅ Success  - ❎ Export passed but validation failed  - ❌️ Export failed
+  Format Status❔  Size (MB)  metrics/mAP50-95(B)  Inference time (ms/im)    FPS
+0   ONNX       ✅       36.0               0.3922                    4.42  226.4
+
+Benchmarks complete for runs/detect/train/weights/best.pt on ./resources/datasets/data.yaml at imgsz=160 (26.29s)
+Benchmarks legend:  - ✅ Success  - ❎ Export passed but validation failed  - ❌️ Export failed
+  Format Status❔  Size (MB)  metrics/mAP50-95(B)  Inference time (ms/im)     FPS
+0   ONNX       ✅       18.0               0.3918                     5.8  172.24
+
+Benchmarks complete for runs/detect/train/weights/best.pt on ./resources/datasets/data.yaml at imgsz=160 (129.48s)
+Benchmarks legend:  - ✅ Success  - ❎ Export passed but validation failed  - ❌️ Export failed
+     Format Status❔  Size (MB)  metrics/mAP50-95(B)  Inference time (ms/im)     FPS
+0  TensorRT       ✅       37.9               0.3922                     3.0  333.25
+
+Benchmarks complete for runs/detect/train/weights/best.pt on ./resources/datasets/data.yaml at imgsz=160 (340.11s)
+Benchmarks legend:  - ✅ Success  - ❎ Export passed but validation failed  - ❌️ Export failed
+     Format Status❔  Size (MB)  metrics/mAP50-95(B)  Inference time (ms/im)     FPS
+0  TensorRT       ✅       20.9               0.3917                    2.32  430.04

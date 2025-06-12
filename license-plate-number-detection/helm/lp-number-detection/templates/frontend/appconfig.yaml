@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-appconfig
+  labels:
+    {{- include "lp-number-detection.labels" . | nindent 4 }}
+data:
+  config.yaml: |-
+    api_host : {{ include "lp-number-detection-backend.apihost" . }}
+    {{ toYaml .Values.frontend.appConfig | nindent 4 | trim }}
