@@ -287,7 +287,7 @@ const MentorDashboard: React.FC = () => {
                       </div>
                       <div className="flex gap-2">
                         {!isImpersonating && (
-                          <Link to={`/reviews/${review.id}`}>
+                          <Link to={`/tasks/${review.taskId}?tab=review`}>
                             <Button size="sm" variant="default">
                               Continue
                             </Button>
