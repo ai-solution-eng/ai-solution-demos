@@ -39,7 +39,7 @@ resources:
 ezua:
   virtualService:
     # The endpoint where the service will be accessible (e.g., "service-name.${DOMAIN_NAME}")
-    endpoint: "onboarding-buddy.example.com"
+    endpoint: "onboarding-buddy.${DOMAIN_NAME}"
     # The Istio Gateway to use (e.g., "istio-system/ezaf-gateway")
     istioGateway: "istio-system/ezaf-gateway"
 

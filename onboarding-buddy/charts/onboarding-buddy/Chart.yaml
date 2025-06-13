@@ -1,6 +1,6 @@
 apiVersion: v2
 name: onboarding-buddy-7
-description: A Helm chart for Onboarding Buddy AI application
+description: A Helm chart for Onboarding Buddy AI demo application
 type: application
 version: 0.0.7
 appVersion: "0.0.7"
@@ -9,7 +9,7 @@ appVersion: "0.0.7"
 annotations:
   artifacthub.io/links: |
     - name: Source
-      url: https://github.com/your-org/onboarding-buddy
+      url: https://github.com/ai-solution-eng/ai-solution-demos/tree/main/onboarding-buddy
   artifacthub.io/operator: "true"
   artifacthub.io/prerelease: "false"
   artifacthub.io/containsSecurityUpdates: "false"
@@ -21,5 +21,5 @@ keywords:
   - kubernetes
 
 maintainers:
-  - name: Your Name
-    email: your.email@example.com
+  - name: Claudio Calderon
+    email: jose-claudio.calderon@hpe.com
