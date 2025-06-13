@@ -1,5 +1,5 @@
 apiVersion: v2
-name: onboarding-buddy-7
+name: onboarding-buddy
 description: A Helm chart for Onboarding Buddy AI demo application
 type: application
 version: 0.0.7
