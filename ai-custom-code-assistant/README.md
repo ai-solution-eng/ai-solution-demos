@@ -65,10 +65,9 @@ One is however independent to choose models of their preference and deploy for u
 
 At the end copy the Model Endpoints and the API tokens to a text file as we will need them in next steps.
 
-- Follow the below images to deploy the vllm model deepseek-ai/DeepSeek-R1-Distill-Llama-8B.
-- You can follow simialr steps to dpeloy the Qwen/Qwen2.5-Coder-7B-Instruct model too.
+- Follow the below images to deploy the vllm model Qwen/Qwen2.5-Coder-7B-Instruct.
 
-![Hpe Mlis Packaged M0del Deployment Step 1](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_packaged_model_deployment_step_1.PNG)
+![Hpe Mlis Packaged Model Deployment Step 1](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_packaged_model_deployment_step_1.PNG)
 
 ![Hpe Mlis Packaged Model Deployment Step 2](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_packaged_model_deployment_step_2.PNG)
 
