@@ -14,9 +14,9 @@
 
 **1. Download the Open-WebUI helm-chart and the Open-WebUI logo.**
 
-[open-webui-5.4.0.tar.gz](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/open-webui-5.4.0.tar.gz)
+[open-webui-5.4.0.tar.gz](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/open-webui-5.4.0.tar.gz)
 
-[open-webui-logo.png](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/open-webui-logo.png)
+[open-webui-logo.png](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/open-webui-logo.png)
 
 **2. Import the framework into AIE stack on PCAI box.**
 
@@ -33,11 +33,11 @@
   
   Category (select)    : Data Science
   
-  Framework Icon*      : Upload the [open-webui-logo.png](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/open-webui-logo.png)
+  Framework Icon*      : Upload the [open-webui-logo.png](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/open-webui-logo.png)
   
   Helm Chart (select)  : Upload New Chart
   
-  Select File          : Upload the [open-webui-5.4.0.tar.gz](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/open-webui-5.4.0.tar.gz)
+  Select File          : Upload the [open-webui-5.4.0.tar.gz](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/open-webui-5.4.0.tar.gz)
   
   Namespace*           : open-webui
   
@@ -47,15 +47,15 @@
   
 - Submit
 
-![Import Framework Step 1](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/import_framework_step_1.PNG)
+![Import Framework Step 1](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/images/import_framework_step_1.PNG)
 
-![Import Framework Step 2](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/import_framework_step_2.PNG)
+![Import Framework Step 2](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/images/import_framework_step_2.PNG)
 
-![Import Framework Step 3](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/import_framework_step_3.PNG)
+![Import Framework Step 3](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/images/import_framework_step_3.PNG)
 
-![Import Framework Step 4](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/import_framework_step_4.PNG)
+![Import Framework Step 4](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/images/import_framework_step_4.PNG)
 
-![Import Framework Step 5](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/import_framework_step_5.PNG)
+![Import Framework Step 5](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/images/import_framework_step_5.PNG)
 
 **3. Model deployment on HPE MLIS.**
 
@@ -67,29 +67,29 @@ At the end copy the Model Endpoints and the API tokens to a text file as we will
 
 - Follow the below images to deploy the vllm model Qwen/Qwen2.5-Coder-7B-Instruct.
 
-![Hpe Mlis Packaged Model Deployment Step 1](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_packaged_model_deployment_step_1.PNG)
+![Hpe Mlis Packaged Model Deployment Step 1](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/images/hpe_mlis_packaged_model_deployment_step_1.PNG)
 
-![Hpe Mlis Packaged Model Deployment Step 2](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_packaged_model_deployment_step_2.PNG)
+![Hpe Mlis Packaged Model Deployment Step 2](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/images/hpe_mlis_packaged_model_deployment_step_2.PNG)
 
-![Hpe Mlis Packaged Model Deployment Step 3](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_packaged_model_deployment_step_3.PNG)
+![Hpe Mlis Packaged Model Deployment Step 3](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/images/hpe_mlis_packaged_model_deployment_step_3.PNG)
 
-![Hpe Mlis Packaged Model Deployment Step 4](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_packaged_model_deployment_step_4.PNG)
+![Hpe Mlis Packaged Model Deployment Step 4](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/images/hpe_mlis_packaged_model_deployment_step_4.PNG)
 
-![Hpe Mlis Packaged Model Deployment Step 5](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_packaged_model_deployment_step_5.PNG)
+![Hpe Mlis Packaged Model Deployment Step 5](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/images/hpe_mlis_packaged_model_deployment_step_5.PNG)
 
-![Hpe Mlis Packaged Model Deployment Step 6](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_packaged_model_deployment_step_6.PNG)
+![Hpe Mlis Packaged Model Deployment Step 6](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/images/hpe_mlis_packaged_model_deployment_step_6.PNG)
 
-![Hpe Mlis Packaged Model Deployment Step 7](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_packaged_model_deployment_step_7.PNG)
+![Hpe Mlis Packaged Model Deployment Step 7](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/images/hpe_mlis_packaged_model_deployment_step_7.PNG)
 
-![Hpe Mlis Packaged Model Deployment Step 8](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_packaged_model_deployment_step_8.PNG)
+![Hpe Mlis Packaged Model Deployment Step 8](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/images/hpe_mlis_packaged_model_deployment_step_8.PNG)
 
-![Hpe Mlis Packaged Model Deployment Step 9](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_packaged_model_deployment_step_9.PNG)
+![Hpe Mlis Packaged Model Deployment Step 9](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/images/hpe_mlis_packaged_model_deployment_step_9.PNG)
 
-![Hpe Mlis Model Endpoint Step 10](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_model_endpoint_step_10.PNG)
+![Hpe Mlis Model Endpoint Step 10](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/images/hpe_mlis_model_endpoint_step_10.PNG)
 
-![Hpe Mlis Model Api Token Step 11](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_api_token_step_11.PNG)
+![Hpe Mlis Model Api Token Step 11](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/images/hpe_mlis_api_token_step_11.PNG)
 
-![Hpe Mlis Model Api Token Step 12](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_api_token_step_12.PNG)
+![Hpe Mlis Model Api Token Step 12](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/images/hpe_mlis_api_token_step_12.PNG)
 
 **4. Open-WebUI Settings.**
 
@@ -111,13 +111,13 @@ You will see the **code_generation_pipeline** set as default pipeline.
 
 - Navigate to Admin Console >> Settings >> Connections and copy the pipeline key.
 
-![Open WebUI Pipelines Step 1](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/open_webui_pipelines_step_1.PNG)
+![Open WebUI Pipelines Step 1](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/images/open_webui_pipelines_step_1.PNG)
 
-![Open WebUI Pipelines Step 2](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/open_webui_pipelines_step_2.PNG)
+![Open WebUI Pipelines Step 2](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/images/open_webui_pipelines_step_2.PNG)
 
-![Open WebUI Pipelines Step 3](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/open_webui_pipelines_step_3.PNG)
+![Open WebUI Pipelines Step 3](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/images/open_webui_pipelines_step_3.PNG)
 
-![Open WebUI Pipelines key_Step 4](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/open_webui_pipelines_key.PNG)
+![Open WebUI Pipelines key_Step 4](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/images/open_webui_pipelines_key.PNG)
 
 **5. Install and configure Continue Dev extension on VSCODE on your laptop**
 
@@ -125,7 +125,7 @@ You will see the **code_generation_pipeline** set as default pipeline.
 
 1. Install the Continue Dev extension on VS Code.
 
-2. Open the config file and replace the entire content of the file with the entry in the file [continue_dev_config.yaml](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/continue_dev_config.yaml)
+2. Open the config file and replace the entire content of the file with the entry in the file [continue_dev_config.yaml](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/continue_dev_config.yaml)
 
 **NOTE : Remeber to fill/replace the correct apiBase for the open-webui pipeline in the config yaml file.**
 
@@ -135,9 +135,9 @@ You will see the **code_generation_pipeline** set as default pipeline.
 
 3. Save the configuration and you are ready.
 
-![Install VSCODE Extension Continue Dev](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/install_vscode_extension_continue_dev.PNG)
+![Install VSCODE Extension Continue Dev](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/images/install_vscode_extension_continue_dev.PNG)
 
-![Config of Continue Dev](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/config_vscode_extension_continue_dev.PNG)
+![Config of Continue Dev](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/images/config_vscode_extension_continue_dev.PNG)
 
   
 
