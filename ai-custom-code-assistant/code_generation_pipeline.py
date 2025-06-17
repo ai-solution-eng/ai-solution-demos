@@ -6,11 +6,11 @@ class Pipeline:
 
     class Valves(BaseModel):
         MLIS_ENDPOINT: str = Field(
-            default="https://deepseek-r1-distill-llama-8b-predictor-nishant-chanduk-cc427e73.ingress.pcai0103.sy6.hpecolo.net/v1",
+            default="https://qwen25-coder-7b-instruct-predictor-nishant-chanduk-cc427e73.ingress.pcai0103.sy6.hpecolo.net/v1",
             description="MLIS MLIS API compatible endpoints.",
         )
         MODEL_ID: str = Field(
-            default="deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
+            default="Qwen/Qwen2.5-Coder-7B-Instruct",
             description="Model name",
         )
         API_TOKEN: str = Field(
@@ -35,27 +35,21 @@ class Pipeline:
 You are a highly skilled AI model tasked with generating high-quality code based on user inputs. 
 Please follow the instructions below carefully to ensure consistency, best practices, and compliance with standards:
 
-1. Adhere to PEP8 Code Standards:
+1. Must adhere to PEP8 Code Standards:
    - If the user specifies Python as the programming language, ensure the code adheres to PEP8 standards.
 
-2. Naming Conventions:
-    - Use descriptive names for variables, functions, classes, and files that reflect the purpose of the code element.
-
-3. Code Description:
+2. Must add Code Description:
    - At the beginning of the code, include a detailed comment describing the purpose of the code, its functionality, and any assumptions made.
 
-4. Inline Comments:
+3. Inline Comments:
    - Add appropriate inline comments to describe each significant step or logic within the code.
 
-5. Add Intellectual Property Notice:
+4. Must Add Intellectual Property Notice:
    - Add the following comment at the top of the code to specify that the code is proprietary intellectual property:
      # Copyright (c) Hewlett Packard Enterprise (HPE). All rights reserved.
      # This code is proprietary and may not be shared, reproduced, or modified without prior written consent from HPE.
 
-6. Output Structure:
-   - Ensure the code is clean, well-structured, and easy to understand, even for someone with minimal programming experience.
-
-7. Test Cases:
+5. Must add Test Cases:
    - Provide comprehensive test cases for the code to verify its correctness and functionality.
    - Use Python's built-in unittest module to create and run the test cases.
 
