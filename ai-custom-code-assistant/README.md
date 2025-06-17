@@ -57,11 +57,9 @@
 
 ![Import Framework Step 5](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/import_framework_step_5.PNG)
 
-**3. Model depployment on HPE MLIS.**
+**3. Model deployment on HPE MLIS.**
 
-1. Deploy **deepseek-ai/DeepSeek-R1-Distill-Llama-8B.**
-
-2. Deploy **Qwen/Qwen2.5-Coder-7B-Instruct** :  This model has been deployed to enable **autocomplete** feature.
+1. Deploy **Qwen/Qwen2.5-Coder-7B-Instruct** :  This model has been deployed as it has the capabilities of **chat**, **edit** and **autocomplete** feature.
 
 One is however independent to choose models of their preference and deploy for usage.
 
@@ -86,11 +84,13 @@ At the end copy the Model Endpoints and the API tokens to a text file as we will
 
 ![Hpe Mlis Packaged Model Deployment Step 8](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_packaged_model_deployment_step_8.PNG)
 
-![Hpe Mlis Model Endpoint Step 9](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_model_endpoint_step_9.PNG)
+![Hpe Mlis Packaged Model Deployment Step 9](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_packaged_model_deployment_step_9.PNG)
 
-![Hpe Mlis Model Api Token Step 10](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_api_token_step_10.PNG)
+![Hpe Mlis Model Endpoint Step 10](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_model_endpoint_step_10.PNG)
 
 ![Hpe Mlis Model Api Token Step 11](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_api_token_step_11.PNG)
+
+![Hpe Mlis Model Api Token Step 12](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/ai-custom-code-assistant/images/hpe_mlis_api_token_step_12.PNG)
 
 **4. Open-WebUI Settings.**
 
@@ -102,9 +102,9 @@ You will see the **code_generation_pipeline** set as default pipeline.
 
 - Fill in the details below (Remember you saved the endpoint url and api token in the previosu step):
 
-  Mlis Endpoint : Replace the vllm **deepseek-ai/DeepSeek-R1-Distill-Llama-8B** model endpoint link from MLIS.
+  Mlis Endpoint : Replace the vllm **Qwen/Qwen2.5-Coder-7B-Instruct** model endpoint link from MLIS.
   
-  Model Id      : Add the actual model-id/model-name i.e **deepseek-ai/DeepSeek-R1-Distill-Llama-8B**
+  Model Id      : Add the actual model-id/model-name i.e **Qwen/Qwen2.5-Coder-7B-Instruct**
 
   Api Token     : Add the API Token generated from HPE MLIS for the model deployment.
 
