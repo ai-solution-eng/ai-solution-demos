@@ -12,10 +12,10 @@ This repository contains use case demos developed for Private Cloud AI (PCAI)
 
 ### Generative / Agentic
 
-| Use Case                                                      | Documentation | Video         | Code          | Tags                                      |
+| Use Case                                                      | Docs          | Video         | Code          | Tags                                      |
 | --------------------------------------------------------------|---------------|---------------|---------------|-------------------------------------------|
-| [Flight Customer Service Agent](flight-customer-service-agent)| Yes           | Yes           | Yes           |`GenAI`, `agentic`,`RAG`, `Langflow`       |
-| [Media Database SQL RAG](media-database-sql-rag)              | Yes           | Coming soon   | Yes           |`GenAI`, `SQL`,`RAG`, `vanna.ai`           |
+| [Flight CS Agent](flight-customer-service-agent)              | Yes           | Yes           | Yes           |`GenAI`, `agentic`,`RAG`, `Langflow`       |
+| [Media DB SQL RAG](media-database-sql-rag)                    | Yes           | Coming soon   | Yes           |`GenAI`, `SQL`,`RAG`, `vanna.ai`           |
 | [Vehicle Inspection](vechicle-inspection)                     | Yes           | Yes           | Coming soon   |`GenAI`, `Vision-Language`                 |
 | [Coding Assistant](coding-assistant)                          | Yes           | Coming soon   | Yes           |`GenAI`, `Coding`, `Continue.dev`          |
 | [Onboarding Buddy](onboarding-buddy)                          | Yes           | Coming soon   | Yes           |`GenAI`, `Chatbot`                         |
@@ -24,11 +24,10 @@ This repository contains use case demos developed for Private Cloud AI (PCAI)
 
 ### Upcoming
 
-| Use Case                                                      | Documentation | Video         | Code          | Tags                                      |
+| Use Case                                                      | Docs          | Video         | Code          | Tags                                      |
 | --------------------------------------------------------------|---------------|---------------|---------------|-------------------------------------------|
 | [Medical Audio Transcription (multi-lingual)]()               | Coming soon   | Coming soon   | Coming soon   |`GenAI`, `ASR`,`NVIDIA`                    |
 | [Custom RAG]()                                                | Coming soon   | Coming soon   | Coming soon   |`GenAI`,`RAG`,`Langflow`                   |
-| []
 
 ## How to Contribute
 
