@@ -1,6 +1,7 @@
 <div align=center>
 <img src="https://raw.githubusercontent.com/hpe-design/logos/master/Requirements/color-logo.png" alt="HPE Logo" height="100"/>
 </div>
+
 # HPE Private Cloud AI
 
 ##  AI Solution Use Case Demos
