@@ -16,7 +16,7 @@ This repository contains use case demos developed for Private Cloud AI (PCAI)
 | --------------------------------------------------------------|---------------|---------------|---------------|-------------------------------------------|
 | [Flight CS Agent](flight-customer-service-agent)              | Yes           | Yes           | Yes           |`GenAI`, `agentic`,`RAG`, `Langflow`       |
 | [Media DB SQL RAG](media-database-sql-rag)                    | Yes           | Coming soon   | Yes           |`GenAI`, `SQL`,`RAG`, `vanna.ai`           |
-| [Vehicle Inspection](vechicle-inspection)                     | Yes           | Yes           | Coming soon   |`GenAI`, `Vision-Language`                 |
+| [Vehicle Inspection](vehicle-inspection)                      | Yes           | Yes           | Coming soon   |`GenAI`, `Vision-Language`                 |
 | [Coding Assistant](coding-assistant)                          | Yes           | Coming soon   | Yes           |`GenAI`, `Coding`, `Continue.dev`          |
 | [Onboarding Buddy](onboarding-buddy)                          | Yes           | Coming soon   | Yes           |`GenAI`, `Chatbot`                         |
 | [License Plate Detection](license-plate-number-detection)     | Yes           | No            | Yes           |`Computer Vision`,`Fine-tune`,`YOLO`       |
