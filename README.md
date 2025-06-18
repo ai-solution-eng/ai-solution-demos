@@ -8,10 +8,6 @@
 
 This repository contains use case demos developed for Private Cloud AI (PCAI)
 
-
-
-### Generative / Agentic
-
 | Use Case                                                      | Docs          | Video         | Code          | Tags                                      |
 | --------------------------------------------------------------|---------------|---------------|---------------|-------------------------------------------|
 | [Flight CS Agent](flight-customer-service-agent)              | Yes           | Yes           | Yes           |`GenAI`, `agentic`,`RAG`, `Langflow`       |
