@@ -2,6 +2,9 @@
 
 #### This repository contains package and steps for deployment of an AI Coding assitant on AIE software on a PCAI box.
 
+## **Demo overview video**
+[Short version](https://hpe.sharepoint.com/:v:/r/sites/aisolutionsandcloudengineeringteam/Shared%20Documents/Go%20to%20Market%20Team/Customer%20Engineering/PCAI-Team-Demos/Nishant%20Chanduka/AI_Custom_Coding_Assistant_with_HPE.mp4?csf=1&web=1&e=RQup5G)
+
 ## **Tools and frameworks used:**
 
 **1. Open-WebUI**
