@@ -76,9 +76,14 @@ with DAG(
 
         return answer
 
-    @task.branch()
-    def evaluate_answer(answer):
+    def decide_branch_path(ti):
+        result = ti.xcom_pull(task_ids='ask_ai')
         return 'post_customer_message'
+
+    branch_on_answer = BranchPythonOperator(
+        task_id='branch_on_answer',
+        python_callable=decide_branch_path,
+    )
  
     @task()
     def post_customer_message(results, msg):
@@ -94,10 +99,9 @@ with DAG(
     records = query_postgres()
     branch.set_upstream(records)
     branch >> end_no_data
-    branch >> ask_ai(records)
     answer = ask_ai(records)
-
-    branch2 = evaluate_answer(answer)
-    post_customer_message(records, answer) << branch2
+    branch >> answer
+    branch_on_answer.set_upstream(answer)
+    post_customer_message(records, answer) << branch_on_answer
 
         
