@@ -82,7 +82,7 @@ with DAG(
     results = query_postgres()
     answer = ask_ai(results)
     evaluate_answer(answer)
-    post_customer_message(results[0][0], answer) << branch
+    post_customer_message(str(results[0][0]), answer) << branch
 #    post_internal_message(answer) << branch
     
 
