@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import datetime
 import os
+
 from airflow import DAG
 from airflow.decorators import task
+from airflow.operators.empty import EmptyOperator
+from airflow.operators.python import BranchPythonOperator
+from airflow.hooks.postgres_hook import PostgresHook
+
 
 
 DAG_ID = "ai-support-assistant-dag"
@@ -18,12 +23,22 @@ with DAG(
     catchup=False,
 ) as dag:
 
-    @task(task_id="ask_ai")
-    def ask_ai(params: dict):
+    @task()
+    def query_postgres():
+        hook = PostgresHook(postgres_conn_id='postgres')
+        records = hook.get_records("SELECT case_id, max(msg) AS msg FROM msgs GROUP BY case_id HAVING count(case_id) = 1 LIMIT 1")
+        if not records:
+            return None
+        return records
+
+
+    @task()
+    def ask_ai(query_results):
         import requests
         import logging
 
-        question = params["question"]
+        # Get the "msg" from the first (and only) row
+        question = query_results[0][1]
 
         logger = logging.getLogger(__name__)
         logger.info("This is a log message")
@@ -53,4 +68,8 @@ with DAG(
 
         # print("\n\n" + answer)
 
-    ask_ai()
+
+    # DAG flow
+    results = query_postgres()
+    ask_ai(results)
+  
