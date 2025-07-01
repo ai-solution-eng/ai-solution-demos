@@ -29,11 +29,16 @@ with DAG(
         records = hook.get_records("SELECT case_id, max(msg) AS msg FROM msgs GROUP BY case_id HAVING count(case_id) = 1 LIMIT 1")
         return records if records else None
 
-    @task.branch()
-    def route_on_query_result(results):
-        if not results:
+    def route_on_query_result(ti):
+        records = ti.xcom_pull(task_ids='query_postgres')
+        if not records:
             return 'end_no_data'
         return 'ask_ai'
+
+    branch = BranchPythonOperator(
+        task_id='branch_on_query_result',
+        python_callable=route_on_query_result,
+    )
 
     @task()
     def ask_ai(query_results):
@@ -86,17 +91,12 @@ with DAG(
     end_no_data = EmptyOperator(task_id='end_no_data')
 
     # DAG flow
-    results = query_postgres()
-    results_route = route_on_query_result(results)
+    records = query_postgres()
+    branch.set_upstream(records)
+    branch >> end_no_data
+    answer = ask_ai(records) << branch
 
-    answer = ask_ai(results) << results_route
-    branch = evaluate_answer(answer) << ask_ai
-    post_customer_message(results, answer) << branch
-#    post_internal_message(answer) << branch
+    branch2 = evaluate_answer(answer)
+    post_customer_message(results, answer) << branch2
 
-    results_route >> end_no_data
         
-
-
-
-  
