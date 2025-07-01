@@ -78,7 +78,11 @@ with DAG(
 
     def decide_branch_path(ti):
         result = ti.xcom_pull(task_ids='ask_ai')
-        return 'post_customer_message'
+
+        if "unable to answer" in result:
+            return 'post_internal_message'
+        else:
+            return 'post_customer_message'
 
     branch_on_answer = BranchPythonOperator(
         task_id='branch_on_answer',
@@ -90,7 +94,15 @@ with DAG(
         case_id = str(results[0][0])
 
         hook = PostgresHook(postgres_conn_id='postgres')
-        sql = "INSERT INTO msgs (case_id, msg) VALUES (%s, %s);"
+        sql = "INSERT INTO msgs (case_id, msg, msg_type) VALUES (%s, %s, 'Message to Customer');"
+        hook.run(sql, parameters=(case_id, msg))
+ 
+    @task()
+    def post_internal_message(results, msg):
+        case_id = str(results[0][0])
+
+        hook = PostgresHook(postgres_conn_id='postgres')
+        sql = "INSERT INTO msgs (case_id, msg, msg_type) VALUES (%s, %s, 'Internal Message');"
         hook.run(sql, parameters=(case_id, msg))
 
     end_no_data = EmptyOperator(task_id='end_no_data')
@@ -103,5 +115,6 @@ with DAG(
     branch >> answer
     branch_on_answer.set_upstream(answer)
     post_customer_message(records, answer) << branch_on_answer
+    post_internal_message(records, answer) << branch_on_answer
 
         
