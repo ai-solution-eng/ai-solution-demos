@@ -89,7 +89,7 @@ with DAG(
     results = query_postgres()
     results_route = route_on_query_result(results)
 
-    answer = ask_ai(results)
+    answer = ask_ai(results) << results_route
     branch = evaluate_answer(answer)
     post_customer_message(results, answer) << branch
 #    post_internal_message(answer) << branch
