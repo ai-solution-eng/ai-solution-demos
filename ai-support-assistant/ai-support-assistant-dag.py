@@ -94,7 +94,8 @@ with DAG(
     records = query_postgres()
     branch.set_upstream(records)
     branch >> end_no_data
-    branch >> answer = ask_ai(records)
+    branch >> ask_ai(records)
+    answer = ask_ai(records)
 
     branch2 = evaluate_answer(answer)
     post_customer_message(records, answer) << branch2
