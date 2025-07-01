@@ -97,6 +97,6 @@ with DAG(
     answer = ask_ai(records) << branch
 
     branch2 = evaluate_answer(answer)
-    post_customer_message(results, answer) << branch2
+    post_customer_message(records, answer) << branch2
 
         
