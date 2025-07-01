@@ -27,10 +27,13 @@ with DAG(
     def query_postgres():
         hook = PostgresHook(postgres_conn_id='postgres')
         records = hook.get_records("SELECT case_id, max(msg) AS msg FROM msgs GROUP BY case_id HAVING count(case_id) = 1 LIMIT 1")
-        if not records:
-            return None
-        return records
+        return records if records else None
 
+    @task.branch()
+    def route_on_query_result(results):
+        if not results:
+            return 'end_no_data'
+        return 'ask_ai'
 
     @task()
     def ask_ai(query_results):
@@ -80,15 +83,18 @@ with DAG(
         sql = "INSERT INTO msgs (case_id, msg) VALUES (%s, %s);"
         hook.run(sql, parameters=(case_id, msg))
 
+    end_no_data = EmptyOperator(task_id='end_no_data')
 
     # DAG flow
     results = query_postgres()
+    results_route = route_on_query_result(results)
 
-    if results:
-        answer = ask_ai(results)
-        branch = evaluate_answer(answer)
-        post_customer_message(results, answer) << branch
-    #    post_internal_message(answer) << branch
+    answer = ask_ai(results)
+    branch = evaluate_answer(answer)
+    post_customer_message(results, answer) << branch
+#    post_internal_message(answer) << branch
+
+    results_route >> end_no_data
         
 
 
