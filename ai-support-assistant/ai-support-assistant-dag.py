@@ -83,7 +83,7 @@ with DAG(
     # DAG flow
     results = query_postgres()
     answer = ask_ai(results)
-    evaluate_answer(answer)
+    branch = evaluate_answer(answer)
     post_customer_message(results, answer) << branch
 #    post_internal_message(answer) << branch
     
