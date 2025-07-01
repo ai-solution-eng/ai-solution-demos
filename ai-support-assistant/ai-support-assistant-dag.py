@@ -78,7 +78,7 @@ with DAG(
 
         hook = PostgresHook(postgres_conn_id='postgres')
         sql = "INSERT INTO msgs (case_id, msg) VALUES (%s, %s);"
-        hook.run(sql, parameters=({case_id}, {msg}))
+        hook.run(sql, parameters=(case_id, msg))
 
 
     # DAG flow
