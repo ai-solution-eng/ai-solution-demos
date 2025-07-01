@@ -90,7 +90,7 @@ with DAG(
     results_route = route_on_query_result(results)
 
     answer = ask_ai(results) << results_route
-    branch = evaluate_answer(answer)
+    branch = evaluate_answer(answer) << ask_ai
     post_customer_message(results, answer) << branch
 #    post_internal_message(answer) << branch
 
