@@ -66,10 +66,26 @@ with DAG(
 
         logger.info(answer)
 
-        # print("\n\n" + answer)
+        return answer
+
+    @task().branch
+    def evaluate_answer(answer):
+        return 'post_customer_message'
+ 
+    @task()
+    def post_customer_message(case_id, msg):
+        hook = PostgresHook(postgres_conn_id='postgres')
+        hook.run(f"INSERT INTO msgs (case_id, msg) VALUES ({case_id}, {msg});")
 
 
     # DAG flow
     results = query_postgres()
-    ask_ai(results)
+    answer = ask_ai(results)
+    evaluate_answer(answer)
+    post_customer_message(results[0][0], answer) << branch
+#    post_internal_message(answer) << branch
+    
+
+
+
   
