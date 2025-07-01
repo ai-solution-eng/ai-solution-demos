@@ -68,7 +68,7 @@ with DAG(
 
         return answer
 
-    @task().branch
+    @task.branch()
     def evaluate_answer(answer):
         return 'post_customer_message'
  
