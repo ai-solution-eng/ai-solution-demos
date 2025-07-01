@@ -16,9 +16,6 @@ DAG_ID = "ai-support-assistant-dag"
 with DAG(
     dag_id=DAG_ID,
     start_date=datetime.datetime(1970, 1, 1),
-    params={
-         "question": "Why is the sky blue?"
-     },
     schedule=None,
     catchup=False,
 ) as dag:
@@ -94,16 +91,16 @@ with DAG(
         case_id = str(results[0][0])
 
         hook = PostgresHook(postgres_conn_id='postgres')
-        sql = "INSERT INTO msgs (case_id, msg, msg_type) VALUES (%s, %s, 'Message to Customer');"
-        hook.run(sql, parameters=(case_id, msg))
+        sql = "INSERT INTO msgs (case_id, msg, msg_type) VALUES (%s, %s, %s);"
+        hook.run(sql, parameters=(case_id, msg, 'Message to Customer'))
  
     @task()
     def post_internal_message(results, msg):
         case_id = str(results[0][0])
 
         hook = PostgresHook(postgres_conn_id='postgres')
-        sql = "INSERT INTO msgs (case_id, msg, msg_type) VALUES (%s, %s, 'Internal Message');"
-        hook.run(sql, parameters=(case_id, msg))
+        sql = "INSERT INTO msgs (case_id, msg, msg_type) VALUES (%s, %s, %s);"
+        hook.run(sql, parameters=(case_id, msg, 'Internal Message'))
 
     end_no_data = EmptyOperator(task_id='end_no_data')
 
