@@ -1,0 +1,85 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: gradio-ui-service
+  namespace: andrew-mendez-184335fb
+spec:
+  type: ClusterIP
+  selector:
+    app: audio-pipeline
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: audio-pipeline-deployment
+  namespace: andrew-mendez-184335fb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: audio-pipeline
+  template:
+    metadata:
+      labels:
+        app: audio-pipeline
+      annotations:
+        sidecar.istio.io/inject: "false"  # <-- Disable Istio sidecar
+    spec:
+      containers:
+      - name: websocket-server
+        image: mendeza/web-socket-server:0.0.1
+        imagePullPolicy: Always             # <-- Always pull
+        ports:
+        - containerPort: 8765
+        env:
+        - name: LLM_API_BASE
+          value: "https://llama-32-1b-dep-predictor-andrew-mendez-184335fb.ingress.pcai0108.dc15.hpecolo.net/v1"
+        - name: LLM_API_KEY
+          value: "<UPDATE>"
+        - name: LLM_MODEL_NAME
+          value: "meta-llama/Llama-3.2-1B-Instruct"
+        - name: ASR_SERVER_ADDRESS
+          value: "parakeet-asr-api-predictor-00002-deployment.andrew-mendez-184335fb.svc.cluster.local:50051"
+        - name: TTS_SERVER_ADDRESS
+          value: "tts-api-predictor-00002-deployment.andrew-mendez-184335fb.svc.cluster.local:50051"
+        - name: TTS_SAMPLE_RATE_HZ
+          value: "44100"
+
+      - name: gradio-ui
+        image: mendeza/web-socket-server-ui:0.0.1
+        imagePullPolicy: Always             # <-- Always pull
+        ports:
+        - containerPort: 8080
+        env:
+        - name: WEBSOCKET_URI
+          value: "ws://localhost:8765"
+        - name: TTS_SAMPLE_RATE_HZ
+          value: "44100"
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: riva-virtual-service
+  namespace: andrew-mendez-184335fb
+spec:
+  gateways:
+  - istio-system/ezaf-gateway
+  hosts:
+  - riva-websocket.ingress.pcai0108.dc15.hpecolo.net
+  http:
+  - match:
+    - uri:
+        prefix: /
+    rewrite:
+      uri: /
+    route:
+    - destination:
+        host: gradio-ui-service.andrew-mendez-184335fb.svc.cluster.local
+        port:
+          number: 8080
