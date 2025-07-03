@@ -10,6 +10,20 @@ Users can view up to four MJPEG video streams, capture a single frame from any s
 
 *(Image: A conceptual view of the Gradio UI, showing four video stream panels, each with controls for analysis and data export.)*
 
+---
+
+### Context on Customer and Use Case
+
+This customer runs a chain of vehicle inspection centers in Latin America. Their goal in engaging with us was to modernize their facilities and automate current processes around auditing, surveillance, and control of the inspection process. They were looking to use AI to extract metadata about the vehicles in their facilities and make that metadata available to analysts and downstream processes.
+
+### Solution Overview and Demo Video
+
+![Solution Overview](assets/SolutionOverview.jpg)
+
+▶️ [Quick Demo Video](https://hpe-my.sharepoint.com/:v:/p/akash_khanna/EQj1-tXzrTdEi3nBGVIe9dwBLJKRiBhHLUAVn2agLjddrg)
+
+---
+
 ### Key Features
 
 *   **Quad-Stream Viewer:** Monitor up to four independent MJPEG video streams simultaneously in a tabbed interface.
