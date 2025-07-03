@@ -1,0 +1,47 @@
+# Default values for gradio-vlm-chart.
+# All values can be overridden during Helm installation.
+
+replicaCount: 1
+
+# Configuration for the Gradio VLM container
+app:
+  image:
+    repository: mendeza/gradio_stream_demo
+    pullPolicy: Always
+    # The image tag to deploy. Defaults to the chart's appVersion.
+    tag: "0.0.1"
+
+  port: 7860
+
+  Note: The current version of the application (0.0.1) does not read credentials from
+  environment variables. They must be configured through the Gradio UI after deployment.
+  To enable environment variables, modify the app.py to use os.getenv() for the API key and base URL.
+  env:
+    llmApiKey: ""
+    llmApiBase: ""
+
+  resources:
+    # High resource requests based on the k8s manifest. Adjust as needed for your cluster.
+    requests:
+      cpu: "4"
+      memory: "10Gi"
+    limits:
+      cpu: "4"
+      memory: "10Gi"
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 7860
+
+# Istio/PCAI configuration for external access
+ezua:
+  enabled: true
+  virtualService:
+    # The external hostname for the service.
+    # IMPORTANT: Update this to match your PCAI environment's ingress domain.
+    # Example: gradio-vlm.my-namespace.ingress.my-pcai-cluster.com
+    endpoint: "gradio-vlm.${DOMAIN_NAME}"
+
+    # The Istio gateway to bind to. This is the standard gateway for PCAI.
+    istioGateway: "istio-system/ezaf-gateway"
