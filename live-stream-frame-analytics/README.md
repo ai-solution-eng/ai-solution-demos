@@ -21,13 +21,6 @@ Users can view up to four MJPEG video streams, capture a single frame from any s
 
 ---
 
-![Solution Overview](assets/slide1.jpg)
-
-▶️ [Quick Demo Video](https://hpe-my.sharepoint.com/:v:/p/akash_khanna/Ed0pVF41q69BoSX2c8HzZScBYlappy_xadkrUQV2MiyXIw?nav=eyJyZWZlcnJhbEluZm8iOnsicmVmZXJyYWxBcHAiOiJPbmVEcml2ZUZvckJ1c2luZXNzIiwicmVmZXJyYWxBcHBQbGF0Zm9ybSI6IldlYiIsInJlZmVycmFsTW9kZSI6InZpZXciLCJyZWZlcnJhbFZpZXciOiJNeUZpbGVzTGlua0NvcHkifX0&e=SmL4wf)
-
-
----
-
 ## Prerequisites
 
 ### 1. Model Deployment in HPE PCAI

@@ -2,6 +2,12 @@
 
 # End-to-End Audio Conversational Agent in HPE's Private Cloud AI (PCAI) Platform
 
+![Solution Overview](assets/slide1.jpg)
+
+▶️ [Quick Demo Video](https://hpe-my.sharepoint.com/:v:/p/akash_khanna/Ed0pVF41q69BoSX2c8HzZScBYlappy_xadkrUQV2MiyXIw?nav=eyJyZWZlcnJhbEluZm8iOnsicmVmZXJyYWxBcHAiOiJPbmVEcml2ZUZvckJ1c2luZXNzIiwicmVmZXJyYWxBcHBQbGF0Zm9ybSI6IldlYiIsInJlZmVycmFsTW9kZSI6InZpZXciLCJyZWZlcnJhbFZpZXciOiJNeUZpbGVzTGlua0NvcHkifX0&e=SmL4wf)
+
+---
+
 This repo guides you through:
 
 1.  **Docker** → build & push two images (WebSocket server & Gradio UI)
