@@ -21,7 +21,7 @@
 
 [open-webui-logo.png](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/open-webui-logo.png)
 
-**2. Import the framework into AIE stack on PCAI box.**
+**2. Import the framework into AIE stack on PCAI system.**
 
 - Login into AIE software stack.
 - Navigate to **Tools & Frameworks.**
@@ -102,7 +102,7 @@ At the end copy the Model Endpoints and the API tokens to a text file as we will
 
 ![Hpe Mlis Model Api Token Step 12](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/images/hpe_mlis_api_token_step_12.PNG)
 
-**4. Open-WebUI Settings.**
+**4. Open-WebUI [UC - AI Coding Assistant] Settings.**
 
 You will see the **code_generation_pipeline** set as default pipeline.
 
