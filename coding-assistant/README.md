@@ -60,6 +60,11 @@
 
 ![Import Framework Step 5](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/images/import_framework_step_5.PNG)
 
+**Once imported the login credetials are set as below**
+**User Name   : admin**
+**User Email  : admin@hpe.com**
+**Passowrd    : admin**
+
 **3. Model deployment on HPE MLIS.**
 
 1. Deploy **Qwen/Qwen2.5-Coder-7B-Instruct** :  This model has been deployed as it has the capabilities of **chat**, **edit** and **autocomplete** feature.
