@@ -45,8 +45,11 @@ with DAG(
         # Get the "msg" from the first (and only) row
         question = query_results[0][1]
 
+        if not question:
+            return('I am unable to answer as a question was not provided.')
+
         logger = logging.getLogger(__name__)
-        logger.info("This is a log message")
+        logger.info("Processing question: " + question)
 
         url = 'http://host.docker.internal:8888/api/chat/completions'
         headers = {
@@ -62,9 +65,7 @@ with DAG(
             }
           ]
         }
-
-        logger.info(question)
-
+        
         response = requests.post(url, headers=headers, json=data)
         data = response.json()
         answer = data["choices"][0]["message"]["content"]
