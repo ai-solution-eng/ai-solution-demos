@@ -6,7 +6,8 @@ This folder contains everything needed to build and push the two Docker images u
 
 ## Prerequisites
 
-- **Docker >= 20.10** with Buildx enabled  
+- **Docker >= 20.10** with Buildx enabled
+  - Note: Buildx is only for Mac machines that are using ARM CPUs, Amd based machines do not require buildx.
 - A Docker registry account (Docker Hub, ECR, GCR, etc.)
 
 ## Configuration
