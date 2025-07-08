@@ -7,7 +7,7 @@ This project demonstrates a powerful, interactive web application for analyzing 
 
 Users can view up to four MJPEG video streams, capture a single frame from any stream, and send it to a deployed VLM with a custom prompt to extract structured information.
 
-
+![Solution Overview](assets/ci2_demo.png)
 *(Image: A conceptual view of the Gradio UI, showing four video stream panels, each with controls for analysis and data export.)*
 
 ### Key Features
