@@ -30,7 +30,7 @@ To switch to **Spanish**, open `values.yaml` and modify the following keys under
     -   Female: `"Magpie-Multilingual.ES-US.Isabela"`
 - `LLM_PROMPT_TEMPLATE`: `'Answer the question: "{transcript}"\n\nAnswer concisely and in Spanish.'`
 
-The LLM_PROMPT_TEMPLATE needs to change, because by default the LLM will respond in spanish.
+The LLM_PROMPT_TEMPLATE needs to change, because by default the LLM will respond in english with the original prompt template:`'Answer the question: "{transcript}"\n\nAnswer concisely.'`.
 
 Here is an example snippet from `values.yaml` configured for the male Spanish voice:
 
