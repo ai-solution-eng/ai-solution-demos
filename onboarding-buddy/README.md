@@ -165,7 +165,7 @@ Note: The production build is what gets deployed to Docker and Kubernetes enviro
 #### Quick Start with Pre-built Docker Image (Recommended)
 If you want to try the application immediately, use the public image:
 ```sh
-docker run -p 8080:80 claudiocalderon/onboarding-buddy:v0.0.7-alpha
+docker run -p 8080:80 claudiodeterminedai/onboarding-buddy:v0.0.7-alpha
 ```
 Then access [http://localhost:8080](http://localhost:8080).
 
@@ -241,7 +241,7 @@ The application is designed to be deployed on HPE's Private Cloud AI (PCAI) usin
    
    # Image configuration
    image:
-     repository: claudiocalderon/onboarding-buddy
+     repository: claudiodeterminedai/onboarding-buddy
      tag: v0.0.7-alpha
      pullPolicy: IfNotPresent
    
@@ -367,7 +367,7 @@ The Helm chart includes the following configurable parameters:
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `replicaCount` | Number of pod replicas | `1` |
-| `image.repository` | Container image repository | `claudiocalderon/onboarding-buddy` |
+| `image.repository` | Container image repository | `claudiodeterminedai/onboarding-buddy` |
 | `image.tag` | Container image tag | `v0.0.7-alpha` |
 | `image.pullPolicy` | Image pull policy | `IfNotPresent` |
 | `resources.requests.cpu` | CPU request | `100m` |
