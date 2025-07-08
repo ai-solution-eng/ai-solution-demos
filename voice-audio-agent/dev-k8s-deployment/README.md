@@ -15,7 +15,7 @@ This folder provides a simple Service, Deployment, and Istio VirtualService in `
 Open `pod-svc-vs.yaml` and update:
 
 - **Namespace** under every `metadata:` block  
-- `OPENAI_API_KEY` environment variable  
+- `LLM_API_KEY` environment variable  
 - URLs for `LLM_API_BASE`, `ASR_SERVER_ADDRESS`, and `TTS_SERVER_ADDRESS` if your services live elsewhere  
 
 ## Deploy
