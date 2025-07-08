@@ -1,6 +1,6 @@
 # Real-Time VLM-Powered Video Stream Analysis on HPE Private Cloud AI
 
-author: andrew.mendez@hpe.com
+author: andrew.mendez@hpe.com, akash.khanna@hpe.com
 
 
 This project demonstrates a powerful, interactive web application for analyzing multiple, real-time video streams using a Vision Language Model (VLM). The application is built with Gradio, containerized with Docker, and designed for seamless deployment on **HPE Private Cloud AI (PCAI)** using a reusable Helm chart.
@@ -8,8 +8,8 @@ This project demonstrates a powerful, interactive web application for analyzing 
 Users can view up to four MJPEG video streams, capture a single frame from any stream, and send it to a deployed VLM with a custom prompt to extract structured information.
 
 ![Solution Overview](assets/ci2_demo.png)
-*(Image: A conceptual view of the Gradio UI, showing four video stream panels, each with controls for analysis and data export.)*
 
+▶️ [Quick Demo Video](assets/CI2_Demo_Video_720p.mp4)
 ### Key Features
 
 *   **Quad-Stream Viewer:** Monitor up to four independent MJPEG video streams simultaneously in a tabbed interface.
