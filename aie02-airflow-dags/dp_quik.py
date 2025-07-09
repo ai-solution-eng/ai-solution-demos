@@ -102,4 +102,4 @@ with DAG(
 
     cleanup_export_dir_task = cleanup_export_dir()
 
-    cleanup_export_dir_task >> download_s3_file_to_shared_volume.expand(filepath=get_all_filepaths_from_s3_path())
+    cleanup_export_dir_task >> download_s3_file_to_shared_volume.expand(s3path=get_all_filepaths_from_s3_path())
