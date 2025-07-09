@@ -83,8 +83,7 @@ with DAG(
         dnld_dir = context['params']['dnld_dir']
         #
         # Make sure all subdirectories have been created before download
-        subdir_in_s3 = path.dirname(filepath)
-        s3_full_pfx = path.dirname(filepath)
+        s3_full_pfx = path.dirname(s3path)
         s3_sub_pfx = s3_full_pfx[(s3_full_pfx.find(s3_prefix)+len(s3_prefix)):]
         export_dir = path.join(shared_vol_base, dnld_path, dnld_dir, s3_sub_pfx)
         os.makedirs(export_dir, mode=0o775, exist_ok=True)
