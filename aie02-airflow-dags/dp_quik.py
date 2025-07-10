@@ -52,7 +52,10 @@ with DAG(
         if path.exists(token_file):
             msg = f"{token_file} found! It contains: "
             with open(token_file, 'r') as fd:
-                msg += fd.read().strip()
+                auth_token = fd.read().strip()
+                os.environ['AUTH_TOKEN'] = auth_token
+                print(f"AUTH_TOKEN={os.environ['AUTH_TOKEN']}")
+                msg += auth_token
                 return {msg}
         return f"{token_file} not found"
 
@@ -62,6 +65,10 @@ with DAG(
         shared_vol_base = context['params']['shared_vol_base']
         dnld_path = context['params']['dnld_path']
         dnld_dir = context['params']['dnld_dir']
+        if 'AUTH_TOKEN' in os.environ:
+            print(f"AUTH_TOKEN={os.environ['AUTH_TOKEN']}")
+        else:
+            print(f"AUTH_TOKEN not set!")
         export_dir = path.join(shared_vol_base, dnld_path, dnld_dir)
         if path.exists(export_dir):
             shutil.rmtree(export_dir)
@@ -71,6 +78,10 @@ with DAG(
     @task
     def get_all_filepaths_from_s3_path():
         context = get_current_context()
+        if 'AUTH_TOKEN' in os.environ:
+            print(f"AUTH_TOKEN={os.environ['AUTH_TOKEN']}")
+        else:
+            print(f"AUTH_TOKEN not set!")
         av_conn_id = context['params']['av_conn_id']
         s3_bucket = context['params']['s3_bucket']
         s3_prefix = context['params']['s3_prefix']
@@ -83,6 +94,10 @@ with DAG(
         context = get_current_context()
         #
         # S3 identifiers
+        if 'AUTH_TOKEN' in os.environ:
+            print(f"AUTH_TOKEN={os.environ['AUTH_TOKEN']}")
+        else:
+            print(f"AUTH_TOKEN not set!")
         av_conn_id = context['params']['av_conn_id']
         s3_bucket = context['params']['s3_bucket']
         s3_prefix = context['params']['s3_prefix']
