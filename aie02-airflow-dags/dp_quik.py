@@ -12,6 +12,11 @@ from airflow.operators.python import get_current_context
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 from airflow.providers.weaviate.hooks.weaviate import WeaviateHook
 
+token_file = '/etc/secrets/ezua/.auth_token'
+if path.exists(token_file):
+    with open(token_file, 'r') as fd:
+        auth_token = fd.read().strip()
+        os.environ['AUTH_TOKEN'] = auth_token
 
 default_args = {
     'owner': 'airflow',
@@ -48,16 +53,11 @@ with DAG(
 
     @task
     def check_for_auth_token():
-        token_file = '/etc/secrets/ezua/.auth_token'
-        if path.exists(token_file):
-            msg = f"{token_file} found! It contains: "
-            with open(token_file, 'r') as fd:
-                auth_token = fd.read().strip()
-                os.environ['AUTH_TOKEN'] = auth_token
-                print(f"AUTH_TOKEN={os.environ['AUTH_TOKEN']}")
-                msg += auth_token
-                return {msg}
-        return f"{token_file} not found"
+        if 'AUTH_TOKEN' in os.environ:
+            print(f"AUTH_TOKEN={os.environ['AUTH_TOKEN']}")
+        else:
+            raise ValueError('AUTH_TOKEN not set!')
+        return
 
     @task
     def cleanup_export_dir():
@@ -68,7 +68,7 @@ with DAG(
         if 'AUTH_TOKEN' in os.environ:
             print(f"AUTH_TOKEN={os.environ['AUTH_TOKEN']}")
         else:
-            print(f"AUTH_TOKEN not set!")
+            raise ValueError('AUTH_TOKEN not set!')
         export_dir = path.join(shared_vol_base, dnld_path, dnld_dir)
         if path.exists(export_dir):
             shutil.rmtree(export_dir)
@@ -81,7 +81,7 @@ with DAG(
         if 'AUTH_TOKEN' in os.environ:
             print(f"AUTH_TOKEN={os.environ['AUTH_TOKEN']}")
         else:
-            print(f"AUTH_TOKEN not set!")
+            raise ValueError('AUTH_TOKEN not set!')
         av_conn_id = context['params']['av_conn_id']
         s3_bucket = context['params']['s3_bucket']
         s3_prefix = context['params']['s3_prefix']
@@ -97,7 +97,7 @@ with DAG(
         if 'AUTH_TOKEN' in os.environ:
             print(f"AUTH_TOKEN={os.environ['AUTH_TOKEN']}")
         else:
-            print(f"AUTH_TOKEN not set!")
+            raise ValueError('AUTH_TOKEN not set!')
         av_conn_id = context['params']['av_conn_id']
         s3_bucket = context['params']['s3_bucket']
         s3_prefix = context['params']['s3_prefix']
