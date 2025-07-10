@@ -18,6 +18,13 @@ with DAG(
     start_date=datetime.datetime(1970, 1, 1),
     schedule="* * * * *",
     catchup=False,
+    access_control={
+        'All': {
+            'can_read',
+            'can_edit',
+            'can_delete'
+        }
+    }
 ) as dag:
 
     @task()
