@@ -19,12 +19,8 @@ with DAG(
     schedule="* * * * *",
     catchup=False,
     access_control={
-        'All': {
-            'can_read',
-            'can_edit',
-            'can_delete'
-        }
-    }
+        "Public": {"can_edit", "can_read", "can_delete"},
+    },
 ) as dag:
 
     @task()
