@@ -47,6 +47,16 @@ with DAG(
 ) as dag:
 
     @task
+    def check_for_auth_token():
+        token_file = '/etc/secrets/ezua/.auth_token'
+        if path.exists(token_file):
+            msg = f"{token_file} found! It contains: "
+            with open(token_file, 'r') as fd:
+                msg += fd.read().strip()
+                return {msg}
+        return f"{token_file} not found"
+
+    @task
     def cleanup_export_dir():
         context = get_current_context()
         shared_vol_base = context['params']['shared_vol_base']
@@ -57,7 +67,7 @@ with DAG(
             shutil.rmtree(export_dir)
             return f"Deleted directory {export_path}"
         return f"{export_dir} doesn't exist so nothing to delete"
-
+        
     @task
     def get_all_filepaths_from_s3_path():
         context = get_current_context()
@@ -100,6 +110,7 @@ with DAG(
         os.chmod(path_in_shared_volume, 0o664)
         return path_in_shared_volume
 
+    check_for_auth_token_task = check_for_auth_token()
     cleanup_export_dir_task = cleanup_export_dir()
 
-    cleanup_export_dir_task >> download_s3_file_to_shared_volume.expand(s3path=get_all_filepaths_from_s3_path())
+    check_for_auth_token_task >> cleanup_export_dir_task >> download_s3_file_to_shared_volume.expand(s3path=get_all_filepaths_from_s3_path())
