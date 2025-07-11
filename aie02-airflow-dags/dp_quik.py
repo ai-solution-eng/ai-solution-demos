@@ -128,6 +128,7 @@ with DAG(
         
     check_for_auth_token_task = check_for_auth_token()
     cleanup_export_dir_task = cleanup_export_dir()
+    get_all_filepaths_from_s3_path_task = get_all_filepaths_from_s3_path()
     download_s3_file_to_shared_volume_task = download_s3_file_to_shared_volume()
     
     cleanup_export_dir_task >> download_s3_file_to_shared_volume_task
