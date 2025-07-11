@@ -17,6 +17,7 @@ if path.exists(token_file):
     with open(token_file, 'r') as fd:
         auth_token = fd.read().strip()
         os.environ['AUTH_TOKEN'] = auth_token
+        os.environ['MLFLOW_TRACKING_TOKEN'] = auth_token
 
 default_args = {
     'owner': 'airflow',
@@ -53,11 +54,8 @@ with DAG(
 
     @task
     def check_for_auth_token():
-        if 'AUTH_TOKEN' in os.environ:
-            print(f"AUTH_TOKEN={os.environ['AUTH_TOKEN']}")
-        else:
-            raise ValueError('AUTH_TOKEN not set!')
-        return
+        for k, v in sorted(os.environ.items()):
+            print(f"{k}={v}")
 
     @task
     def cleanup_export_dir():
@@ -65,10 +63,8 @@ with DAG(
         shared_vol_base = context['params']['shared_vol_base']
         dnld_path = context['params']['dnld_path']
         dnld_dir = context['params']['dnld_dir']
-        if 'AUTH_TOKEN' in os.environ:
-            print(f"AUTH_TOKEN={os.environ['AUTH_TOKEN']}")
-        else:
-            raise ValueError('AUTH_TOKEN not set!')
+        for k, v in sorted(os.environ.items()):
+            print(f"{k}={v}")
         export_dir = path.join(shared_vol_base, dnld_path, dnld_dir)
         if path.exists(export_dir):
             shutil.rmtree(export_dir)
@@ -78,10 +74,8 @@ with DAG(
     @task
     def get_all_filepaths_from_s3_path():
         context = get_current_context()
-        if 'AUTH_TOKEN' in os.environ:
-            print(f"AUTH_TOKEN={os.environ['AUTH_TOKEN']}")
-        else:
-            raise ValueError('AUTH_TOKEN not set!')
+        for k, v in sorted(os.environ.items()):
+            print(f"{k}={v}")
         av_conn_id = context['params']['av_conn_id']
         s3_bucket = context['params']['s3_bucket']
         s3_prefix = context['params']['s3_prefix']
@@ -94,10 +88,8 @@ with DAG(
         context = get_current_context()
         #
         # S3 identifiers
-        if 'AUTH_TOKEN' in os.environ:
-            print(f"AUTH_TOKEN={os.environ['AUTH_TOKEN']}")
-        else:
-            raise ValueError('AUTH_TOKEN not set!')
+        for k, v in sorted(os.environ.items()):
+            print(f"{k}={v}")
         av_conn_id = context['params']['av_conn_id']
         s3_bucket = context['params']['s3_bucket']
         s3_prefix = context['params']['s3_prefix']
