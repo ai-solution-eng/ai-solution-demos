@@ -10,7 +10,7 @@ from airflow.models.param import Param
 from airflow.utils.dates import days_ago
 from airflow.operators.python import get_current_context
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
-from airflow.providers.weaviate.hooks.weaviate import WeaviateHook
+#from airflow.providers.weaviate.hooks.weaviate import WeaviateHook
 
 token_file = '/etc/secrets/ezua/.auth_token'
 if path.exists(token_file):
@@ -107,16 +107,17 @@ with DAG(
         # DOWNLOAD
         s3=S3Hook(aws_conn_id=av_conn_id)
         for s3path in s3.list_keys(bucket_name=s3_bucket, prefix=s3_prefix):
+            print(f"Downloading {s3path}")
             #
             # Make sure all subdirectories have been created before download
             s3_full_pfx = path.dirname(s3path)
             s3_sub_pfx = s3_full_pfx[(s3_full_pfx.find(s3_prefix)+len(s3_prefix)):]
             export_dir = path.join(shared_vol_base, dnld_path, dnld_dir, s3_sub_pfx)
-            os.makedirs(export_dir, mode=0o775, exist_ok=True)
+            print(f"ensuring {export_dir} is available")
+            os.makedirs(export_dir, mode=0o755, exist_ok=True)
             os.umask(0o022)
             #
             # PERFORM Download
-            print(f"Downloading {s3path}")
             path_in_shared_volume = s3.download_file(
                 bucket_name=s3_bucket,
                 key=s3path,
