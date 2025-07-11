@@ -116,8 +116,9 @@ with DAG(
             os.umask(0o022)
             #
             # PERFORM Download
-            path_in_shared_volume = S3Hook(aws_conn_id=av_conn_id).download_file(
-                s3_bucket=s3_bucket,
+            print(f"Downloading {s3path}")
+            path_in_shared_volume = s3.download_file(
+                bucket_name=s3_bucket,
                 key=s3path,
                 local_path=export_dir,
                 preserve_file_name=True,
