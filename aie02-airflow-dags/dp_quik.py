@@ -126,10 +126,10 @@ with DAG(
             os.chmod(path_in_shared_volume, 0o644)
             print(f"Downloaded {path_in_shared_volume}")
         
-    check_for_auth_token_task = check_for_auth_token()
+    display_envvars_task = display_envvars()
     cleanup_export_dir_task = cleanup_export_dir()
     get_all_filepaths_from_s3_path_task = get_all_filepaths_from_s3_path()
     download_s3_file_to_shared_volume_task = download_s3_file_to_shared_volume()
     
-    cleanup_export_dir_task >> download_s3_file_to_shared_volume_task
+    display_envvars_task >> cleanup_export_dir_task >> download_s3_file_to_shared_volume_task
 #    cleanup_export_dir_task >> download_s3_file_to_shared_volume.expand(s3path=get_all_filepaths_from_s3_path())
