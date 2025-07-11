@@ -72,19 +72,19 @@ with DAG(
             return f"Deleted directory {export_path}"
         return f"{export_dir} doesn't exist so nothing to delete"
         
-    @task
-    def get_all_filepaths_from_s3_path():
-        context = get_current_context()
-        if 'AUTH_TOKEN' in os.environ:
-            print(f"AUTH_TOKEN={os.environ['AUTH_TOKEN']}")
-        else:
-            print('AUTH_TOKEN not set')
-        av_conn_id = context['params']['av_conn_id']
-        s3_bucket = context['params']['s3_bucket']
-        s3_prefix = context['params']['s3_prefix']
-        s3=S3Hook(aws_conn_id=av_conn_id)
-        filepaths = s3.list_keys(bucket_name=s3_bucket, prefix=s3_prefix)
-        return filepaths
+#    @task
+#    def get_all_filepaths_from_s3_path():
+#        context = get_current_context()
+#        if 'AUTH_TOKEN' in os.environ:
+#            print(f"AUTH_TOKEN={os.environ['AUTH_TOKEN']}")
+#        else:
+#            print('AUTH_TOKEN not set')
+#        av_conn_id = context['params']['av_conn_id']
+#        s3_bucket = context['params']['s3_bucket']
+#        s3_prefix = context['params']['s3_prefix']
+#        s3=S3Hook(aws_conn_id=av_conn_id)
+#        filepaths = s3.list_keys(bucket_name=s3_bucket, prefix=s3_prefix)
+#        return filepaths
 
     @task
     def download_s3_file_to_shared_volume():
@@ -128,7 +128,7 @@ with DAG(
         
     display_envvars_task = display_envvars()
     cleanup_export_dir_task = cleanup_export_dir()
-    get_all_filepaths_from_s3_path_task = get_all_filepaths_from_s3_path()
+    #get_all_filepaths_from_s3_path_task = get_all_filepaths_from_s3_path()
     download_s3_file_to_shared_volume_task = download_s3_file_to_shared_volume()
     
     display_envvars_task >> cleanup_export_dir_task >> download_s3_file_to_shared_volume_task
