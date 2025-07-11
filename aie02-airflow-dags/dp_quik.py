@@ -69,7 +69,7 @@ with DAG(
         export_dir = path.join(shared_vol_base, dnld_path, dnld_dir)
         if path.exists(export_dir):
             shutil.rmtree(export_dir)
-            return f"Deleted directory {export_path}"
+            return f"Deleted directory {export_dir}"
         return f"{export_dir} doesn't exist so nothing to delete"
         
 #    @task
