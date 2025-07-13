@@ -8,8 +8,7 @@ from airflow.decorators import task
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import BranchPythonOperator
 from airflow.hooks.postgres_hook import PostgresHook
-
-
+from airflow.models import Variable
 
 DAG_ID = "ai-support-assistant-dag"
 
@@ -51,11 +50,30 @@ with DAG(
         logger = logging.getLogger(__name__)
         logger.info("Processing question: " + question)
 
-        url = 'http://host.docker.internal:8888/api/chat/completions'
-        headers = {
-            'Authorization': f'Bearer sk-5e51b3c0acfb472994348108befbe5fd',
-            'Content-Type': 'application/json'
-        }
+        url = Variable.get("aisa-model-url")
+
+        if not url:
+            return('I am unable to answer as my model URL is not configured.')
+
+        # url = 'http://host.docker.internal:8888/api/chat/completions'
+
+        token = Variable.get("aisa-model-authtoken")
+
+        if token:
+            headers = {
+                'Authorization': f'Bearer {token}',
+                'Content-Type': 'application/json'
+            }
+        else:
+            headers = {
+                'Content-Type': 'application/json'
+            }
+
+        # headers = {
+        #    'Authorization': f'Bearer sk-5e51b3c0acfb472994348108befbe5fd',
+        #    'Content-Type': 'application/json'
+        # }
+
         data = {
           "model": "ezua-support-assistant",
           "messages": [

@@ -6,6 +6,11 @@
   line-height: 1.5rem !important; /* Optional: match Tailwind's line-height */
 }
 
+.custom-text-xl {
+  font-size: 1.8rem !important; 
+  line-height: 1.5rem !important; 
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @tailwind base;

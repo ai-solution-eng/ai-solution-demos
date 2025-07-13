@@ -53,12 +53,13 @@ export default function CaseList() {
   return (
     <div className="p-6">
       <div className="ml-12 max-w-4xl">
+        <br/>
         <h1 className="text-2xl mb-4 font-bold text-center">Support Cases</h1>
         <div className="overflow-x-auto w-fit mx-auto">
 
           <Table className="w-auto border-1 border-[#000000] border-collapse">
             <TableHeader>
-              <TableRow className="bg-[#dbeafe]">
+              <TableRow className="bg-[#93c5fd]">
                 <TableHead className="min-w-[7ch] text-center font-bold border-1 border-[#000000] px-4 py-2">Case ID</TableHead>
                 <TableHead className="min-w-[50ch] text-center font-bold border-1 border-[#000000] px-4 py-2">Subject</TableHead>
               </TableRow>
@@ -84,7 +85,7 @@ export default function CaseList() {
       </div>
 
       <Dialog open={isOpen} onOpenChange={setIsOpen}>
-        <DialogContent className="max-w-[700px] !bg-opacity-100 bg-[#dbeafe] border-2 border-[#000000] rounded-lg shadow-md">
+        <DialogContent className="max-w-[700px] !bg-opacity-100 bg-[#eff6ff] border-2 border-[#000000] rounded-lg shadow-md">
           <DialogHeader>
             <DialogTitle>Create New Case</DialogTitle>
           </DialogHeader>

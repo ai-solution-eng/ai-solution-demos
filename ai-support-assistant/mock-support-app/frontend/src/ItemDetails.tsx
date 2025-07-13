@@ -23,6 +23,7 @@ export default function ItemDetails() {
 
   return (
     <div>
+      <br/>
       <h1 className="text-2xl mb-4 font-bold text-center">Support Case #{id}</h1>
 
       <div className="overflow-x-auto w-fit mx-auto">
