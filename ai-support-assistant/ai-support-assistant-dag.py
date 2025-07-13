@@ -86,9 +86,12 @@ with DAG(
             }
             
             response = requests.post(url, headers=headers, json=data)
-            logger.info(response)
-            data = response.json()
-            answer = data["choices"][0]["message"]["content"]
+
+            if not response.ok:
+                answer = f"I am unable to answer as the model failed with status code: {response.status_code}"
+            else:
+                data = response.json()
+                answer = data["choices"][0]["message"]["content"]
 
         except Exception as e:
             answer = f"I am unable to answer as an error occurred in the Airflow DAG: {e}"
