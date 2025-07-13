@@ -86,6 +86,7 @@ with DAG(
             }
             
             response = requests.post(url, headers=headers, json=data)
+            logger.info(response)
             data = response.json()
             answer = data["choices"][0]["message"]["content"]
 
