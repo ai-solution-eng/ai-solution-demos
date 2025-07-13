@@ -47,50 +47,54 @@ with DAG(
         if not question:
             return('I am unable to answer as a question was not provided.')
 
-        logger = logging.getLogger(__name__)
-        logger.info("Processing question: " + question)
+        try:
+            logger = logging.getLogger(__name__)
+            logger.info("Processing question: " + question)
 
-        url = Variable.get("aisa-model-url")
+            url = Variable.get("aisa-model-url")
 
-        if not url:
-            return('I am unable to answer as my model URL is not configured.')
+            # url = 'http://host.docker.internal:8888/api/chat/completions'
 
-        # url = 'http://host.docker.internal:8888/api/chat/completions'
+            try:
+                token = Variable.get("aisa-model-authtoken")
+            except:
+                token = ""
 
-        token = Variable.get("aisa-model-authtoken")
+            if token:
+                headers = {
+                    'Authorization': f'Bearer {token}',
+                    'Content-Type': 'application/json'
+                }
+            else:
+                headers = {
+                    'Content-Type': 'application/json'
+                }
 
-        if token:
-            headers = {
-                'Authorization': f'Bearer {token}',
-                'Content-Type': 'application/json'
+            # headers = {
+            #    'Authorization': f'Bearer sk-5e51b3c0acfb472994348108befbe5fd',
+            #    'Content-Type': 'application/json'
+            # }
+
+            data = {
+              "model": "ezua-support-assistant",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": question
+                }
+              ]
             }
-        else:
-            headers = {
-                'Content-Type': 'application/json'
-            }
+            
+            response = requests.post(url, headers=headers, json=data)
+            data = response.json()
+            answer = data["choices"][0]["message"]["content"]
 
-        # headers = {
-        #    'Authorization': f'Bearer sk-5e51b3c0acfb472994348108befbe5fd',
-        #    'Content-Type': 'application/json'
-        # }
+        except Exception as e:
+            answer = "I am unable to answer as an error occurred in the Airflow DAG: {e}"
 
-        data = {
-          "model": "ezua-support-assistant",
-          "messages": [
-            {
-              "role": "user",
-              "content": question
-            }
-          ]
-        }
-        
-        response = requests.post(url, headers=headers, json=data)
-        data = response.json()
-        answer = data["choices"][0]["message"]["content"]
-
-        logger.info(answer)
-
-        return answer
+        finally:
+            logger.info(answer)
+            return answer
 
     def decide_branch_path(ti):
         result = ti.xcom_pull(task_ids='ask_ai')
