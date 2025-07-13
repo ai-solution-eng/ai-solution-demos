@@ -8,8 +8,7 @@ from airflow.decorators import task
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import BranchPythonOperator
 from airflow.hooks.postgres_hook import PostgresHook
-
-
+from airflow.models import Variable
 
 DAG_ID = "ai-support-assistant-dag"
 
@@ -18,9 +17,6 @@ with DAG(
     start_date=datetime.datetime(1970, 1, 1),
     schedule="* * * * *",
     catchup=False,
-    access_control={
-        "Public": {"can_edit", "can_read", "can_delete"},
-    },
 ) as dag:
 
     @task()
@@ -51,31 +47,58 @@ with DAG(
         if not question:
             return('I am unable to answer as a question was not provided.')
 
-        logger = logging.getLogger(__name__)
-        logger.info("Processing question: " + question)
+        try:
+            logger = logging.getLogger(__name__)
+            logger.info("Processing question: " + question)
 
-        url = 'http://host.docker.internal:8888/api/chat/completions'
-        headers = {
-            'Authorization': f'Bearer sk-5e51b3c0acfb472994348108befbe5fd',
-            'Content-Type': 'application/json'
-        }
-        data = {
-          "model": "ezua-support-assistant",
-          "messages": [
-            {
-              "role": "user",
-              "content": question
+            url = Variable.get("aisa-model-url")
+
+            # url = 'http://host.docker.internal:8888/api/chat/completions'
+
+            try:
+                token = Variable.get("aisa-model-authtoken")
+            except:
+                token = ""
+
+            if token:
+                headers = {
+                    'Authorization': f'Bearer {token}',
+                    'Content-Type': 'application/json'
+                }
+            else:
+                headers = {
+                    'Content-Type': 'application/json'
+                }
+
+            # headers = {
+            #    'Authorization': f'Bearer sk-5e51b3c0acfb472994348108befbe5fd',
+            #    'Content-Type': 'application/json'
+            # }
+
+            data = {
+              "model": "ezua-support-assistant",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": question
+                }
+              ]
             }
-          ]
-        }
-        
-        response = requests.post(url, headers=headers, json=data)
-        data = response.json()
-        answer = data["choices"][0]["message"]["content"]
+            
+            response = requests.post(url, headers=headers, json=data)
 
-        logger.info(answer)
+            if not response.ok:
+                answer = f"I am unable to answer as the model failed with status code: {response.status_code}"
+            else:
+                data = response.json()
+                answer = data["choices"][0]["message"]["content"]
 
-        return answer
+        except Exception as e:
+            answer = f"I am unable to answer as an error occurred in the Airflow DAG: {e}"
+
+        finally:
+            logger.info(answer)
+            return answer
 
     def decide_branch_path(ti):
         result = ti.xcom_pull(task_ids='ask_ai')
@@ -117,5 +140,3 @@ with DAG(
     branch_on_answer.set_upstream(answer)
     post_customer_message(records, answer) << branch_on_answer
     post_internal_message(records, answer) << branch_on_answer
-
-        
