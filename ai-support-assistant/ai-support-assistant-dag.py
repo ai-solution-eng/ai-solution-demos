@@ -90,7 +90,7 @@ with DAG(
             answer = data["choices"][0]["message"]["content"]
 
         except Exception as e:
-            answer = "I am unable to answer as an error occurred in the Airflow DAG: {e}"
+            answer = f"I am unable to answer as an error occurred in the Airflow DAG: {e}"
 
         finally:
             logger.info(answer)
