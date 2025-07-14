@@ -39,7 +39,7 @@ with DAG(
         'av_conn_id': Param("ce-dougdet-avdata", type="string"),
         'weave_conn_id': Param("ce-dougdet-weaviate", type="string"),
         's3_bucket': Param("ce-dougdet-pcaiexer", type="string"),
-        's3_prefix': Param(None, type="string"),
+        's3_prefix': Param("*", type="string"),
         'shared_vol_base': Param("/mnt/shared/", type="string"),
         'dnld_path': Param("dougdet", type="string"),
         'dnld_dir': Param("from_airflow", type="string")
@@ -101,7 +101,7 @@ with DAG(
         # DOWNLOAD
         os.umask(0o022)
         s3=S3Hook(aws_conn_id=av_conn_id)
-        for s3path in s3.list_keys(bucket_name=s3_bucket, prefix=s3_prefix):
+        for s3path in s3.list_keys(bucket_name=s3_bucket, prefix=s3_prefix, apply_wildcard=True):
             if s3path[-1] == '/':  # skip directories
                 download_dir = path.join(shared_vol_base, dnld_path, dnld_dir, path.dirname(s3path))
                 LoggingMixin().log.info(f"Creating {download_dir}")
