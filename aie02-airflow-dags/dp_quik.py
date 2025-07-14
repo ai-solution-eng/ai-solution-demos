@@ -111,15 +111,15 @@ with DAG(
         dnld_path = context['params']['dnld_path']
         dnld_dir = context['params']['dnld_dir']
         #
-        download_dir = path.join(shared_vol_base, dnld_path, dnld_dir)
         #if not path.exists(download_dir):
-        #    LoggingMixin().log.info(f"Creating {download_dir}")
-        #    os.mkdir(download_dir, mode=0o775)
         # DOWNLOAD
         os.umask(0o022)
         s3=S3Hook(aws_conn_id=av_conn_id)
         for s3path in s3.list_keys(bucket_name=s3_bucket, prefix=s3_prefix):
             if s3path[-1] == '/':  # skip directories
+                download_dir = path.join(shared_vol_base, dnld_path, dnld_dir, path.dirname(s3path))
+                LoggingMixin().log.info(f"Creating {download_dir}")
+                os.makedirs(download_dir, mode=0o755, exist_ok=True)
                 continue
             LoggingMixin().log.info(f"Downloading {s3path}")
             #
