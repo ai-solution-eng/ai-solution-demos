@@ -39,7 +39,7 @@ with DAG(
         'av_conn_id': Param("ce-dougdet-avdata", type="string"),
         'weave_conn_id': Param("ce-dougdet-weaviate", type="string"),
         's3_bucket': Param("ce-dougdet-pcaiexer", type="string"),
-        's3_prefix': Param(f"documents/", type="string"),
+        's3_prefix': Param(f"/", type="string"),
         'shared_vol_base': Param(f"/mnt/shared/", type="string"),
         'dnld_path': Param("dougdet", type="string"),
         'dnld_dir': Param("from_airflow", type="string")
@@ -78,21 +78,8 @@ with DAG(
             msg = 'created'
         os.mkdir(export_dir, mode=0o775)
         LoggingMixin().log.info(f"{export_dir} {msg}.")
-        
-#    @task
-#    def get_all_filepaths_from_s3_path():
-#        context = get_current_context()
-#        if 'AUTH_TOKEN' in os.environ:
-#            print(f"AUTH_TOKEN={os.environ['AUTH_TOKEN']}")
-#        else:
-#            print('AUTH_TOKEN not set')
-#        av_conn_id = context['params']['av_conn_id']
-#        s3_bucket = context['params']['s3_bucket']
-#        s3_prefix = context['params']['s3_prefix']
-#        s3=S3Hook(aws_conn_id=av_conn_id)
-#        filepaths = s3.list_keys(bucket_name=s3_bucket, prefix=s3_prefix)
-#        return filepaths
 
+    
     @task
     def download_s3_file_to_shared_volume():
         context = get_current_context()
@@ -111,7 +98,6 @@ with DAG(
         dnld_path = context['params']['dnld_path']
         dnld_dir = context['params']['dnld_dir']
         #
-        #if not path.exists(download_dir):
         # DOWNLOAD
         os.umask(0o022)
         s3=S3Hook(aws_conn_id=av_conn_id)
@@ -122,10 +108,6 @@ with DAG(
                 os.makedirs(download_dir, mode=0o755, exist_ok=True)
                 continue
             LoggingMixin().log.info(f"Downloading {s3path}")
-            #
-            # Make sure all subdirectories have been created before download
-            #dp> s3_full_pfx = path.dirname(s3path)
-            #dp> s3_sub_pfx = s3_full_pfx[(s3_full_pfx.find(s3_prefix)+len(s3_prefix)):]
             #
             # PERFORM Download
             path_in_shared_volume = s3.download_file(
