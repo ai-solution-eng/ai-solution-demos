@@ -39,8 +39,8 @@ with DAG(
         'av_conn_id': Param("ce-dougdet-avdata", type="string"),
         'weave_conn_id': Param("ce-dougdet-weaviate", type="string"),
         's3_bucket': Param("ce-dougdet-pcaiexer", type="string"),
-        's3_prefix': Param(f"/", type="string"),
-        'shared_vol_base': Param(f"/mnt/shared/", type="string"),
+        's3_prefix': Param("/", type="string"),
+        'shared_vol_base': Param("/mnt/shared/", type="string"),
         'dnld_path': Param("dougdet", type="string"),
         'dnld_dir': Param("from_airflow", type="string")
     },
