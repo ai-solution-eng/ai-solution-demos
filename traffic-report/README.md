@@ -84,25 +84,35 @@ The application is containerized and available on Docker Hub:
 ### Deploy YOLO and VLM models on PCAI
 
 Edit your packaged model - YOLO model 
+
 ![Your model](./assets/yolo1.png)
+
 ![Storage](./assets/yolo2.png)
+
 ![Resources](./assets/yolo3.png)
+
 ![Advanced](./assets/yolo4.png)
 
 Edit your packaged model - VLM 
+
 ![Your model](./assets/vlm1.png)
+
 ![Storage](./assets/vlm2.png)
+
 ![Resources](./assets/vlm3.png)
+
 ![Advanced](./assets/vlm4.png)
 
 ### Deployment on PCAI via "Import Framework"
 
 ![Framework Logo](./assets/logo.png)
+
 [Chart package](traffic-report-0.1.3.tgz) 
 
 On the AIE portal, click on "Import Framework" and follow these steps below:
 
 ![Import framework](./assets/import-framework.png)
+
 ![Import helm chart](./assets/import-chart.png)
 
 Configure API endpoints in values.yaml or leave these as default and later update them on the Streamlit UI once the app has been deployed and running:
@@ -126,6 +136,7 @@ For EZUA BYOApp deployment, the chart includes:
 Once the app has been deployed. On the Streamlit UI, follow these steps:
 
 ![Set up endpoints and API keys](./assets/settings.png)
+
 ![Load an image & Run analysis](./assets/image-analysis.png)
 
 ## Usage
