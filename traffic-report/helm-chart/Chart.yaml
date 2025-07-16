@@ -1,0 +1,16 @@
+apiVersion: v2
+name: traffic-report
+description: A Helm chart for Smart Traffic Report application using YOLO detection and Qwen analysis
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - traffic
+  - yolo
+  - ai
+  - detection
+  - analysis
+maintainers:
+  - name: Smart Traffic Team
+sources:
+  - https://github.com/caovd/pcai-smart-traffic-maganement
