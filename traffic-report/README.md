@@ -1,6 +1,6 @@
-# Smart Traffic Report - Streamlit Edition
+# Automated Traffic Report
 
-Gen AI-powered smart traffic management system using YOLOv8 and Qwen2.5-VL for real-time traffic analysis.
+Making continuous reports on traffic from CCTV cameras is a laborous and repetitive task that requires automation at scale. This app aims to build a gen AI-powered smart traffic report system using Computer Vision & Visual Language Model (VLM) for real-time traffic analysis.
 
 This application leverages the complementary strengths of two specialized AI models to provide comprehensive traffic scene understanding:
 
@@ -30,7 +30,7 @@ Together, these models create a robust traffic management system where YOLOv8 pr
 - **Session State Management**: Maintains analysis results throughout the session
 - **Responsive Design**: Wide layout with column-based organization for better user experience
 
-## Setup
+## Local Setup & Testing 
 
 1. **Install Dependencies**:
    ```bash
@@ -38,7 +38,6 @@ Together, these models create a robust traffic management system where YOLOv8 pr
    ```
 
 2. **Configure API Keys**:
-   - Copy `.env.example` to `.env`
    - Add your YOLOv8 and Qwen2.5-VL API endpoints and keys
    - **Important**: Don't forget to also update the endpoint configurations in the UI Settings tab after starting the app
 
@@ -130,47 +129,42 @@ The application is containerized and available on Docker Hub:
 - **Repository**: `caovd/traffic-report-streamlit:latest`
 - **URL**: https://hub.docker.com/r/caovd/traffic-report-streamlit
 
-### Quick Deployment
+### Deploy YOLO and VLM models on PCAI
+[YOLO Model](./assets/yolo1.png)(./assets/yolo2.png)(./assets/yolo3.png)(./assets/yolo4.png)
+[VLM](./assets/vlm1.png)(./assets/vlm2.png)(./assets/vlm3.png)(./assets/vlm4.png)
 
-1. **Install the Helm chart**:
-   ```bash
-   helm install traffic-report-streamlit ./helm-chart/
-   ```
+### Deployment on PCAI via "Import Framework"
 
-2. **Or use the packaged chart**:
-   ```bash
-   helm install traffic-report-streamlit traffic-report-0.1.0.tgz
-   ```
+[Logo](./assets/logo.png)
+[Chart package](traffic-report-0.1.3.tgz) 
 
-3. **Configure API endpoints** in `values.yaml`:
-   ```yaml
-   app:
-     yolo:
-       endpoint: "https://your-yolo-endpoint.com/predict"
-       apiKey: "your-yolo-api-key"
-     qwen:
-       endpoint: "https://your-qwen-endpoint.com/v1/chat/completions"
-       apiKey: "your-qwen-api-key"
-   ```
+On the AIE portal, click on "Import Framework" and follow these steps below:
 
-4. **For EZUA BYOApp deployment**, the chart includes:
-   - Istio VirtualService at `traffic-report.${DOMAIN_NAME}`
-   - Gateway integration via `istio-system/ezaf-gateway`
-   - Proper endpoint configuration for platform integration
+[Import framework](./assets/import-framework.png)
+[Import helm chart](./assets/import-chart.png)
 
-### Customization
+Configure API endpoints in values.yaml or leave these as default and later update them on the Streamlit UI once the app has been deployed and running:
 
-Key configuration options in `values.yaml`:
+```yaml
+app:
+  yolo:
+    endpoint: "https://your-yolo-endpoint.com/predict"
+    apiKey: "your-yolo-api-key"
+  qwen:
+    endpoint: "https://your-qwen-endpoint.com/v1/chat/completions"
+    apiKey: "your-qwen-api-key"
+```
 
-- **Scaling**: Adjust `replicaCount` and `autoscaling` settings
-- **Resources**: Configure CPU/memory limits and requests
-- **Networking**: Modify service ports and ingress settings
-- **API Configuration**: Set YOLO and Qwen endpoints and credentials
-- **EZUA Integration**: Configure virtualService endpoint and gateway
+For EZUA BYOApp deployment, the chart includes:
 
-### Health Checks
+- Istio VirtualService at traffic-report.${DOMAIN_NAME}
+- Gateway integration via istio-system/ezaf-gateway
+- Proper endpoint configuration for platform integration
 
-The deployment includes:
-- **Liveness Probe**: Ensures container health
-- **Readiness Probe**: Confirms application readiness
-- **Health Check Endpoint**: Available at `/` (port 8080)
+Once the app has been deployed. On the Streamlit UI, follow these steps:
+
+[Set up endpoints and API keys](./assets/settings.png)
+[Load an image & Run analysis](./assets/image-analysis.png)
+
+**Note**: The Video Analysis feature is COMING SOON. 
+

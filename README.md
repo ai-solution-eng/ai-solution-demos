@@ -18,6 +18,7 @@ This repository contains use case demos developed for Private Cloud AI (PCAI)
 | [License Plate Detection](license-plate-number-detection)     | Yes           | No            | Yes           |`Computer Vision`,`Fine-tune`,`YOLO`       |
 | [Genome Sequencing](genome-sequencing)                        | Yes           | Coming soon   | Yes           |`Genomic`,`NVIDIA`, `Parabricks`           |
 | [Batch Agreement Robot](batch-agreement-robot)                | Yes           | Coming soon   | Yes           |`GenAI`, `Document Processing`             |
+| [Traffic Report](traffic-report)               | Yes           | Coming soon   | Yes           |`GenAI`, `Computer Vision`, `Visual Language Model`             |
 
 ### Upcoming
 
