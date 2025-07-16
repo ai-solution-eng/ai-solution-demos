@@ -30,54 +30,6 @@ Together, these models create a robust traffic management system where YOLOv8 pr
 - **Session State Management**: Maintains analysis results throughout the session
 - **Responsive Design**: Wide layout with column-based organization for better user experience
 
-## Local Setup & Testing 
-
-1. **Install Dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. **Configure API Keys**:
-   - Add your YOLOv8 and Qwen2.5-VL API endpoints and keys
-   - **Important**: Don't forget to also update the endpoint configurations in the UI Settings tab after starting the app
-
-3. **Run the Application**:
-   ```bash
-   ./run.sh
-   ```
-   Or manually:
-   ```bash
-   streamlit run app.py --server.port=8080 --server.address=0.0.0.0
-   ```
-
-## Usage
-
-1. **Configure APIs**: Go to the Settings tab and enter your YOLO and Qwen API endpoints and keys
-2. **Image Analysis**: Upload a traffic scene image for instant analysis
-3. **Video Analysis**: Upload a traffic video for frame-by-frame analysis
-4. **Results**: View detected objects with bounding boxes and AI-generated insights
-
-**Important**: Make sure to configure the API endpoints in the Settings tab of the web interface, even if you've already set them in the `.env` file.
-
-### Streamlit Interface
-
-The application provides a clean, modern web interface with:
-
-- **Image Analysis Tab**: 
-  - File uploader for JPG, JPEG, PNG images
-  - Real-time processing with progress indicators
-  - Results display with annotated images and analysis text
-  
-- **Video Analysis Tab**:
-  - File uploader for MP4, AVI, MOV, MKV videos
-  - Frame sampling and analysis
-  - Representative frame display with comprehensive video analysis
-  
-- **Settings Tab**:
-  - API endpoint configuration for YOLO and Qwen services
-  - Password-protected API key inputs
-  - Real-time settings validation and updates
-
 ## Architecture
 
 - `detection_service.py`: YOLOv8 integration for object detection
@@ -130,18 +82,28 @@ The application is containerized and available on Docker Hub:
 - **URL**: https://hub.docker.com/r/caovd/traffic-report-streamlit
 
 ### Deploy YOLO and VLM models on PCAI
-[YOLO Model](./assets/yolo1.png)(./assets/yolo2.png)(./assets/yolo3.png)(./assets/yolo4.png)
-[VLM](./assets/vlm1.png)(./assets/vlm2.png)(./assets/vlm3.png)(./assets/vlm4.png)
+
+Edit your packaged model - YOLO model 
+![Your model](./assets/yolo1.png)
+![Storage](./assets/yolo2.png)
+![Resources](./assets/yolo3.png)
+![Advanced](./assets/yolo4.png)
+
+Edit your packaged model - VLM 
+![Your model](./assets/vlm1.png)
+![Storage](./assets/vlm2.png)
+![Resources](./assets/vlm3.png)
+![Advanced](./assets/vlm4.png)
 
 ### Deployment on PCAI via "Import Framework"
 
-[Logo](./assets/logo.png)
+![Framework Logo](./assets/logo.png)
 [Chart package](traffic-report-0.1.3.tgz) 
 
 On the AIE portal, click on "Import Framework" and follow these steps below:
 
-[Import framework](./assets/import-framework.png)
-[Import helm chart](./assets/import-chart.png)
+![Import framework](./assets/import-framework.png)
+![Import helm chart](./assets/import-chart.png)
 
 Configure API endpoints in values.yaml or leave these as default and later update them on the Streamlit UI once the app has been deployed and running:
 
@@ -163,8 +125,36 @@ For EZUA BYOApp deployment, the chart includes:
 
 Once the app has been deployed. On the Streamlit UI, follow these steps:
 
-[Set up endpoints and API keys](./assets/settings.png)
-[Load an image & Run analysis](./assets/image-analysis.png)
+![Set up endpoints and API keys](./assets/settings.png)
+![Load an image & Run analysis](./assets/image-analysis.png)
+
+## Usage
+
+1. **Configure APIs**: Go to the Settings tab and enter your YOLO and Qwen API endpoints and keys
+2. **Image Analysis**: Upload a traffic scene image for instant analysis
+3. **Video Analysis**: Upload a traffic video for frame-by-frame analysis
+4. **Results**: View detected objects with bounding boxes and AI-generated insights
+
+**Important**: Make sure to configure the API endpoints in the Settings tab of the web interface, even if you've already set them in the `.env` file.
+
+### Streamlit Interface
+
+The application provides a clean, modern web interface with:
+
+- **Image Analysis Tab**: 
+  - File uploader for JPG, JPEG, PNG images
+  - Real-time processing with progress indicators
+  - Results display with annotated images and analysis text
+  
+- **Video Analysis Tab**:
+  - File uploader for MP4, AVI, MOV, MKV videos
+  - Frame sampling and analysis
+  - Representative frame display with comprehensive video analysis
+  
+- **Settings Tab**:
+  - API endpoint configuration for YOLO and Qwen services
+  - Password-protected API key inputs
+  - Real-time settings validation and updates
 
 **Note**: The Video Analysis feature is COMING SOON. 
 
