@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "predictive-maintenance.fullname" . }}-test-connection"
+  labels:
+    {{- include "predictive-maintenance.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+spec:
+  containers:
+    - name: wget
+      image: busybox
+      command: ['wget']
+      args: ['{{ include "predictive-maintenance.fullname" . }}:{{ .Values.service.port }}']
+  restartPolicy: Never

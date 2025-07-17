@@ -1,0 +1,27 @@
+# ticket_data: "./data/Ticket Data 2024.csv"
+
+classification_model:
+  name: "bert-base-uncased"
+  checkpoint_path: "./model/checkpoint-16632/" 
+  label_encoder: "./artifacts/label_encoder.pkl"
+
+resolution_model:
+  embeddings_model: "sentence-transformers/paraphrase-MiniLM-L6-v2"
+  embeddings_path: "./artifacts/embeddings.npy"
+  inference_server_url: "https://llama31-8b-instruct-predictor-daniel-cao-hpe--6d18f371.ingress.pcai0305.sg2.hpecolo.net/v1"
+  inference_server_token: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3NDQzMzk3NDQsImlzcyI6ImFpb2xpQGhwZS5jb20iLCJzdWIiOiJhNmNjYmY3Ny0zM2Y3LTQ1ZjAtYjQ2MS00MTYxZDYzMTE2NjAiLCJ1c2VyIjoiZ2V1bi10YWsucm9oLWhwZS5jb20ifQ.K08ZX3ntnZnsAtlyl--TbzWsJAxIunJ8zkthYqz9uBV8JFb378y0bHtZVHkIhrLmy0KAZjEUZCiZWUpqOPQaqJa6ZPzKPrIv4kiP7TeBZVe1BbI1qQWWFfm6IVCjjmZjWrDVPb8fg15eEaaVjwKmqvATPNhqt5YwI-LH_GK9k9u-B0ekmvmsSv2LNcN2V2mVY-y_EMONYiZcuzz2DK8dzfiglar5MvhjTlDmdBqX7jI52BzSn0XuaK0SVcsgm6HF54gbWuWIrRH8DSm_YfrRTsQbDn3z0SaYmuZBzSQxpEsWwMRmIXhelc2h5FrA1Bzoi8qpbD_Sp-SMp4WBhJ43Yg"
+  llm_model: "meta-llama/Meta-Llama-3.1-8B-Instruct"
+
+ocr_model:
+  inference_server_url: "https://qwen25-vl-7b-instruct-predictor-daniel-cao-hpe--6d18f371.ingress.pcai0305.sg2.hpecolo.net/v1/chat/completions"
+  inference_server_token: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3NDQzNDk2NDgsImlzcyI6ImFpb2xpQGhwZS5jb20iLCJzdWIiOiI4NGQwZWYzNy1jNmI4LTQxZWUtYmFhNi0wZGQ1M2JlNjVkYjkiLCJ1c2VyIjoiZ2V1bi10YWsucm9oLWhwZS5jb20ifQ.sN3qbRh3RUgHRurS6BbgYuQbtZtRGO28TjYnvB_9skM_jYRqkEgcS_upxXGEtmQHheE_pVWlP0aqSHiLuwSvfHIQZJwDTyNVSqthw42YvKQytdNbF5BfQvJelN0gK31HZpAvrQx28WYQYFPsTYUONzMsaG2Mrjl5so20BCe9r9RnzdtF7fM_NPf8Mm1BaYSFw9oQpbaOb6QPJxul9VTycY7wwUx-EK4ugb3ZCglkKE9JktNz485B11GYENhDmedm7ReFweKUIImx_g6ZlhqVTJmqrtvuF-4cgGCNL9TzDqRAjsBOo6hg2uZKCp8JSN1bCsxmbN2FbsgJlDKDZd6YIw"
+  vlm_model: "Qwen/Qwen2.5-VL-7B-Instruct"
+
+postgresql:
+  host: 'postgresql.postgres.svc.cluster.local'
+  # host: '127.0.0.1'
+  dbname: 'stapp'
+  user: 'stapp'
+  password: 'stapp123'
+  port: '5432'
+  tablename: 'tickets'

@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: predictive-maintenance-appconfig
+  labels:
+    {{- include "predictive-maintenance.labels" . | nindent 4 }}
+data:
+  config.yaml: |-
+    {{ toYaml .Values.appConfig | nindent 4 | trim }}
