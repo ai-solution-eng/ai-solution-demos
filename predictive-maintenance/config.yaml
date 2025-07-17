@@ -1,8 +1,8 @@
-# ticket_data: "./data/Ticket Data 2024.csv"
+# ticket_data: "./data/test-tickets.csv"
 
 classification_model:
   name: "bert-base-uncased"
-  checkpoint_path: "./model/checkpoint-16632/" 
+  checkpoint_path: "./model/finetuned_bert/" 
   label_encoder: "./artifacts/label_encoder.pkl"
 
 resolution_model:

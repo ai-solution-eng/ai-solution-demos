@@ -66,11 +66,11 @@ def extract_text_from_image():
             ENCODED_IMG = base64.b64encode(image_bytes).decode("utf-8")
             ### Change default prompt
             default_prompt = """
-Save only the number shown right below 'Unduh' and right above 'Mbps', nothing else, as the 1st element in an output list. 
-Save only the number shown right below 'Unggah' and right above 'Mbps', nothing else, as the second element in the output list. 
-Save only the number shown right below 'Latensi' and right above 'ms', nothing else, as the third element in the output list.
+Save only the number shown right below 'Download' and right above 'Mbps', nothing else, as the 1st element in an output list. 
+Save only the number shown right below 'Upload' and right above 'Mbps', nothing else, as the second element in the output list. 
+Save only the number shown right below 'Latency' and right above 'ms', nothing else, as the third element in the output list.
 Save only the location shown right below 'Wifi', only the Wifi network name shown right below 'Wifi' and right next to the wifi icon to the right, nothing else, as the fourth element in the output list. 
-Save BOTH the date and time shown right above 'Latensi', shown right next to the calendar icon to the right, following the DD/MM/YYYY HH:MM format, nothing else, as the fifth element in the output list.
+Save BOTH the date and time shown right above 'Latency', shown right next to the calendar icon to the right, following the DD/MM/YYYY HH:MM format, nothing else, as the fifth element in the output list.
 Finally return the list of all elements in a string format with square brackets and commas separating elements. Make sure the list has 5 elements
             """
             USER_PROMPT= st.text_area("Custom Prompt (Advanced)", value=default_prompt, height=200, help="Modify the prompt to extract different information")

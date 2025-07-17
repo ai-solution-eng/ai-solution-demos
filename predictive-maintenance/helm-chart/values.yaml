@@ -28,7 +28,7 @@ service:
 appConfig:
   classification_model:
     name: "bert-base-uncased"
-    checkpoint_path: "./model/checkpoint-16632/" 
+    checkpoint_path: "./model/finetuned_bert/" 
     label_encoder: "./artifacts/label_encoder.pkl"
   resolution_model:
     embeddings_model: "sentence-transformers/paraphrase-MiniLM-L6-v2"

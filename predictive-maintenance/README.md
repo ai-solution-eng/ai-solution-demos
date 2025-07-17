@@ -52,3 +52,11 @@ For detailed instructions on deploying custom applications to HPE PCAI using the
 
 To deploy and manage ML models on HPE PCAI infrastructure:
 - [HPE MLIS Documentation](https://docs.ai-solutions.ext.hpe.com/products/mlis/latest/) - Complete guide for ML inference services on PCAI
+
+### Acknowledgement:
+- HPE GSE Team - Original use case development.
+- [Roh Geun Tak](https://github.com/rohgeuntak76) - Migrating the helm chart over to PCAI.
+- [Daniel Cao](https://github.com/caovd) - Solution architect
+
+### Contribution: 
+- No contribution/further development is expected except for POC/demo purposes.
