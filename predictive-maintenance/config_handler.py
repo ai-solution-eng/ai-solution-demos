@@ -7,17 +7,43 @@ def load_config():
     with open("config.yaml", "r") as f:
         config = yaml.safe_load(f)
     
-    # Override with environment variables if they exist
-    if os.environ.get('LLM_INFERENCE_URL'):
-        config['resolution_model']['inference_server_url'] = os.environ.get('LLM_INFERENCE_URL')
+    # Override with environment variables - prioritize env vars over config file
+    config['resolution_model']['inference_server_url'] = (
+        os.environ.get('LLM_INFERENCE_URL') or 
+        config['resolution_model']['inference_server_url']
+    )
     
-    if os.environ.get('LLM_INFERENCE_TOKEN'):
-        config['resolution_model']['inference_server_token'] = os.environ.get('LLM_INFERENCE_TOKEN')
+    config['resolution_model']['inference_server_token'] = (
+        os.environ.get('LLM_INFERENCE_TOKEN') or 
+        config['resolution_model']['inference_server_token']
+    )
     
-    if os.environ.get('OCR_INFERENCE_URL'):
-        config['ocr_model']['inference_server_url'] = os.environ.get('OCR_INFERENCE_URL')
+    config['ocr_model']['inference_server_url'] = (
+        os.environ.get('OCR_INFERENCE_URL') or 
+        config['ocr_model']['inference_server_url']
+    )
     
-    if os.environ.get('OCR_INFERENCE_TOKEN'):
-        config['ocr_model']['inference_server_token'] = os.environ.get('OCR_INFERENCE_TOKEN')
+    config['ocr_model']['inference_server_token'] = (
+        os.environ.get('OCR_INFERENCE_TOKEN') or 
+        config['ocr_model']['inference_server_token']
+    )
     
     return config
+
+def validate_config(config):
+    """Validate that required configuration values are present"""
+    errors = []
+    
+    if not config['ocr_model']['inference_server_url']:
+        errors.append("OCR inference server URL is not configured")
+    
+    if not config['ocr_model']['inference_server_token']:
+        errors.append("OCR inference server token is not configured")
+    
+    if not config['resolution_model']['inference_server_url']:
+        errors.append("LLM inference server URL is not configured")
+    
+    if not config['resolution_model']['inference_server_token']:
+        errors.append("LLM inference server token is not configured")
+    
+    return errors

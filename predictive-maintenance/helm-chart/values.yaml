@@ -33,12 +33,12 @@ appConfig:
   resolution_model:
     embeddings_model: "sentence-transformers/paraphrase-MiniLM-L6-v2"
     embeddings_path: "./artifacts/embeddings.npy"
-    inference_server_url: "https://your-llm-inference-server.example.com/v1"
-    inference_server_token: "your-llm-inference-token-here"
+    inference_server_url: ""
+    inference_server_token: ""
     llm_model: "meta-llama/Meta-Llama-3.1-8B-Instruct"
   ocr_model:
-    inference_server_url: "https://your-ocr-inference-server.example.com/v1/chat/completions"
-    inference_server_token: "your-ocr-inference-token-here"
+    inference_server_url: ""
+    inference_server_token: ""
     vlm_model: "Qwen/Qwen2.5-VL-7B-Instruct"
   postgresql:
     host: 'postgresql.postgresql.svc.cluster.local'

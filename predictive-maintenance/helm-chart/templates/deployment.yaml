@@ -40,6 +40,15 @@ spec:
             - name: http
               containerPort: {{ .Values.service.targetPort }}
               protocol: TCP
+          env:
+            - name: LLM_INFERENCE_URL
+              value: {{ .Values.appConfig.resolution_model.inference_server_url | quote }}
+            - name: LLM_INFERENCE_TOKEN
+              value: {{ .Values.appConfig.resolution_model.inference_server_token | quote }}
+            - name: OCR_INFERENCE_URL
+              value: {{ .Values.appConfig.ocr_model.inference_server_url | quote }}
+            - name: OCR_INFERENCE_TOKEN
+              value: {{ .Values.appConfig.ocr_model.inference_server_token | quote }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           livenessProbe:
