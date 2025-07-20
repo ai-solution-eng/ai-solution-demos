@@ -18,7 +18,7 @@ config = load_config()
 model_name = config["classification_model"]["name"]  
 checkpoint_path = config["classification_model"]["checkpoint_path"]  
 label_encoder = joblib.load(config["classification_model"]["label_encoder"])
-tokenizer = AutoTokenizer.from_pretrained(model_name)
+tokenizer = AutoTokenizer.from_pretrained(checkpoint_path)
 model = AutoModelForSequenceClassification.from_pretrained(checkpoint_path)
 
 
