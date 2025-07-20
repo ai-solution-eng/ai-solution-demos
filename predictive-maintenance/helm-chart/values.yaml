@@ -41,7 +41,7 @@ appConfig:
     inference_server_token: "your-ocr-inference-token-here"
     vlm_model: "Qwen/Qwen2.5-VL-7B-Instruct"
   postgresql:
-    host: 'postgresql.postgres.svc.cluster.local'
+    host: 'postgresql.postgresql.svc.cluster.local'
     dbname: 'stapp'
     user: 'stapp'
     password: 'stapp123'

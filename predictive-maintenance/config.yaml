@@ -18,7 +18,7 @@ ocr_model:
   vlm_model: "Qwen/Qwen2.5-VL-7B-Instruct"
 
 postgresql:
-  host: 'postgresql.postgres.svc.cluster.local'
+  host: 'postgresql.postgresql.svc.cluster.local'
   # host: '127.0.0.1'
   dbname: 'stapp'
   user: 'stapp'

@@ -27,10 +27,10 @@ with psycopg.connect(
     ticket_df = pd.read_sql(f'select * from {tablename}',con=conn)
 
 # ticket_df = pd.read_csv(config["ticket_data"],low_memory=False)
-data = ticket_df.head(10000)
+data = ticket_df.head(50)
 data.fillna('', inplace=True)
 data['ticket_details'] = data['ticketList_subject'] + " " + data['ticketList_detailproblem'] + " " + data['ticketList_source_cause'] + " " + data['ticketList_product_category'] 
-test_data = ticket_df.iloc[10000:]
+test_data = ticket_df.iloc[50:]
 
 model_path = config["resolution_model"]["embeddings_model"]
 embed_tokenizer = AutoTokenizer.from_pretrained(model_path)
