@@ -38,7 +38,7 @@ with DAG(
     schedule_interval=None,
     tags=['test', 'dougdet'],
     params={
-        'av_conn_id': Param("ce-dougdet-avdata", type="string"),
+#        'av_conn_id': Param("ce-dougdet-avdata", type="string"),
 #        'weave_conn_id': Param("ce-dougdet-weaviate", type="string"),
         's3_endpoint_url': Param('http://av-data-service.ezdata-system.svc.cluster.local.30000', type='string'),
         's3_access_key': Param(auth_token, type='string'),
