@@ -41,7 +41,7 @@ with DAG(
 #        'av_conn_id': Param("ce-dougdet-avdata", type="string"),
 #        'weave_conn_id': Param("ce-dougdet-weaviate", type="string"),
         's3_endpoint_url': Param('http://av-data-service.ezdata-system.svc.cluster.local.30000', type='string'),
-        's3_access_key': Param(auth_token, type='string'),
+#        's3_access_key': Param(auth_token, type='string'),
         's3_secret_key': Param('s3', type='string'),
         's3_bucket': Param("ce-dougdet-pcaiexer", type="string"),
         's3_prefix': Param("*", type="string"),
@@ -88,8 +88,10 @@ with DAG(
     @task
     def download_s3_file_to_shared_volume():
         context = get_current_context()
+        auth_token = None
         if 'AUTH_TOKEN' in os.environ:
-            print(f"AUTH_TOKEN={os.environ['AUTH_TOKEN']}", flush=True)
+            auth_token = os.environ['AUTH_TOKEN']
+            print(f"AUTH_TOKEN={auth_token}", flush=True)
         else:
             print('AUTH_TOKEN not set', flush=True)
         #
@@ -109,7 +111,7 @@ with DAG(
         # DOWNLOAD
         os.umask(0o022)
 #        s3=S3Hook(aws_conn_id=av_conn_id)
-        s3 = boto3.client('s3', endpoint_url=s3_endpoint_url, aws_access_key_id=s3_access_key, aws_secret_access_key=s3_secret_key)
+        s3 = boto3.client('s3', endpoint_url=s3_endpoint_url, aws_access_key_id=auth_token, aws_secret_access_key=s3_secret_key)
         paginator = s3.get_paginator('list_objects_v2')
         page_iterator = paginator.paginate(Bucket=s3_bucket)
         download_dir = path.join(shared_vol_base, dnld_path, dnld_dir)
