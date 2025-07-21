@@ -7,18 +7,22 @@ import re
 import yaml
 from config_handler import load_config, validate_config
 
-### Read Model data from Config.yaml file
-config = load_config()
-
-TOKEN = config["ocr_model"]["inference_server_token"]
-MODEL_ENDPOINT = config["ocr_model"]["inference_server_url"]
-MODEL_NAME = config["ocr_model"]["vlm_model"]
+### Read Model data from Config.yaml file - will be loaded dynamically
+def get_ocr_config():
+    """Get current OCR configuration"""
+    config = load_config()
+    return {
+        "token": config["ocr_model"]["inference_server_token"],
+        "endpoint": config["ocr_model"]["inference_server_url"],
+        "model_name": config["ocr_model"]["vlm_model"]
+    }
 
 ### remove Async part
-def call_qwen(prompt: str, encoded_image, url: str):
-    headers = {"Authorization": f"Bearer {TOKEN}"}
+def call_qwen(prompt: str, encoded_image):
+    ocr_config = get_ocr_config()
+    headers = {"Authorization": f"Bearer {ocr_config['token']}"}
     payload = {
-        "model": MODEL_NAME,  
+        "model": ocr_config['model_name'],  
         "messages": [
             {
                 "role": "user",
@@ -32,11 +36,11 @@ def call_qwen(prompt: str, encoded_image, url: str):
     }
 
     try:
-        resp = httpx.post(url, json=payload, headers=headers, timeout=30.0)
+        resp = httpx.post(ocr_config['endpoint'], json=payload, headers=headers, timeout=30.0)
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"]
     except httpx.ConnectError as e:
-        raise ConnectionError(f"Unable to connect to OCR service at {url}. Please check the endpoint configuration in the 'Endpoint Configuration' tab.") from e
+        raise ConnectionError(f"Unable to connect to OCR service at {ocr_config['endpoint']}. Please check the endpoint configuration in the 'Endpoint Configuration' tab.") from e
     except httpx.TimeoutException as e:
         raise TimeoutError(f"Request to OCR service timed out. Please check the service availability.") from e
     except httpx.HTTPStatusError as e:
@@ -65,8 +69,9 @@ def extract_text_from_image():
     st.markdown("### Image Text Extraction")
     st.markdown("Upload a network speed test screenshot to extract performance metrics.")
     
-    # Check configuration before allowing image upload
-    config_errors = validate_config(config)
+    # Check configuration before allowing image upload - reload config dynamically
+    current_config = load_config()
+    config_errors = validate_config(current_config)
     if config_errors:
         st.error("Configuration errors found:")
         for error in config_errors:
@@ -77,7 +82,25 @@ def extract_text_from_image():
     uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "png"], help="Supported formats: JPG, PNG")
     if uploaded_file is not None:
         image = Image.open(uploaded_file)
-        st.image(image, caption='Uploaded Image', use_column_width=True)   
+        st.image(image, caption='Uploaded Image', width=400)   
+
+        # Default prompt text
+        default_prompt = """Save only the number shown right below 'Download' and right above 'Mbps', nothing else, as the 1st element in an output list. 
+Save only the number shown right below 'Upload' and right above 'Mbps', nothing else, as the second element in the output list. 
+Save only the number shown right below 'Latency' and right above 'ms', nothing else, as the third element in the output list.
+Save only the location shown right below 'Wifi', only the Wifi network name shown right below 'Wifi' and right next to the wifi icon to the right, nothing else, as the fourth element in the output list. 
+Save BOTH the date and time shown right above 'Latency', shown right next to the calendar icon to the right, following the DD/MM/YYYY HH:MM format, nothing else, as the fifth element in the output list.
+Finally return the list of all elements in a string format with square brackets and commas separating elements. Make sure the list has 5 elements"""
+
+        # Show default prompt
+        st.markdown("**Default Analysis Prompt:**")
+        with st.expander("View/Edit Prompt", expanded=False):
+            USER_PROMPT = st.text_area(
+                "Custom Prompt", 
+                value=default_prompt, 
+                height=200, 
+                help="Modify the prompt to extract different information from the image"
+            )
 
         if st.button("Analyze Image", help="Extract metrics from the uploaded image"):
             try:
@@ -85,18 +108,8 @@ def extract_text_from_image():
                 image_bytes = uploaded_file.getvalue()
                 ENCODED_IMG = base64.b64encode(image_bytes).decode("utf-8")
                 
-                default_prompt = """
-Save only the number shown right below 'Download' and right above 'Mbps', nothing else, as the 1st element in an output list. 
-Save only the number shown right below 'Upload' and right above 'Mbps', nothing else, as the second element in the output list. 
-Save only the number shown right below 'Latency' and right above 'ms', nothing else, as the third element in the output list.
-Save only the location shown right below 'Wifi', only the Wifi network name shown right below 'Wifi' and right next to the wifi icon to the right, nothing else, as the fourth element in the output list. 
-Save BOTH the date and time shown right above 'Latency', shown right next to the calendar icon to the right, following the DD/MM/YYYY HH:MM format, nothing else, as the fifth element in the output list.
-Finally return the list of all elements in a string format with square brackets and commas separating elements. Make sure the list has 5 elements
-                """
-                USER_PROMPT = st.text_area("Custom Prompt (Advanced)", value=default_prompt, height=200, help="Modify the prompt to extract different information")
-                
                 with st.spinner("Analyzing image..."):
-                    OUTPUT = call_qwen(str(USER_PROMPT), ENCODED_IMG, MODEL_ENDPOINT)
+                    OUTPUT = call_qwen(str(USER_PROMPT), ENCODED_IMG)
                     PARSED = split_preserve_datetime(OUTPUT)
                     
                 data = {

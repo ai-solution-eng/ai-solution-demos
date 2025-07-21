@@ -1,7 +1,4 @@
 from sklearn.neighbors import NearestNeighbors
-from langchain_openai import ChatOpenAI
-from langchain.prompts import PromptTemplate
-from langchain_core.prompts import FewShotPromptTemplate
 from transformers import AutoTokenizer,AutoModel
 import torch
 import yaml
@@ -10,7 +7,7 @@ import numpy as np
 import httpx
 import pandas as pd
 import psycopg
-from config_handler import load_config
+from config_handler import load_config, validate_config
 
 config = load_config()
 
@@ -37,16 +34,49 @@ embed_tokenizer = AutoTokenizer.from_pretrained(model_path)
 
 embed_model = AutoModel.from_pretrained(model_path, trust_remote_code=True)
 
-llm_local = ChatOpenAI(
-    model=config["resolution_model"]["llm_model"],
-    openai_api_key=config["resolution_model"]["inference_server_token"],
-    openai_api_base=config["resolution_model"]["inference_server_url"],
-    max_tokens=2000,
-    temperature=0,
-    # http_client=httpx.Client(verify=False)
-)
 embeddings = np.load(config["resolution_model"]["embeddings_path"])
 retriever = NearestNeighbors(n_neighbors=5, metric='cosine').fit(embeddings)
+
+def call_llm(prompt: str):
+    """Call the LLM inference server directly"""
+    # Reload config dynamically to get latest environment variables
+    current_config = load_config()
+    config_errors = validate_config(current_config)
+    if config_errors:
+        raise ValueError(f"LLM configuration errors: {', '.join(config_errors)}")
+    
+    headers = {"Authorization": f"Bearer {current_config['resolution_model']['inference_server_token']}"}
+    payload = {
+        "model": current_config["resolution_model"]["llm_model"],
+        "messages": [
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        "max_tokens": 2000,
+        "temperature": 0
+    }
+    
+    try:
+        resp = httpx.post(
+            current_config["resolution_model"]["inference_server_url"], 
+            json=payload, 
+            headers=headers, 
+            timeout=60.0
+        )
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
+    except httpx.ConnectError as e:
+        raise ConnectionError(f"Unable to connect to LLM service. Please check the endpoint configuration.") from e
+    except httpx.TimeoutException as e:
+        raise TimeoutError(f"Request to LLM service timed out.") from e
+    except httpx.HTTPStatusError as e:
+        raise RuntimeError(f"LLM service returned error {e.response.status_code}: {e.response.text}") from e
+    except KeyError as e:
+        raise RuntimeError(f"Unexpected response format from LLM service. Missing key: {e}") from e
+    except Exception as e:
+        raise RuntimeError(f"Unexpected error calling LLM service: {str(e)}") from e
 
 # def get_embeddings_in_batches(texts, batch_size=32):
 #     all_embeddings = []
@@ -67,148 +97,95 @@ def get_embeddings(texts):
 
 def retrieve_similar_issues(query):
     query_embedding = get_embeddings([query])
-    distances, indices = retriever.kneighbors(query_embedding)
+    _, indices = retriever.kneighbors(query_embedding)
     # Retrieve both issue text and resolution for similar cases
     similar_issues = data.iloc[indices[0]]
     return similar_issues
 
-# Function to dynamically generate few-shot examples based on the user's input
-def get_few_shot_examples(query):
+def build_few_shot_prompt_resolution(query, ticketList_subject, ticketList_detailproblem, ticketList_source_cause, ticketList_product_category):
     # Retrieve similar issues dynamically based on the input query
     similar_issues = retrieve_similar_issues(query)
     
-    # Create few-shot examples from the retrieved similar issues
-    few_shot_examples = [
-        {
-            "ticketList_subject": issue['ticketList_subject'],
-            "ticketList_detailproblem": issue['ticketList_detailproblem'],
-            "ticketList_source_cause": issue['ticketList_source_cause'],
-            "ticketList_product_category": issue['ticketList_product_category'],
-            "output": f"Resolution: {issue['ticketList_resolution']}"
-        }
-        for _, issue in similar_issues.iterrows()  # Assuming similar_issues is a DataFrame
-    ]
-    return few_shot_examples
+    # Build few-shot examples as text
+    examples_text = "You are a helpful assistant. Use the following examples to guide your response.\n\n"
+    
+    for _, issue in similar_issues.iterrows():
+        examples_text += f"Ticket subject: {issue['ticketList_subject']}\n"
+        examples_text += f"Detailed problem: {issue['ticketList_detailproblem']}\n"
+        examples_text += f"Source cause: {issue['ticketList_source_cause']}\n"
+        examples_text += f"Product category: {issue['ticketList_product_category']}\n"
+        examples_text += f"Resolution: {issue['ticketList_resolution']}\n\n"
+    
+    # Add the current ticket for prediction
+    examples_text += "Based on the similar cases above, please provide a resolution for the following ticket:\n"
+    examples_text += f"Ticket subject: {ticketList_subject}\n"
+    examples_text += f"Detailed problem: {ticketList_detailproblem}\n"
+    examples_text += f"Source cause: {ticketList_source_cause}\n"
+    examples_text += f"Product category: {ticketList_product_category}\n"
+    examples_text += "What is the appropriate resolution for this ticket?"
+    
+    return examples_text
 
 # Function to predict resolution dynamically based on the user's input ticket
-def predict_resolution(ticketList_subject, ticketList_detailproblem, ticketList_source_cause, ticketList_product_category,llm_local=llm_local):
+def predict_resolution(ticketList_subject, ticketList_detailproblem, ticketList_source_cause, ticketList_product_category):
     # Create a dynamic sample query using input variables
     sample_query = f"{ticketList_subject} {ticketList_detailproblem} {ticketList_source_cause} {ticketList_product_category}"
     
-    # Generate few-shot examples dynamically
-    few_shot_examples = get_few_shot_examples(sample_query)
-
-    # print(few_shot_examples)
-    # Define example prompt template using PromptTemplate
-    example_prompt = PromptTemplate(
-        input_variables=["ticketList_subject", "ticketList_detailproblem", "ticketList_source_cause", "ticketList_product_category", "output"],
-        template="Ticket subject: {ticketList_subject}\n"
-                 "Detailed problem: {ticketList_detailproblem}\n"
-                 "Source cause: {ticketList_source_cause}\n"
-                 "Product category: {ticketList_product_category}\n"
-                 "{output}"
-    )
-
-    # Define a suffix template for the final prediction
-    suffix = PromptTemplate(
-        input_variables=["ticketList_subject", "ticketList_detailproblem", "ticketList_source_cause", "ticketList_product_category"],
-        template="Based on the similar cases above, please provide a resolution for the following ticket:\n"
-                 "Ticket subject: {ticketList_subject}\n"
-                 "Detailed problem: {ticketList_detailproblem}\n"
-                 "Source cause: {ticketList_source_cause}\n"
-                 "Product category: {ticketList_product_category}\n"
-                 "What is the appropriate resolution for this ticket?"
-    )
-
-    # Create FewShotPromptTemplate with examples and templates
-    few_shot_template = FewShotPromptTemplate(
-        examples=few_shot_examples,
-        example_prompt=example_prompt,
-        suffix=suffix.template,
-        input_variables=["ticketList_subject", "ticketList_detailproblem", "ticketList_source_cause", "ticketList_product_category"],
-        prefix="You are a helpful assistant. Use the following examples to guide your response.\n"
-    )
-    print(few_shot_template)
-    #chain = prompt | llm_local
-    chain = few_shot_template | llm_local
+    # Build the prompt with few-shot examples
+    prompt = build_few_shot_prompt_resolution(sample_query, ticketList_subject, ticketList_detailproblem, ticketList_source_cause, ticketList_product_category)
     
-    # Use LLMChain to predict resolution based on dynamically generated few-shot examples
-    print("Invoking chain")
-    result = chain.invoke({
-        "ticketList_subject": ticketList_subject,
-        "ticketList_detailproblem": ticketList_detailproblem,
-        "ticketList_source_cause": ticketList_source_cause,
-        "ticketList_product_category": ticketList_product_category
-    })
-    return result
+    try:
+        result = call_llm(prompt)
+        # Create a simple result object to match the expected interface
+        class SimpleResult:
+            def __init__(self, content):
+                self.content = content
+        
+        return SimpleResult(result)
+    except Exception as e:
+        raise RuntimeError(f"Failed to predict resolution: {str(e)}") from e
 
 
 
-def get_few_shot_examples_mttr(query):
+def build_few_shot_prompt_mttr(query, ticketList_subject, ticketList_detailproblem, ticketList_source_cause, ticketList_product_category):
     # Retrieve similar issues dynamically based on the input query
     similar_issues = retrieve_similar_issues(query)
     
-    # Create few-shot examples from the retrieved similar issues
-    few_shot_examples = [
-        {
-            "ticketList_subject": issue['ticketList_subject'],
-            "ticketList_detailproblem": issue['ticketList_detailproblem'],
-            "ticketList_source_cause": issue['ticketList_source_cause'],
-            "ticketList_product_category": issue['ticketList_product_category'],
-            "output": f"Mean time to resolution: {issue['ticketList_mttrall']}"
-        }
-        for _, issue in similar_issues.iterrows()  # Assuming similar_issues is a DataFrame
-    ]
-    return few_shot_examples
+    # Build few-shot examples as text
+    examples_text = "You are a helpful assistant. Use the following examples to guide your response.\n\n"
+    
+    for _, issue in similar_issues.iterrows():
+        examples_text += f"Ticket subject: {issue['ticketList_subject']}\n"
+        examples_text += f"Detailed problem: {issue['ticketList_detailproblem']}\n"
+        examples_text += f"Source cause: {issue['ticketList_source_cause']}\n"
+        examples_text += f"Product category: {issue['ticketList_product_category']}\n"
+        examples_text += f"Mean time to resolution: {issue['ticketList_mttrall']}\n\n"
+    
+    # Add the current ticket for prediction
+    examples_text += "Based on the similar cases above, please provide the 'mean time to resolution' for the following ticket:\n"
+    examples_text += f"Ticket subject: {ticketList_subject}\n"
+    examples_text += f"Detailed problem: {ticketList_detailproblem}\n"
+    examples_text += f"Source cause: {ticketList_source_cause}\n"
+    examples_text += f"Product category: {ticketList_product_category}\n"
+    examples_text += "What would be the appropriate 'mean time to resolution' for this ticket?\n"
+    examples_text += "Provide only the time estimate, do not give any explanation."
+    
+    return examples_text
 
-
-def predict_mttr(ticketList_subject, ticketList_detailproblem, ticketList_source_cause, ticketList_product_category,llm_local=llm_local):
+def predict_mttr(ticketList_subject, ticketList_detailproblem, ticketList_source_cause, ticketList_product_category):
     # Create a dynamic sample query using input variables
     sample_query = f"{ticketList_subject} {ticketList_detailproblem} {ticketList_source_cause} {ticketList_product_category}"
     
-    # Generate few-shot examples dynamically
-    few_shot_examples = get_few_shot_examples_mttr(sample_query)
-
-    print(few_shot_examples)
-    # Define example prompt template using PromptTemplate
-    example_prompt = PromptTemplate(
-        input_variables=["ticketList_subject", "ticketList_detailproblem", "ticketList_source_cause", "ticketList_product_category", "output"],
-        template="Ticket subject: {ticketList_subject}\n"
-                 "Detailed problem: {ticketList_detailproblem}\n"
-                 "Source cause: {ticketList_source_cause}\n"
-                 "Product category: {ticketList_product_category}\n"
-                 "{output}"
-    )
-
-    # Define a suffix template for the final prediction
-    suffix = PromptTemplate(
-        input_variables=["ticketList_subject", "ticketList_detailproblem", "ticketList_source_cause", "ticketList_product_category"],
-        template="Based on the similar cases above, please provide the 'mean time to resolution' for the following ticket:\n"
-                 "Ticket subject: {ticketList_subject}\n"
-                 "Detailed problem: {ticketList_detailproblem}\n"
-                 "Source cause: {ticketList_source_cause}\n"
-                 "Product category: {ticketList_product_category}\n"
-                 "What would be the appropriate 'mean time to resolution' for this ticket?\n"
-                 "Provide only the time estimate, do not give any explanation."
-    )
-
-    # Create FewShotPromptTemplate with examples and templates
-    few_shot_template = FewShotPromptTemplate(
-        examples=few_shot_examples,
-        example_prompt=example_prompt,
-        suffix=suffix.template,
-        input_variables=["ticketList_subject", "ticketList_detailproblem", "ticketList_source_cause", "ticketList_product_category"],
-        prefix="You are a helpful assistant. Use the following examples to guide your response.\n"
-    )
-
-    #chain = prompt | llm_local
-    chain = few_shot_template | llm_local
+    # Build the prompt with few-shot examples
+    prompt = build_few_shot_prompt_mttr(sample_query, ticketList_subject, ticketList_detailproblem, ticketList_source_cause, ticketList_product_category)
     
-    # Use LLMChain to predict resolution based on dynamically generated few-shot examples
-    result = chain.invoke({
-        "ticketList_subject": ticketList_subject,
-        "ticketList_detailproblem": ticketList_detailproblem,
-        "ticketList_source_cause": ticketList_source_cause,
-        "ticketList_product_category": ticketList_product_category
-    })
-    return result
+    try:
+        result = call_llm(prompt)
+        # Create a simple result object to match the expected interface
+        class SimpleResult:
+            def __init__(self, content):
+                self.content = content
+        
+        return SimpleResult(result)
+    except Exception as e:
+        raise RuntimeError(f"Failed to predict MTTR: {str(e)}") from e

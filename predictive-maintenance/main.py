@@ -240,14 +240,96 @@ with tab1:
         if st.button("Submit"):
             if st.session_state.start_datetime <= st.session_state.end_datetime:
                 st.success(f"Selected Date Range: {st.session_state.start_datetime} to {st.session_state.end_datetime}")
-                start_date_dt = f"{st.session_state.start_date.month}/{st.session_state.start_date.day}/{st.session_state.start_date.year} {st.session_state.start_time.strftime('%I:%M:%S %p')}"
-                end_date_dt = f"{st.session_state.end_date.month}/{st.session_state.end_date.day}/{st.session_state.end_date.year} {st.session_state.end_time.strftime('%I:%M:%S %p')}"
-    
-                st.session_state.df = test_data[
-                    (test_data['ticketList_downtime'] >= start_date_dt) & 
-                    (test_data['ticketList_downtime'] <= end_date_dt)
+                
+                try:
+                    # Convert datetime objects to pandas datetime for proper comparison
+                    start_datetime_pd = pd.to_datetime(st.session_state.start_datetime)
+                    end_datetime_pd = pd.to_datetime(st.session_state.end_datetime)
+                    
+                    # Convert the ticketList_downtime column to datetime if it's not already
+                    if test_data['ticketList_downtime'].dtype == 'object':
+                        test_data_converted = test_data.copy()
+                        test_data_converted['ticketList_downtime'] = pd.to_datetime(test_data['ticketList_downtime'], errors='coerce')
+                    else:
+                        test_data_converted = test_data
+                    
+                    # Filter using datetime comparison
+                    st.session_state.df = test_data_converted[
+                        (test_data_converted['ticketList_downtime'] >= start_datetime_pd) & 
+                        (test_data_converted['ticketList_downtime'] <= end_datetime_pd)
                     ].reset_index(drop=True)
-                st.success(f"Found {len(st.session_state.df)} tickets")
+                    
+                    st.success(f"Found {len(st.session_state.df)} tickets")
+                    
+                    # Debug information - always show for troubleshooting
+                    with st.expander("Dataset Analysis", expanded=len(st.session_state.df) == 0):
+                        st.write(f"**Total tickets in dataset:** {len(test_data_converted)}")
+                        st.write(f"**Date range searched:** {start_datetime_pd} to {end_datetime_pd}")
+                        st.write(f"**Tickets found:** {len(st.session_state.df)}")
+                        
+                        # Show date range in the dataset
+                        valid_dates = test_data_converted['ticketList_downtime'].dropna()
+                        if len(valid_dates) > 0:
+                            min_date = valid_dates.min()
+                            max_date = valid_dates.max()
+                            st.write(f"**Dataset date range:** {min_date} to {max_date}")
+                            
+                            # Show tickets in the selected date range (verification)
+                            selected_range_tickets = test_data_converted[
+                                (test_data_converted['ticketList_downtime'] >= start_datetime_pd) & 
+                                (test_data_converted['ticketList_downtime'] <= end_datetime_pd)
+                            ]
+                            st.write(f"**Tickets in selected range:** {len(selected_range_tickets)}")
+                            
+                            # Show months with most tickets (sorted by count)
+                            st.write("**Months with most tickets (Top 10):**")
+                            date_counts = valid_dates.dt.to_period('M').value_counts().sort_values(ascending=False)
+                            
+                            for period, count in date_counts.head(10).items():
+                                # Convert period back to datetime for range suggestion
+                                period_start = period.start_time.date()
+                                period_end = period.end_time.date()
+                                st.write(f"- **{period}**: {count} tickets (Range: {period_start} to {period_end})")
+                            
+                            if len(date_counts) > 10:
+                                st.write(f"... and {len(date_counts) - 10} more months")
+                            
+                            # Suggest a good range
+                            if len(date_counts) > 0:
+                                best_month = date_counts.index[0]
+                                best_count = date_counts.iloc[0]
+                                if best_count >= 5:
+                                    best_start = best_month.start_time.date()
+                                    best_end = best_month.end_time.date()
+                                    st.success(f"**Recommended range:** {best_start} to {best_end} ({best_count} tickets)")
+                                else:
+                                    # Find a range that spans multiple months to get 5+ tickets
+                                    cumulative = 0
+                                    months_needed = []
+                                    for period, count in date_counts.items():
+                                        months_needed.append(period)
+                                        cumulative += count
+                                        if cumulative >= 5:
+                                            range_start = months_needed[0].start_time.date()
+                                            range_end = months_needed[-1].end_time.date()
+                                            st.success(f"**Recommended range:** {range_start} to {range_end} ({cumulative} tickets across {len(months_needed)} months)")
+                                            break
+                        else:
+                            st.warning("No valid dates found in the dataset!")
+                            
+                except Exception as e:
+                    st.error(f"Error processing dates: {str(e)}")
+                    st.info("Using original string comparison as fallback...")
+                    
+                    # Fallback to original method
+                    start_date_dt = f"{st.session_state.start_date.month}/{st.session_state.start_date.day}/{st.session_state.start_date.year} {st.session_state.start_time.strftime('%I:%M:%S %p')}"
+                    end_date_dt = f"{st.session_state.end_date.month}/{st.session_state.end_date.day}/{st.session_state.end_date.year} {st.session_state.end_time.strftime('%I:%M:%S %p')}"
+        
+                    st.session_state.df = test_data[
+                        (test_data['ticketList_downtime'] >= start_date_dt) & 
+                        (test_data['ticketList_downtime'] <= end_date_dt)
+                    ].reset_index(drop=True)
+                    st.success(f"Found {len(st.session_state.df)} tickets")
 
                 st.session_state.df.insert(0, "Select", False)
                 st.session_state.submitted = True
