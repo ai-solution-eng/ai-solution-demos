@@ -4,6 +4,7 @@ import getpass
 #import logging
 import shutil
 import boto3
+import botocore.exceptions
 from datetime import datetime, timedelta
 from os import path
 from airflow import DAG
@@ -111,9 +112,24 @@ with DAG(
         # DOWNLOAD
         os.umask(0o022)
 #        s3=S3Hook(aws_conn_id=av_conn_id)
-        s3 = boto3.client('s3', endpoint_url=s3_endpoint_url, aws_access_key_id=s3_access_key, aws_secret_access_key=s3_secret_key)
-        paginator = s3.get_paginator('list_objects_v2')
-        page_iterator = paginator.paginate(Bucket=s3_bucket)
+        try:
+            s3 = boto3.client('s3', endpoint_url=s3_endpoint_url, aws_access_key_id=s3_access_key, aws_secret_access_key=s3_secret_key)
+        except Exception as e:
+            print(f'boto3.client() exception: {e}', flush=True)
+            raise
+
+        try:
+            paginator = s3.get_paginator('list_objects_v2')
+        except Exception as e:
+            print(f'get_paginator() exception: {e}', flush=True)
+            raise
+
+        try:
+            page_iterator = paginator.paginate(Bucket=s3_bucket)
+        except Exception as e:
+            print(f'paginate() exception: {e}', flush=True)
+            raise
+
         download_dir = path.join(shared_vol_base, dnld_path, dnld_dir)
         for page in page_iterator:
             if 'Contents' in page:
