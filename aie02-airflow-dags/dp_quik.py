@@ -98,7 +98,7 @@ with DAG(
         # S3 identifiers
 #        av_conn_id = context['params']['av_conn_id']
         s3_endpoint_url = context['params']['s3_endpoint_url']
-        s3_access_key = context['params']['s3_access_key']
+        s3_access_key = auth_token
         s3_secret_key = context['params']['s3_secret_key']
         s3_bucket = context['params']['s3_bucket']
         s3_prefix = context['params']['s3_prefix']
@@ -111,7 +111,7 @@ with DAG(
         # DOWNLOAD
         os.umask(0o022)
 #        s3=S3Hook(aws_conn_id=av_conn_id)
-        s3 = boto3.client('s3', endpoint_url=s3_endpoint_url, aws_access_key_id=auth_token, aws_secret_access_key=s3_secret_key)
+        s3 = boto3.client('s3', endpoint_url=s3_endpoint_url, aws_access_key_id=s3_access_key, aws_secret_access_key=s3_secret_key)
         paginator = s3.get_paginator('list_objects_v2')
         page_iterator = paginator.paginate(Bucket=s3_bucket)
         download_dir = path.join(shared_vol_base, dnld_path, dnld_dir)
