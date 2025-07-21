@@ -16,6 +16,7 @@ from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 #from airflow.providers.weaviate.hooks.weaviate import WeaviateHook
 
 token_file = '/etc/secrets/ezua/.auth_token'
+auth_token = ''
 if path.exists(token_file):
     with open(token_file, 'r') as fd:
         auth_token = fd.read().strip()
