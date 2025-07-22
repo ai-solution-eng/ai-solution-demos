@@ -1,4 +1,5 @@
 import streamlit as st
+import pandas as pd
 from classification import predict,batch_predict,create_prediction_distribution_plot,plot_confusion_matrix,plot_metrics,get_metrics
 from ocr import extract_text_from_image
 from resolution_mttr import test_data,predict_resolution,predict_mttr
@@ -100,12 +101,23 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Header with HPE logo and app title
-st.markdown("""
-<div class="main-header">
-    <div class="hpe-logo">HPE</div>
-    <h1 class="app-title">Predictive Maintenance Demo</h1>
-</div>
-""", unsafe_allow_html=True)
+col1, col2 = st.columns([1, 4])
+with col1:
+    st.image("assets/HPE-logo-2025.png", width=100)
+with col2:
+    st.markdown("""
+    <div style="
+        background: linear-gradient(135deg, #00B2B3 0%, #00D1C7 100%);
+        padding: 1.5rem;
+        border-radius: 8px;
+        margin-bottom: 2rem;
+        color: white;
+        text-align: center;
+        margin-top: 1rem;
+    ">
+        <h1 style="color: white; margin: 0; font-size: 2rem; font-weight: 600;">Predictive Maintenance Demo</h1>
+    </div>
+    """, unsafe_allow_html=True)
 
 # Initialize session state
 if "ticket_df" not in st.session_state:
@@ -249,9 +261,24 @@ with tab1:
                     # Convert the ticketList_downtime column to datetime if it's not already
                     if test_data['ticketList_downtime'].dtype == 'object':
                         test_data_converted = test_data.copy()
-                        test_data_converted['ticketList_downtime'] = pd.to_datetime(test_data['ticketList_downtime'], errors='coerce')
+                        # Show original format before conversion
+                        st.info(f"Original data format examples: {list(test_data['ticketList_downtime'].dropna().head(3))}")
+                        
+                        # Convert with explicit format specification for MM/DD/YYYY HH:MM
+                        test_data_converted['ticketList_downtime'] = pd.to_datetime(
+                            test_data['ticketList_downtime'], 
+                            format='%m/%d/%Y %H:%M',
+                            errors='coerce'
+                        )
+                        
+                        # Show converted format
+                        converted_examples = list(test_data_converted['ticketList_downtime'].dropna().head(3))
+                        st.info(f"Converted data format: {converted_examples}")
                     else:
                         test_data_converted = test_data
+                    
+                    # Show search range for comparison
+                    st.info(f"Search range: {start_datetime_pd} to {end_datetime_pd}")
                     
                     # Filter using datetime comparison
                     st.session_state.df = test_data_converted[

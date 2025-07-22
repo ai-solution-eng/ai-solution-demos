@@ -3,4 +3,4 @@ model
 data/*
 .env
 config_local.yaml
-*.log
+*.logWhy

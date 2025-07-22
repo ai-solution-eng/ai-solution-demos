@@ -10,7 +10,7 @@ resolution_model:
   embeddings_path: "./artifacts/embeddings.npy"
   inference_server_url: ""
   inference_server_token: ""
-  llm_model: "meta-llama/Meta-Llama-3.1-8B-Instruct"
+  llm_model: "meta-llama/Llama-3.1-8B-Instruct"
 
 ocr_model:
   inference_server_url: ""

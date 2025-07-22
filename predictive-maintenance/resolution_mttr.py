@@ -18,16 +18,52 @@ password = config["postgresql"]["password"]
 port = config["postgresql"]["port"]
 tablename = config["postgresql"]["tablename"]
 
-with psycopg.connect(
-    f"host={host} dbname={dbname} user={user} password={password} port={port}"
-) as conn:
-    ticket_df = pd.read_sql(f'select * from {tablename}',con=conn)
+try:
+    with psycopg.connect(
+        f"host={host} dbname={dbname} user={user} password={password} port={port}"
+    ) as conn:
+        ticket_df = pd.read_sql(f'select * from {tablename}',con=conn)
+        print(f"Successfully loaded {len(ticket_df)} tickets from PostgreSQL")
+        
+        # Show sample dates from PostgreSQL
+        if 'ticketList_downtime' in ticket_df.columns:
+            print("Sample PostgreSQL dates:")
+            for i, date in enumerate(ticket_df['ticketList_downtime'].head(5)):
+                print(f"  {i+1}: {date} (type: {type(date)})")
+        else:
+            print("Warning: ticketList_downtime column not found in PostgreSQL data")
+            print(f"Available columns: {list(ticket_df.columns)}")
+            
+except Exception as e:
+    print(f"PostgreSQL connection failed: {e}")
+    print("Falling back to CSV file for testing...")
+    
+    # Use CSV file as fallback
+    csv_path = "data/test-tickets.csv"
+    ticket_df = pd.read_csv(csv_path, low_memory=False)
+    print(f"Loaded {len(ticket_df)} tickets from CSV file")
+    
+    # Show sample dates from CSV
+    print("Sample CSV dates:")
+    for i, date in enumerate(ticket_df['ticketList_downtime'].head(5)):
+        print(f"  {i+1}: {date} (type: {type(date)})")
 
 # ticket_df = pd.read_csv(config["ticket_data"],low_memory=False)
-data = ticket_df.head(50)
+print(f"Total tickets loaded: {len(ticket_df)}")
+
+# Ensure we have enough data for training (minimum 10 tickets)
+if len(ticket_df) < 10:
+    raise ValueError(f"Insufficient data: only {len(ticket_df)} tickets found. Need at least 10 tickets.")
+
+# Use first 70% for training data, rest for test data
+train_size = max(10, int(len(ticket_df) * 0.7))  # At least 10 tickets for training
+data = ticket_df.head(train_size)
 data.fillna('', inplace=True)
 data['ticket_details'] = data['ticketList_subject'] + " " + data['ticketList_detailproblem'] + " " + data['ticketList_source_cause'] + " " + data['ticketList_product_category'] 
-test_data = ticket_df.iloc[50:]
+test_data = ticket_df.iloc[train_size:]
+
+print(f"Training data: {len(data)} tickets")
+print(f"Test data: {len(test_data)} tickets")
 
 model_path = config["resolution_model"]["embeddings_model"]
 embed_tokenizer = AutoTokenizer.from_pretrained(model_path)
@@ -98,8 +134,18 @@ def get_embeddings(texts):
 def retrieve_similar_issues(query):
     query_embedding = get_embeddings([query])
     _, indices = retriever.kneighbors(query_embedding)
-    # Retrieve both issue text and resolution for similar cases
-    similar_issues = data.iloc[indices[0]]
+    
+    # Filter indices to ensure they're within bounds
+    valid_indices = [idx for idx in indices[0] if idx < len(data)]
+    
+    if not valid_indices:
+        # Fallback: return first few tickets if no valid indices
+        print("Warning: No valid similar issues found, using first available tickets")
+        similar_issues = data.head(min(3, len(data)))
+    else:
+        # Use only valid indices
+        similar_issues = data.iloc[valid_indices[:5]]  # Limit to 5 similar issues
+    
     return similar_issues
 
 def build_few_shot_prompt_resolution(query, ticketList_subject, ticketList_detailproblem, ticketList_source_cause, ticketList_product_category):

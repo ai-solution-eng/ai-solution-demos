@@ -45,3 +45,4 @@ Thumbs.db
 
 helm-chart/
 __pycache__
+data/*
