@@ -28,16 +28,23 @@ The Helm chart includes EZUA (HPE's application orchestration platform) integrat
 
 ### Deployment
 
-```bash
-# Package the chart
-helm package helm-chart/
+Two assets required for the app deployment on PCAI via "Import Framework" are:
 
-# Deploy to Kubernetes
-helm install predictive-maintenance ./predictive-maintenance-0.1.3.tgz
+1. The packaged helm chart: ./assets/predictive-maintenance-0.1.8.tgz
+2. The app logo: ./assets/logo.png
+
+### Testing: 
+
+- For ticket resolution prediction & classification, refer to the notebooks in ./postgresql to set up a table data in PostgreSQL. You can deploy PostgreSQL on the same PCAI cluster using [this framework](https://github.com/ai-solution-eng/frameworks/tree/main/postgresql). 
+
+- For demoing the OCR use case, use the test image under ./data/test-image.jpg. Hint: You might need to add this sentence to the existing template suggested prompts in case the decimals are not properly identified.
+
+```yaml
+Make sure a comma in between digits is treated as "." or decimal.
+```
 
 # Access via configured domain
 # Application will be available at: predictive-maintenance.${DOMAIN_NAME}
-```
 
 The application supports dynamic endpoint configuration through the UI, allowing runtime updates to ML inference server URLs and authentication tokens without requiring redeployment.
 
@@ -56,7 +63,8 @@ To deploy and manage ML models on HPE PCAI infrastructure:
 ### Acknowledgement:
 - HPE GSE Team - Original use case development.
 - [Roh Geun Tak](https://github.com/rohgeuntak76) - Migrating the helm chart over to PCAI.
-- [Daniel Cao](https://github.com/caovd) - Solution architect
+- [Daniel Cao](https://github.com/caovd) - Solution architect for designing, testing, adapting and demoing these use cases on PCAI. 
 
 ### Contribution: 
 - No contribution/further development is expected except for POC/demo purposes.
+

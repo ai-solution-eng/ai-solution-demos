@@ -15,109 +15,139 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for clean professional UI
+# Custom CSS for clean modern UI
 st.markdown("""
 <style>
-    .main-header {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: linear-gradient(135deg, #00B2B3 0%, #00D1C7 100%);
-        padding: 1.5rem;
-        border-radius: 8px;
-        margin-bottom: 2rem;
-        color: white;
-        text-align: center;
+    /* Global font and background */
+    .main .block-container {
+        font-family: 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+        background-color: white;
+        padding-top: 2rem;
     }
     
-    .hpe-logo {
-        font-size: 2rem;
-        font-weight: bold;
-        color: #ffffff;
-        margin-right: 1rem;
-        background: rgba(255, 255, 255, 0.1);
-        padding: 0.5rem 1rem;
-        border-radius: 4px;
+    /* Header styling */
+    .app-header {
+        display: flex;
+        align-items: center;
+        margin-bottom: 2rem;
+        padding-bottom: 1rem;
+        border-bottom: 1px solid #e5e5e5;
     }
     
     .app-title {
-        font-size: 2rem;
-        font-weight: 600;
-        color: white;
+        color: #2c2c2c;
+        font-size: 2.5rem;
+        font-weight: 300;
         margin: 0;
+        letter-spacing: -0.5px;
     }
     
+    /* Clean card styling */
     .feature-card {
-        background: #f8f9fa;
+        background: white;
         padding: 1.5rem;
         border-radius: 8px;
-        border: 1px solid #e9ecef;
+        border: 1px solid #e5e5e5;
         margin-bottom: 1rem;
-        border-left: 4px solid #00B2B3;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
     }
     
     .feature-card h3 {
-        color: #495057;
+        color: #2c2c2c;
         margin-top: 0;
-        font-weight: 600;
+        font-weight: 500;
+        font-size: 1.25rem;
     }
     
+    /* Button styling */
     .stButton > button {
-        background: #00B2B3;
+        background: #01a982;
         color: white;
         border: none;
-        border-radius: 4px;
-        padding: 0.5rem 1rem;
+        border-radius: 6px;
+        padding: 0.6rem 1.5rem;
         font-weight: 500;
+        font-size: 0.95rem;
         transition: all 0.2s ease;
+        border: 1px solid #01a982;
     }
     
     .stButton > button:hover {
-        background: #008a8b;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        background: #018f73;
+        box-shadow: 0 2px 8px rgba(1, 169, 130, 0.3);
     }
     
+    /* Form styling */
+    .stSelectbox > div > div > div {
+        background-color: white;
+        border: 1px solid #e5e5e5;
+    }
+    
+    .stTextInput > div > div > input {
+        background-color: white;
+        border: 1px solid #e5e5e5;
+    }
+    
+    /* Tab styling */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 2rem;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        color: #666;
+        font-weight: 500;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        color: #01a982;
+    }
+    
+    /* Message styling */
     .success-message {
-        background: #d4edda;
-        color: #155724;
+        background: #f0f9f7;
+        color: #0d5d4a;
         padding: 1rem;
-        border-radius: 4px;
-        border-left: 4px solid #28a745;
+        border-radius: 6px;
+        border-left: 4px solid #01a982;
         margin: 1rem 0;
-    }
-    
-    .config-section {
-        background: #f8f9fa;
-        padding: 1.5rem;
-        border-radius: 8px;
-        border: 1px solid #e9ecef;
-        margin-bottom: 1rem;
-    }
-    
-    .stTab > div > div > div > div {
-        padding: 1rem 0;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# Header with HPE logo and app title
-col1, col2 = st.columns([1, 4])
-with col1:
-    st.image("assets/HPE-logo-2025.png", width=100)
-with col2:
-    st.markdown("""
-    <div style="
-        background: linear-gradient(135deg, #00B2B3 0%, #00D1C7 100%);
-        padding: 1.5rem;
-        border-radius: 8px;
-        margin-bottom: 2rem;
-        color: white;
-        text-align: center;
-        margin-top: 1rem;
-    ">
-        <h1 style="color: white; margin: 0; font-size: 2rem; font-weight: 600;">Predictive Maintenance Demo</h1>
-    </div>
-    """, unsafe_allow_html=True)
+# Header with HPE logo and app title - left aligned
+st.markdown("""
+<div class="app-header">
+    <img src="data:image/png;base64,{}" style="height: 40px; width: auto; margin-right: 1rem;">
+    <h1 class="app-title">Predictive Maintenance Demo</h1>
+</div>
+""".format(
+    base64.b64encode(open("assets/HPE-logo-2025.png", "rb").read()).decode()
+), unsafe_allow_html=True)
+
+# Function to clean column names for display
+def clean_column_names(df):
+    """Convert database column names to user-friendly display names"""
+    column_mapping = {
+        'ticketList_subject': 'Subject',
+        'ticketList_detailproblem': 'Detail Problem',
+        'ticketList_source_cause': 'Source Cause',
+        'ticketList_product_category': 'Product Category',
+        'ticketList_downtime': 'Downtime',
+        'ticketList_uptime': 'Uptime',
+        'ticketList_status': 'Status',
+        'ticketList_resolution': 'Resolution',
+        'ticketList_mttrall': 'MTTR',
+        'ticketList_priority': 'Priority',
+        'ticketList_createtime': 'Created',
+        'ticketList_closetime': 'Closed',
+        'ticketList_cityname': 'City',
+        'ticketList_regionname': 'Region'
+    }
+    
+    # Create a copy and rename columns for display
+    display_df = df.copy()
+    display_df = display_df.rename(columns=column_mapping)
+    return display_df
 
 # Initialize session state
 if "ticket_df" not in st.session_state:
@@ -372,11 +402,11 @@ with tab1:
         col1, col2 = st.columns(2)
         with col1:
             st.session_state.selected_row["ticketList_subject"] = st.text_input(
-                "Ticket Subject", 
+                "Subject", 
                 placeholder="Enter the main subject of the ticket"
             )
             st.session_state.selected_row["ticketList_detailproblem"] = st.text_area(
-                "Detailed Problem", 
+                "Detail Problem", 
                 placeholder="Describe the problem in detail",
                 height=100
             )
@@ -402,8 +432,10 @@ with tab1:
         st.session_state.classification = None
         st.session_state.classification_batch = None
         
+        # Display data with cleaned column names
+        display_df = clean_column_names(st.session_state.df)
         edited_df = st.data_editor(
-            st.session_state.df,
+            display_df,
             hide_index=False,
             num_rows="fixed",
             key="table_editor",
@@ -506,7 +538,8 @@ with tab1:
         
         # Display results table
         st.markdown("#### Classification Results")
-        st.dataframe(st.session_state.classification_batch, use_container_width=True)
+        classification_display = clean_column_names(st.session_state.classification_batch)
+        st.dataframe(classification_display, use_container_width=True)
         
         # Charts section
         st.markdown("#### Analytics Dashboard")
