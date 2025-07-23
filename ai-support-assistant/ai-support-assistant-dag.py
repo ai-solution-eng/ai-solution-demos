@@ -15,7 +15,10 @@ DAG_ID = "ai-support-assistant-dag"
 with DAG(
     dag_id=DAG_ID,
     start_date=datetime.datetime(1970, 1, 1),
-    schedule="* * * * *",
+    schedule="*/5 * * * *",
+    access_control={
+        'All': {'can_read', 'can_edit', 'can_delete'}
+    },
     catchup=False,
 ) as dag:
 
@@ -89,6 +92,8 @@ with DAG(
 
             if not response.ok:
                 answer = f"I am unable to answer as the model failed with status code: {response.status_code}"
+                logger.error(f"Response code: {response.status_code}")
+                logger.error(f"Response body: {response.text}")
             else:
                 data = response.json()
                 answer = data["choices"][0]["message"]["content"]
@@ -140,5 +145,3 @@ with DAG(
     branch_on_answer.set_upstream(answer)
     post_customer_message(records, answer) << branch_on_answer
     post_internal_message(records, answer) << branch_on_answer
-
-        
