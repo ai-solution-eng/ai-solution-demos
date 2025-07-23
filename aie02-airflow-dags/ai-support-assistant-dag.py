@@ -89,6 +89,7 @@ with DAG(
 
             if not response.ok:
                 answer = f"I am unable to answer as the model failed with status code: {response.status_code}"
+                logger.error(response)
             else:
                 data = response.json()
                 answer = data["choices"][0]["message"]["content"]
