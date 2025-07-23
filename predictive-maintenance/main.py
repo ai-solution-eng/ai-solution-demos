@@ -445,7 +445,10 @@ with tab1:
  
         selected_rows = edited_df[edited_df["Select"]]
         if len(selected_rows) == 1:  # Only allow one row to be selected
-            st.session_state.selected_row = selected_rows.iloc[0]
+            # Map back from display names to original column names
+            selected_display_row = selected_rows.iloc[0]
+            selected_index = selected_display_row.name
+            st.session_state.selected_row = st.session_state.df.iloc[selected_index]
         elif len(selected_rows) ==0:
             st.session_state.selected_row = None
             edited_df["Select"] = False 
