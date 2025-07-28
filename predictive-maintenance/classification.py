@@ -741,7 +741,7 @@ def preprocess_detail_problem(df1):
         (df1['ticketList_detailproblem'].str.contains(pattern, case=False, na=False)) &
         (df1['Detail_Problem'] == -1),  
         'Detail_Problem'
-    ] = "PENGADUAN MASYARAKAT"
+    ] = "PM (Public Complaint)"
 
     words_to_check = ['lan ']
     pattern = '|'.join(words_to_check)
