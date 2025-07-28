@@ -103,7 +103,7 @@ def process_image(image):
         return image, error_msg
 
 def process_video(video_path):
-    """Process video for traffic analysis (sample frames)"""
+    """Process video for traffic analysis with frame extraction every 3 seconds"""
     try:
         # Open video
         cap = cv2.VideoCapture(video_path)
@@ -111,10 +111,12 @@ def process_video(video_path):
         # Get video properties
         fps = cap.get(cv2.CAP_PROP_FPS)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        duration = total_frames / fps
         
-        # Sample frames (every 30 frames or 1 second)
-        sample_interval = max(1, int(fps))
+        # Extract frames every 3 seconds
+        frame_interval = int(fps * 3)  # 3 seconds worth of frames
         results = []
+        annotated_frames = []
         
         frame_count = 0
         while cap.isOpened():
@@ -122,7 +124,7 @@ def process_video(video_path):
             if not ret:
                 break
                 
-            if frame_count % sample_interval == 0:
+            if frame_count % frame_interval == 0:
                 # Convert BGR to RGB
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 pil_frame = Image.fromarray(rgb_frame)
@@ -131,43 +133,76 @@ def process_video(video_path):
                 detections = get_detector().detect_objects(pil_frame)
                 analysis = get_analyzer().analyze_traffic_scene(pil_frame, detections)
                 
+                # Draw detections on frame
+                annotated_frame = get_detector().draw_detections(pil_frame, detections)
+                
                 # Store result
                 results.append({
                     "frame": frame_count,
                     "timestamp": frame_count / fps,
                     "detections": detections,
-                    "analysis": analysis
+                    "analysis": analysis,
+                    "annotated_frame": annotated_frame
                 })
                 
-                # Limit to 5 samples for demo
-                if len(results) >= 5:
+                # Limit to reasonable number of samples
+                if len(results) >= 10:  # Up to 30 seconds of analysis
                     break
                     
             frame_count += 1
         
         cap.release()
         
-        # Get a representative frame for display
-        cap = cv2.VideoCapture(video_path)
-        cap.set(cv2.CAP_PROP_POS_FRAMES, total_frames // 2)  # Middle frame
-        ret, frame = cap.read()
-        cap.release()
-        
-        if ret:
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            pil_frame = Image.fromarray(rgb_frame)
-            detections = get_detector().detect_objects(pil_frame)
-            annotated_frame = get_detector().draw_detections(pil_frame, detections)
-        else:
-            annotated_frame = None
+        # Create video output with bounding boxes
+        output_frames = create_annotated_video_frames(video_path, results)
         
         # Format video results
         video_results = format_video_results(results)
         
-        return annotated_frame, video_results
+        return output_frames, video_results
         
     except Exception as e:
         return None, f"Error processing video: {str(e)}"
+
+def create_annotated_video_frames(video_path, analysis_results):
+    """Create a list of annotated frames from video for display"""
+    try:
+        # Open video
+        cap = cv2.VideoCapture(video_path)
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        
+        annotated_frames = []
+        
+        for result in analysis_results:
+            # Seek to the specific frame
+            frame_number = result['frame']
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+            
+            ret, frame = cap.read()
+            if ret:
+                # Convert BGR to RGB
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                pil_frame = Image.fromarray(rgb_frame)
+                
+                # Draw detections
+                detections = result['detections']
+                if detections:
+                    annotated_frame = get_detector().draw_detections(pil_frame, detections)
+                else:
+                    annotated_frame = pil_frame
+                
+                annotated_frames.append({
+                    'frame': annotated_frame,
+                    'timestamp': result['timestamp'],
+                    'frame_number': frame_number
+                })
+        
+        cap.release()
+        return annotated_frames
+        
+    except Exception as e:
+        print(f"Error creating annotated frames: {e}")
+        return []
 
 def format_analysis_results(detections, analysis, yolo_valid=True, yolo_msg=""):
     """Format analysis results for display"""
@@ -234,17 +269,20 @@ def format_analysis_results(detections, analysis, yolo_valid=True, yolo_msg=""):
     return result_text
 
 def format_video_results(results):
-    """Format video analysis results"""
+    """Format video analysis results with detailed reports every 3 seconds"""
     if not results:
         return "No analysis results available"
     
     result_text = "### Video Analysis Results\n\n"
+    result_text += f"**Analysis Summary:** Processed {len(results)} frames at 3-second intervals\n\n"
     
     for i, result in enumerate(results, 1):
-        result_text += f"**Frame {i}** *(t={result['timestamp']:.1f}s)*\n"
+        timestamp = result['timestamp']
+        result_text += f"## Frame {i} - {timestamp:.1f}s\n\n"
         
         # Detection count
         detections = result['detections']
+        result_text += "### Detected Objects\n"
         if detections:
             detection_counts = {}
             for detection in detections:
@@ -256,10 +294,14 @@ def format_video_results(results):
         else:
             result_text += "- No objects detected\n"
         
-        # Analysis
+        # Full analysis report
         analysis = result['analysis']
-        result_text += f"- **Traffic Flow:** {analysis.get('traffic_flow', 'Unknown')}\n"
-        result_text += f"- **Safety Status:** {analysis.get('safety_concerns', 'OK')}\n\n"
+        analysis_content = analysis.get('content', 'Analysis not available')
+        if isinstance(analysis_content, str):
+            result_text += "\n### AI Analysis Report\n"
+            result_text += analysis_content
+        
+        result_text += "\n---\n\n"
     
     return result_text
 
@@ -271,12 +313,18 @@ def create_interface():
     
     st.set_page_config(
         page_title="Smart Traffic Report",
-        page_icon="🚦",
+        page_icon="assets/HPE-logo-2025.png",
         layout="wide",
         initial_sidebar_state="expanded"
     )
     
-    st.title("🚦 Smart Traffic Report")
+    # Display HPE logo and title
+    col1, col2 = st.columns([1, 8])
+    with col1:
+        st.image("assets/HPE-logo-2025.png", width=80)
+    with col2:
+        st.title("Smart Traffic Report")
+        st.markdown("*Powered by HPE AI Solutions*")
     st.markdown("Upload an image or video to analyze traffic conditions using YOLO detection and Qwen2.5-VL analysis.")
     
     # API Status indicator
@@ -381,10 +429,10 @@ def create_interface():
                     
                     try:
                         # Process the video
-                        annotated_frame, video_results = process_video(tmp_path)
+                        annotated_frames, video_results = process_video(tmp_path)
                         
                         # Store results in session state
-                        st.session_state.video_results = (annotated_frame, video_results)
+                        st.session_state.video_results = (annotated_frames, video_results)
                     finally:
                         # Clean up temp file
                         os.unlink(tmp_path)
@@ -394,12 +442,36 @@ def create_interface():
             
             # Display results if available
             if hasattr(st.session_state, 'video_results') and st.session_state.video_results:
-                annotated_frame, video_results = st.session_state.video_results
+                annotated_frames, video_results = st.session_state.video_results
                 
-                if annotated_frame:
-                    st.image(annotated_frame, caption="Sample Frame with Detections", use_column_width=True)
+                if annotated_frames:
+                    st.markdown("### Video Analysis - Frames with Detections")
+                    
+                    # Create tabs for each frame
+                    if len(annotated_frames) > 1:
+                        frame_tabs = [f"Frame {i+1} ({frame['timestamp']:.1f}s)" for i, frame in enumerate(annotated_frames)]
+                        selected_frames = st.tabs(frame_tabs[:min(5, len(frame_tabs))])  # Limit to 5 tabs
+                        
+                        for i, frame_tab in enumerate(selected_frames):
+                            if i < len(annotated_frames):
+                                with frame_tab:
+                                    frame_data = annotated_frames[i]
+                                    st.image(
+                                        frame_data['frame'], 
+                                        caption=f"Frame at {frame_data['timestamp']:.1f}s with YOLO Detections", 
+                                        use_column_width=True
+                                    )
+                    else:
+                        # Single frame display
+                        frame_data = annotated_frames[0]
+                        st.image(
+                            frame_data['frame'], 
+                            caption=f"Frame at {frame_data['timestamp']:.1f}s with YOLO Detections", 
+                            use_column_width=True
+                        )
                 
                 if video_results:
+                    st.markdown("### Analysis Report")
                     st.markdown(video_results)
     
     with tab3:
