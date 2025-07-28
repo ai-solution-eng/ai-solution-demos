@@ -40,7 +40,7 @@ spec:
           args:
             - "run"
             - "/app/app.py"
-            - "--server.port=8080"
+            - "--server.port={{ .Values.app.port }}"
             - "--server.address=0.0.0.0"
             - "--server.headless=true"
             - "--server.enableCORS=false"
@@ -68,8 +68,10 @@ spec:
               value: {{ .Values.env.REQUESTS_CA_BUNDLE | quote }}
             - name: CURL_CA_BUNDLE
               value: {{ .Values.env.CURL_CA_BUNDLE | quote }}
+            {{- if .Values.ezua.virtualService.enabled }}
             - name: DOMAIN_NAME
               value: {{ .Values.ezua.virtualService.endpoint | quote }}
+            {{- end }}
             - name: YOLO_ENDPOINT
               valueFrom:
                 secretKeyRef:
