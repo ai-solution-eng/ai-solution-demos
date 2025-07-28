@@ -4,7 +4,7 @@
 replicaCount: 1
 
 image:
-  repository: caovd/traffic-report-streamlit
+  repository: caovd/traffic-report
   pullPolicy: IfNotPresent
   tag: "latest"
 
@@ -27,8 +27,8 @@ securityContext: {}
 
 service:
   type: ClusterIP
-  port: 8080
-  targetPort: 8080
+  port: 8501
+  targetPort: 8501
   protocol: TCP
 
 ingress:
@@ -79,7 +79,7 @@ affinity: {}
 
 # Application configuration
 app:
-  port: 8080
+  port: 8501
   # API Endpoints - configure these for your deployment
   # Use KServe/Knative model endpoints via Istio Ingress Gateway
   yolo:

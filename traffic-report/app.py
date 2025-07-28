@@ -4,6 +4,7 @@ import numpy as np
 from PIL import Image
 import tempfile
 import os
+import time
 from detection_service import DetectionService
 from analysis_service import AnalysisService
 
@@ -102,8 +103,8 @@ def process_image(image):
         """
         return image, error_msg
 
-def process_video(video_path):
-    """Process video for traffic analysis with frame extraction every 3 seconds"""
+def process_video(video_path, interval_seconds=3):
+    """Process video for traffic analysis with frame extraction at custom intervals"""
     try:
         # Open video
         cap = cv2.VideoCapture(video_path)
@@ -113,8 +114,8 @@ def process_video(video_path):
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         duration = total_frames / fps
         
-        # Extract frames every 3 seconds
-        frame_interval = int(fps * 3)  # 3 seconds worth of frames
+        # Extract frames at specified interval
+        frame_interval = int(fps * interval_seconds)
         results = []
         annotated_frames = []
         
@@ -156,13 +157,13 @@ def process_video(video_path):
         # Create video output with bounding boxes
         output_frames = create_annotated_video_frames(video_path, results)
         
-        # Format video results
-        video_results = format_video_results(results)
+        # Format video results summary
+        video_results = f"**Analysis Summary:** Processed {len(results)} frames at {interval_seconds}-second intervals\\n\\n"
         
-        return output_frames, video_results
+        return output_frames, video_results, results
         
     except Exception as e:
-        return None, f"Error processing video: {str(e)}"
+        return None, f"Error processing video: {str(e)}", []
 
 def create_annotated_video_frames(video_path, analysis_results):
     """Create a list of annotated frames from video for display"""
@@ -205,7 +206,7 @@ def create_annotated_video_frames(video_path, analysis_results):
         return []
 
 def format_analysis_results(detections, analysis, yolo_valid=True, yolo_msg=""):
-    """Format analysis results for display"""
+    """Format analysis results for display with clean markdown"""
     result_text = ""
     
     # API Status Section
@@ -268,42 +269,42 @@ def format_analysis_results(detections, analysis, yolo_valid=True, yolo_msg=""):
     
     return result_text
 
-def format_video_results(results):
-    """Format video analysis results with detailed reports every 3 seconds"""
-    if not results:
+def format_single_frame_results(frame_result, frame_index):
+    """Format analysis results for a single frame with clean markdown"""
+    if not frame_result:
         return "No analysis results available"
     
-    result_text = "### Video Analysis Results\n\n"
-    result_text += f"**Analysis Summary:** Processed {len(results)} frames at 3-second intervals\n\n"
+    timestamp = frame_result['timestamp']
+    result_text = f"## Frame {frame_index} - {timestamp:.1f}s\n\n"
     
-    for i, result in enumerate(results, 1):
-        timestamp = result['timestamp']
-        result_text += f"## Frame {i} - {timestamp:.1f}s\n\n"
+    # Detection count
+    detections = frame_result['detections']
+    result_text += "### Detected Objects\n"
+    if detections:
+        detection_counts = {}
+        for detection in detections:
+            cls = detection['class']
+            detection_counts[cls] = detection_counts.get(cls, 0) + 1
         
-        # Detection count
-        detections = result['detections']
-        result_text += "### Detected Objects\n"
-        if detections:
-            detection_counts = {}
-            for detection in detections:
-                cls = detection['class']
-                detection_counts[cls] = detection_counts.get(cls, 0) + 1
-            
-            for cls, count in detection_counts.items():
-                result_text += f"- **{cls.title()}:** {count}\n"
-        else:
-            result_text += "- No objects detected\n"
-        
-        # Full analysis report
-        analysis = result['analysis']
-        analysis_content = analysis.get('content', 'Analysis not available')
-        if isinstance(analysis_content, str):
-            result_text += "\n### AI Analysis Report\n"
-            result_text += analysis_content
-        
-        result_text += "\n---\n\n"
+        for cls, count in detection_counts.items():
+            result_text += f"- **{cls.title()}:** {count}\n"
+    else:
+        result_text += "- No objects detected\n"
+    
+    # Full analysis report
+    analysis = frame_result['analysis']
+    analysis_content = analysis.get('content', 'Analysis not available')
+    if isinstance(analysis_content, str):
+        result_text += "\n### AI Analysis Report\n"
+        result_text += analysis_content
     
     return result_text
+
+def simulate_live_stream(frames, fps=2):
+    """Simulate live streaming by yielding frames with delay"""
+    for frame in frames:
+        yield frame
+        time.sleep(1.0 / fps)  # Control playback speed
 
 # Create Streamlit interface
 def create_interface():
@@ -420,6 +421,43 @@ def create_interface():
                 key="video_upload"
             )
             
+            # Get video duration for interval validation
+            video_duration = None
+            if video_input:
+                # Save uploaded video to temporary file to get duration
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_file:
+                    tmp_file.write(video_input.getvalue())
+                    tmp_path = tmp_file.name
+                
+                try:
+                    cap = cv2.VideoCapture(tmp_path)
+                    fps = cap.get(cv2.CAP_PROP_FPS)
+                    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                    video_duration = int(total_frames / fps) if fps > 0 else 30
+                    cap.release()
+                finally:
+                    os.unlink(tmp_path)
+            
+            # Analysis interval input
+            if video_duration:
+                interval_seconds = st.number_input(
+                    f"Analysis Interval (seconds)",
+                    min_value=1,
+                    max_value=video_duration,
+                    value=3,
+                    step=1,
+                    help=f"Extract frames every N seconds for analysis. Video duration: {video_duration}s"
+                )
+            else:
+                interval_seconds = st.number_input(
+                    "Analysis Interval (seconds)",
+                    min_value=1,
+                    max_value=300,
+                    value=3,
+                    step=1,
+                    help="Extract frames every N seconds for analysis"
+                )
+            
             if video_input and st.button("Analyze Video", type="primary"):
                 with st.spinner("Analyzing video..."):
                     # Save uploaded video to temporary file
@@ -429,10 +467,12 @@ def create_interface():
                     
                     try:
                         # Process the video
-                        annotated_frames, video_results = process_video(tmp_path)
+                        annotated_frames, video_results, frame_results = process_video(tmp_path)
                         
                         # Store results in session state
                         st.session_state.video_results = (annotated_frames, video_results)
+                        # Also store individual frame analysis results for frame-by-frame analysis
+                        st.session_state.video_analysis_results = frame_results
                     finally:
                         # Clean up temp file
                         os.unlink(tmp_path)
@@ -445,34 +485,83 @@ def create_interface():
                 annotated_frames, video_results = st.session_state.video_results
                 
                 if annotated_frames:
-                    st.markdown("### Video Analysis - Frames with Detections")
+                    # Live streaming simulation controls
+                    col2a, col2b = st.columns([1, 1])
+                    with col2a:
+                        if st.button("▶️ Start Live Stream Simulation", key="start_stream"):
+                            st.session_state.streaming = True
+                            st.session_state.current_frame = 0
                     
-                    # Create tabs for each frame
-                    if len(annotated_frames) > 1:
-                        frame_tabs = [f"Frame {i+1} ({frame['timestamp']:.1f}s)" for i, frame in enumerate(annotated_frames)]
-                        selected_frames = st.tabs(frame_tabs[:min(5, len(frame_tabs))])  # Limit to 5 tabs
+                    with col2b:
+                        if st.button("⏹️ Stop Stream", key="stop_stream"):
+                            st.session_state.streaming = False
+                    
+                    # Initialize streaming state
+                    if 'streaming' not in st.session_state:
+                        st.session_state.streaming = False
+                    if 'current_frame' not in st.session_state:
+                        st.session_state.current_frame = 0
+                    
+                    # Live streaming display
+                    if st.session_state.streaming and annotated_frames:
+                        st.markdown("### <span style='font-size: 12px;'>🔴</span> Live Traffic Stream", unsafe_allow_html=True)
                         
-                        for i, frame_tab in enumerate(selected_frames):
-                            if i < len(annotated_frames):
-                                with frame_tab:
-                                    frame_data = annotated_frames[i]
-                                    st.image(
-                                        frame_data['frame'], 
-                                        caption=f"Frame at {frame_data['timestamp']:.1f}s with YOLO Detections", 
-                                        use_column_width=True
-                                    )
+                        # Create placeholder for streaming
+                        stream_placeholder = st.empty()
+                        report_placeholder = st.empty()
+                        
+                        # Stream frames
+                        for i, frame_data in enumerate(annotated_frames):
+                            if not st.session_state.streaming:
+                                break
+                                
+                            with stream_placeholder.container():
+                                st.image(
+                                    frame_data['frame'], 
+                                    caption=f"<span style='font-size: 12px;'>🔴</span> LIVE - Frame at {frame_data['timestamp']:.1f}s", 
+                                    use_column_width=True
+                                )
+                            
+                            # Show current frame report
+                            with report_placeholder.container():
+                                if hasattr(st.session_state, 'video_analysis_results'):
+                                    frame_result = st.session_state.video_analysis_results[i]
+                                    frame_report = format_single_frame_results(frame_result, i+1)
+                                    st.markdown(frame_report)
+                            
+                            time.sleep(2)  # 2 second delay between frames
+                            
+                        st.session_state.streaming = False
+                        st.success("Stream completed!")
+                    
                     else:
-                        # Single frame display
-                        frame_data = annotated_frames[0]
-                        st.image(
-                            frame_data['frame'], 
-                            caption=f"Frame at {frame_data['timestamp']:.1f}s with YOLO Detections", 
-                            use_column_width=True
+                        # Frame selection interface
+                        st.markdown("### Select Frame for Analysis")
+                        
+                        # Frame selector
+                        frame_options = [f"Frame {i+1} ({frame['timestamp']:.1f}s)" for i, frame in enumerate(annotated_frames)]
+                        selected_frame_idx = st.selectbox(
+                            "Choose a frame to analyze:",
+                            range(len(frame_options)),
+                            format_func=lambda x: frame_options[x],
+                            key="frame_selector"
                         )
-                
-                if video_results:
-                    st.markdown("### Analysis Report")
-                    st.markdown(video_results)
+                        
+                        # Display selected frame
+                        if selected_frame_idx is not None and selected_frame_idx < len(annotated_frames):
+                            frame_data = annotated_frames[selected_frame_idx]
+                            st.image(
+                                frame_data['frame'], 
+                                caption=f"Selected Frame at {frame_data['timestamp']:.1f}s with YOLO Detections", 
+                                use_column_width=True
+                            )
+                            
+                            # Show report for selected frame only
+                            if hasattr(st.session_state, 'video_analysis_results') and selected_frame_idx < len(st.session_state.video_analysis_results):
+                                frame_result = st.session_state.video_analysis_results[selected_frame_idx]
+                                frame_report = format_single_frame_results(frame_result, selected_frame_idx + 1)
+                                st.markdown("### Frame Analysis Report")
+                                st.markdown(frame_report)
     
     with tab3:
         st.header("API Configuration")
