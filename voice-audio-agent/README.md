@@ -4,7 +4,7 @@
 
 ![Solution Overview](assets/slide1.jpg)
 
-▶️ [Quick Demo Video](https://hpe-my.sharepoint.com/:v:/p/akash_khanna/Ed0pVF41q69BoSX2c8HzZScBYlappy_xadkrUQV2MiyXIw?nav=eyJyZWZlcnJhbEluZm8iOnsicmVmZXJyYWxBcHAiOiJPbmVEcml2ZUZvckJ1c2luZXNzIiwicmVmZXJyYWxBcHBQbGF0Zm9ybSI6IldlYiIsInJlZmVycmFsTW9kZSI6InZpZXciLCJyZWZlcnJhbFZpZXciOiJNeUZpbGVzTGlua0NvcHkifX0&e=SmL4wf)
+▶️ [Quick Demo Video](https://storage.googleapis.com/ai-solution-engineering-videos/public/E2E%20Voice%20Agent%20Demo.mp4)
 
 ---
 
