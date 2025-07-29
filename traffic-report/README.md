@@ -6,6 +6,8 @@ Making continuous reports on traffic from CCTV cameras is a laborous and repetit
 
 [Quick demo](https://hpe-my.sharepoint.com/:v:/r/personal/daniel_cao_hpe_com/Documents/18_AISSE/31_PCAI/08%20-%20Demo/01_recorded_trials/pcai-traffic-report-demo.mp4?csf=1&web=1&nav=eyJyZWZlcnJhbEluZm8iOnsicmVmZXJyYWxBcHAiOiJPbmVEcml2ZUZvckJ1c2luZXNzIiwicmVmZXJyYWxBcHBQbGF0Zm9ybSI6IldlYiIsInJlZmVycmFsTW9kZSI6InZpZXciLCJyZWZlcnJhbFZpZXciOiJNeUZpbGVzTGlua0NvcHkifX0&e=8DhdlY)
 
+[Demo video source](pixabay.com) under [content license](https://pixabay.com/service/license-summary/) 
+
 This application leverages the complementary strengths of two specialized AI models to provide comprehensive traffic scene understanding:
 
 **YOLOv8 (Object Detection)** excels at:
