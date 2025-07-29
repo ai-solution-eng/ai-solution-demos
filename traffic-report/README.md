@@ -2,6 +2,10 @@
 
 Making continuous reports on traffic from CCTV cameras is a laborous and repetitive task that requires automation at scale. This app aims to build a gen AI-powered smart traffic report system using Computer Vision & Visual Language Model (VLM) for real-time traffic analysis.
 
+![Traffic report use case workflow](./assets/workflow.png)
+
+[Quick demo](https://hpe-my.sharepoint.com/:v:/r/personal/daniel_cao_hpe_com/Documents/18_AISSE/31_PCAI/08%20-%20Demo/01_recorded_trials/pcai-traffic-report-demo.mp4?csf=1&web=1&nav=eyJyZWZlcnJhbEluZm8iOnsicmVmZXJyYWxBcHAiOiJPbmVEcml2ZUZvckJ1c2luZXNzIiwicmVmZXJyYWxBcHBQbGF0Zm9ybSI6IldlYiIsInJlZmVycmFsTW9kZSI6InZpZXciLCJyZWZlcnJhbFZpZXciOiJNeUZpbGVzTGlua0NvcHkifX0&e=8DhdlY)
+
 This application leverages the complementary strengths of two specialized AI models to provide comprehensive traffic scene understanding:
 
 **YOLOv8 (Object Detection)** excels at:
