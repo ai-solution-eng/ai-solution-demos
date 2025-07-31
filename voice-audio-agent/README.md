@@ -4,7 +4,7 @@
 
 ![Solution Overview](assets/slide1.jpg)
 
-▶️ [Quick Demo Video](https://storage.googleapis.com/ai-solution-engineering-videos/public/E2E%20Voice%20Agent%20Demo.mp4)
+▶️ [Demo Video](https://storage.googleapis.com/ai-solution-engineering-videos/public/Voice-Audio-Agent-demo.mp4)
 
 ---
 
