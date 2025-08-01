@@ -1,9 +1,14 @@
 # **AI CUSTOM CODE ASSISTANT**
 
+| Owner                       | Name                              | Email                                     |
+| ----------------------------|-----------------------------------|-------------------------------------------|
+| Use Case Owner              | Nishant Chaduka                   | nishant.chanduka@hpe.com                  |
+| PCAI Deployment Owner       | Nishant Chaduka                   | nishant.chanduka@hpe.com                  |
+
 #### This repository contains package and steps for deployment of an AI Coding assitant on AIE software on a PCAI System.
 
 ## **Demo overview video**
-[Demo Video](https://hpe.sharepoint.com/:v:/r/sites/aisolutionsandcloudengineeringteam/Shared%20Documents/Go%20to%20Market%20Team/Customer%20Engineering/PCAI-Team-Demos/Nishant%20Chanduka/AI_Custom_Coding_Assistant_with_HPE.mp4?csf=1&web=1&e=RQup5G)
+[Demo Video](https://storage.googleapis.com/ai-solution-engineering-videos/public/AI-coding-assistant.mp4)
 
 ## **Tools and frameworks used:**
 
