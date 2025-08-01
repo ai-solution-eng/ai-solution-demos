@@ -14,6 +14,14 @@
 - 🎨 Modern, responsive UI built with shadcn/ui
 - ☁️ Cloud-native design with Helm charts for easy deployment
 
+## 📄 Documentation
+
+For more detailed documentation, please refer to:
+- [Video Recording](https://hpe-my.sharepoint.com/:v:/p/jose-claudio_calderon/EWp593pDFZ5PmLWZzxoVSu8Bltbth0cbfHQH5IEnnQHpIA?e=28GF0A&referrer=Outlook.Win32&referrerScenario=email-linkwithoutembed)
+- [Confluence Page](https://github.com/user-attachments/files/21543757/CS-New.Hire.Onboarding.Assistant-260625-152208.pdf) (click to download it in PDF)
+  - Better than this `README.md` for non-technical audience. 
+
+
 ## 📚 What You Can Do in the Application
 
 ### All Users
@@ -404,12 +412,6 @@ The Helm chart includes the following configurable parameters:
 
 - [HPE](https://www.hpe.com/us/en.html) for the Private Cloud AI platform
 - [Claudio Calderon](mailto:jose-claudio.calderon@hpe.com) for the Onboarding Buddy AI application.
-
-## 📄 Documentation
-
-For more detailed documentation, please refer to:
-
-- [New Hire Onboarding Assistant](https://hpe-aiatscale.atlassian.net/wiki/spaces/CS/pages/2238808065/New+Hire+Onboarding+Assistant) Confluence page.
 
 ## 🤝 Contributing
 
