@@ -38,7 +38,7 @@ Before deploying this chart, you must have the following:
 
 1.  Access to an HPE Private Cloud AI (PCAI) environment.
 2.  An existing **PersistentVolumeClaim (PVC)** available in your target namespace (e.g., `kubeflow-shared-pvc`) for storing input and output data.
-
+3.  Deploy Nvidia Vista-3D NIM model on MLIS. Please follow instruction on [how to deploy NIM to MLIS](./docs/deploy-NIM-to-MLIS.pdf) to complete this step.
 ## Codebase Structure
 The codebase contains the application code and Dockerfile used to containerize this application. The latest docker image is available at `fcaliva/vessel-analysis-app:0.0.10`. This codebase also contains the Helm chart to deploy this application in PCAI.
 
@@ -91,7 +91,7 @@ The following table lists the configurable parameters of the Vessels Analysis an
 | Parameter | Description | Default |
 | :--- | :--- | :--- |
 | `replicaCount` | The number of application pods to run. | `1` |
-| `namespace` | The Kubernetes namespace where all resources will be deployed. | `"andrew-mendez-4a1f9d06"` |
+| `namespace` | The Kubernetes namespace where all resources will be deployed. Please create the namespace beforehand. | `"vessel-analysis-ns"` |
 | **HPE Ezmeral (EzUA) Settings** | | |
 | `ezua.enabled` | If `true`, an Istio VirtualService will be created to expose the app. | `true` |
 | `ezua.virtualService.endpoint` | The external hostname for the service. `\${DOMAIN_NAME}` is a placeholder for your cluster's domain. | `"reconstruction.${DOMAIN_NAME}"` |

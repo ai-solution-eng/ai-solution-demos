@@ -6,7 +6,7 @@
 replicaCount: 1
 
 # The Kubernetes namespace to deploy all resources into.
-namespace: "andrew-mendez-4a1f9d06"
+namespace: "vessel-analysis-ns"
 
 # -- HPE Ezmeral Unified Analytics (EzUA) specific settings
 # These values are used for platform integration, especially for exposing the service externally.
