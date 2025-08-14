@@ -3,14 +3,14 @@ settings:
   Chatmodel: ""
   Chatmodelbaseurl: ""
   Chatmodelkey: "fake"
-  Database: "/app/Chinook.sqlite"
+  Database: "/app/purchase_orders.sqlite"
   DatabasePath: "./db/"
   DatabaseType: "sqlite"
 
 image:
-  repository: vmtyler/pdk
+  repository: mendeza/vanna-tulane-demo
   pullPolicy: IfNotPresent
-  tag: vanna-0.0.4g
+  tag: 0.0.1
 
 service:
   type: ClusterIP
@@ -23,5 +23,5 @@ volumeMounts: []
 ezua:
   enabled: true
   virtualService:
-    endpoint: ""
+    endpoint: "vannai.${DOMAIN_NAME}"
     istioGateway: "istio-system/ezaf-gateway"
