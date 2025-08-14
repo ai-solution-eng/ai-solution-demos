@@ -1,0 +1,22 @@
+{{- if and .Values.ezua.enabled .Values.ezua.virtualService }}
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: {{ include "vessel-reconstruction.fullname" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "vessel-reconstruction.labels" . | nindent 4 }}
+spec:
+  hosts:
+    - {{ .Values.ezua.virtualService.endpoint | quote }}
+  gateways:
+    - {{ .Values.ezua.virtualService.istioGateway | quote }}
+  http:
+  - route:
+    - destination:
+        # Routes traffic to the templated service created by this chart.
+        host: {{ include "vessel-reconstruction.fullname" . }}.{{ .Values.namespace }}.svc.cluster.local
+        port:
+          # The port number defined in the service values.
+          number: {{ .Values.service.port }}
+{{- end }}
