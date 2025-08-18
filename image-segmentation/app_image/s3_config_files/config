@@ -1,0 +1,3 @@
+[default]
+credential_process = /opt/boto3_cred_helper/boto3_credential_process.py
+
