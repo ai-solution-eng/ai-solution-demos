@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: {{ .Release.Name }}-deploy
+  name: {{ .Release.Name }}-deploy
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}
+        hpe-ezua/app: {{ .Chart.Name }}
+        hpe-ezua/type: vendor-service
+    spec:
+      containers:
+      - image: {{ .Values.appImage }}
+        securityContext:
+          runAsUser: 0
+        name: {{ .Release.Name }}-app
+        resources:
+          limits:
+            cpu: {{ .Values.resources.appLimits.cpu }}
+        ports:
+        - containerPort: {{ .Values.service.appPort }}
+        env:
+        - name: DATASETS_PATH
+          value: {{ .Values.datasetsPath }}
+        - name: CHECKPOINTS_PATH
+          value: {{ .Values.checkpointsPath }}
+        - name: SECRET_FILE_PATH
+          value: {{ .Values.secretFilePath }}
+        - name: MLFLOW_S3_ENDPOINT_URL
+          value: {{ .Values.mlflowS3EndpointURL }}
+        - name: TRACKING_URI
+          value: {{ .Values.trackingURI }}
+        command: ["/bin/sh", "-c", "streamlit run /app/app.py -- --datasets-path /mnt/${DATASETS_PATH} --checkpoints-path /mnt/${CHECKPOINTS_PATH} --secret-file-path /etc/secrets/ezua/.auth_token --mlflow-s3-endpoint-url ${MLFLOW_S3_ENDPOINT_URL} --tracking-uri ${TRACKING_URI}"]
+        volumeMounts:
+        - mountPath: "/mnt" # should have datasets/ and checkpoints/ folders
+          name: mypd
+        - mountPath: "/etc/secrets/ezua/"
+          name: token-secret
+          readOnly: true
+      volumes:
+        - name: mypd
+          persistentVolumeClaim:
+            claimName: {{ .Values.pvc }}
+        - name: token-secret
+          secret:
+            defaultMode: 420
+            items:
+            - key: AUTH_TOKEN
+              path: .auth_token
+            secretName: {{ .Values.tokenSecret }}
