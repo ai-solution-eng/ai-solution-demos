@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # --- Config ---
-IMAGE="mendeza/vanna-tulane-demo:0.0.2"
+IMAGE="mendeza/vanna-tulane-demo:0.0.3"
 CONTEXT="."                 # change if your Dockerfile/context is elsewhere
 PLATFORM="linux/amd64"      # adjust or remove if you want default multi-arch
 

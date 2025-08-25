@@ -15,7 +15,7 @@ settings:
 image:
   repository: mendeza/vanna-tulane-demo
   pullPolicy: IfNotPresent
-  tag: 0.0.1
+  tag: 0.0.3
 
 service:
   type: ClusterIP
