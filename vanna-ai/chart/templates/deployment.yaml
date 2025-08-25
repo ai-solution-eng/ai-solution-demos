@@ -41,6 +41,16 @@ spec:
               value: {{ .Values.settings.DatabasePath }}
             - name: DB_TYPE
               value: {{ .Values.settings.DatabaseType }}
+            - name: PG_HOST
+              value: {{ .Values.settings.postgres.host }}
+            - name: PG_PORT
+              value: {{ .Values.settings.postgres.port | quote }}
+            - name: PG_USER
+              value: {{ .Values.settings.postgres.user }}
+            - name: PG_PASSWORD
+              value: {{ .Values.settings.postgres.password }}
+            - name: PG_DBNAME
+              value: {{ .Values.settings.postgres.dbname }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           command: ["python3","vanna-flask.py"]
           imagePullPolicy: {{ .Values.image.pullPolicy }}

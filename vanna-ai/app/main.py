@@ -23,6 +23,15 @@ MAX_TOKENS = int(os.environ.get("MAX_TOKENS", 512))
 DB_PATH = os.environ.get("DB_PATH", "./db")
 DB_CONNECTION_STRING = os.environ.get("DB_CONNECTION_STRING", None)
 DB_TYPE = os.environ.get("DB_TYPE", "sqlite")
+API_KEY = os.environ.get("OPENAI_API_KEY", "fake")
+
+# Postgres settings
+PG_HOST = os.environ.get("PG_HOST")
+PG_DBNAME = os.environ.get("PG_DBNAME")
+PG_USER = os.environ.get("PG_USER")
+PG_PASSWORD = os.environ.get("PG_PASSWORD")
+PG_PORT = int(os.environ.get("PG_PORT", 5432))
+
 
 ai = AIPipeline(
     chat_model=DEFAULT_CHAT_MODEL,
@@ -32,7 +41,13 @@ ai = AIPipeline(
     db_path=DB_PATH,
     streaming=STREAMING,
     db_connection_string=DB_CONNECTION_STRING,
-    db_type=DB_TYPE
+    db_type=DB_TYPE,
+    pg_host=PG_HOST,
+    pg_dbname=PG_DBNAME,
+    pg_user=PG_USER,
+    pg_password=PG_PASSWORD,
+    pg_port=PG_PORT,
+    api_key=API_KEY,
 )
 
 app = FastAPI(

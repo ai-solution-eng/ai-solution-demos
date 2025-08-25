@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # --- Config ---
-IMAGE="mendeza/vanna-tulane-demo:0.0.1"
+IMAGE="mendeza/vanna-tulane-demo:0.0.2"
 CONTEXT="."                 # change if your Dockerfile/context is elsewhere
 PLATFORM="linux/amd64"      # adjust or remove if you want default multi-arch
 
@@ -13,6 +13,7 @@ echo "==> Building image with buildx: ${IMAGE}"
 docker buildx build \
   --platform "${PLATFORM}" \
   --tag "${IMAGE}" \
+  --no-cache \
   --load \
   "${CONTEXT}"
 

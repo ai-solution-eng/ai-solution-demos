@@ -1,11 +1,16 @@
-
 settings:
   Chatmodel: ""
   Chatmodelbaseurl: ""
   Chatmodelkey: "fake"
   Database: "/app/purchase_orders.sqlite"
   DatabasePath: "./db/"
-  DatabaseType: "sqlite"
+  DatabaseType: "postgres" # Change to "postgres" or "mssql" to use other databases
+  postgres:
+    host: ""
+    port: 5432
+    user: ""
+    password: ""
+    dbname: ""
 
 image:
   repository: mendeza/vanna-tulane-demo
