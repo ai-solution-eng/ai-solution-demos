@@ -8,6 +8,9 @@
 **High level demo flow**
 ![workflow](./images/conceptual_workflow_white.png)
 
+
+[**Click to watch demo**](https://storage.googleapis.com/ai-solution-engineering-videos/public/Enhancing%20Healthcare%20with%20AI_%20Blood%20Vessel%20Analysis%20and%203D%20Reconstruction(1).mp4)
+
 **Intro:**
 
 This repository contains a Helm chart for deploying the `🩸 Blood Vessels Geometry Analysis and 3D Reconstruction` Streamlit application on HPE's Private Cloud AI (PCAI) platform.

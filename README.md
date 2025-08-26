@@ -20,7 +20,7 @@ This repository contains use case demos developed for Private Cloud AI (PCAI)
 | [Batch Agreement Robot](batch-agreement-robot)                | Yes           | Coming soon   | Yes           |`GenAI`, `Document Processing`             |
 | [Traffic Report](traffic-report)                              | Yes           | Coming soon   | Yes           |`GenAI`, `Computer Vision`, `VLM`          |
 | [Predictive Maintenance](predictive-maintenance)              | Yes           | Yes           | Yes           |`Maintenance`, `GenAI`, `LLM`, `VLM`       |
-| [Blood Vessels Geometry Analysis and 3D Reconstruction](blood-vessel-geometry-analysis-and-reconstruction)              | Yes           | Coming soon           | Yes           |`Computer Vision`, `nvidia NIM vista-3d`, `3d rendering`, `streamlit`     |
+| [Blood Vessels Geometry Analysis and 3D Reconstruction](blood-vessel-geometry-analysis-and-reconstruction)              | Yes           | Yes           | Yes           |`Computer Vision`, `nvidia NIM vista-3d`, `3d rendering`, `streamlit`     |
 | [Image Segmentation](image-segmentation)              | Yes           | No           | Yes           |`Computer Vision`, `Fine-tune`, `CNN`, `streamlit`       |
 
 
