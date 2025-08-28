@@ -8,7 +8,7 @@ A gen-AI powered predictive maintenance application built with Streamlit, featur
 
 ![Maintenance use case workflow](./assets/overview.png)
 
-[Quick demo](https://hpe-my.sharepoint.com/:v:/r/personal/daniel_cao_hpe_com/Documents/18_AISSE/31_PCAI/08%20-%20Demo/01_recorded_trials/pcai-predictive-maintenance-demo.mp4?csf=1&web=1&nav=eyJyZWZlcnJhbEluZm8iOnsicmVmZXJyYWxBcHAiOiJPbmVEcml2ZUZvckJ1c2luZXNzIiwicmVmZXJyYWxBcHBQbGF0Zm9ybSI6IldlYiIsInJlZmVycmFsTW9kZSI6InZpZXciLCJyZWZlcnJhbFZpZXciOiJNeUZpbGVzTGlua0NvcHkifX0&e=eelMR9)
+[Demo](https://storage.googleapis.com/ai-solution-engineering-videos/public/Predictive%20Maintenance%20Demo.mp4)
 
 ## Project Structure
 
