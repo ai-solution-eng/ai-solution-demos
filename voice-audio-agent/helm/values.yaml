@@ -13,17 +13,17 @@ websocketServer:
   # Environment variables for the websocket server.
   # These names MUST match the variables expected by websocket_server/app.py
   env:
-    LLM_API_BASE: "https://llama-32-1b-dep-predictor-andrew-mendez-184335fb.ingress.pcai0108.dc15.hpecolo.net/v1"
-    LLM_API_KEY: "<UPDATE>"
-    LLM_MODEL_NAME: "meta-llama/Llama-3.2-1B-Instruct"
+    LLM_API_BASE: "<placeholder>"
+    LLM_API_KEY: "<placeholder>"
+    LLM_MODEL_NAME: "<placeholder>"
     LLM_PROMPT_TEMPLATE: 'Answer the question: "{transcript}"\n\nAnswer concisely.'
-    ASR_SERVER_ADDRESS: "parakeet-asr-api-predictor-00004-deployment.andrew-mendez-184335fb.svc.cluster.local:50051"
+    ASR_SERVER_ADDRESS: "<placeholder>"
     ASR_USE_SSL: "false"
     ASR_LANGUAGE_CODE: "en-US"
-    TTS_SERVER_ADDRESS: "tts-api-predictor-00002-deployment.andrew-mendez-184335fb.svc.cluster.local:50051"
+    TTS_SERVER_ADDRESS: "<placeholder>"
     TTS_USE_SSL: "false"
-    TTS_VOICE: "Magpie-Multilingual.EN-US.Sofia"
-    TTS_LANGUAGE_CODE: "en-US"
+    TTS_VOICE: "<placeholder>"
+    TTS_LANGUAGE_CODE: "<placeholder>"
     TTS_SAMPLE_RATE_HZ: "44100"
   resources:
     requests:
