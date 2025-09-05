@@ -4,12 +4,14 @@
 
 Tool calling equips LLMs with the ability to interact with external applications, trigger program execution, and access up-to-date information beyond their static training data. With this capability, LLMs can interpret natural language queries, map them to the right APIs or functions, and automatically fill in parameters from user inputs. This forms the backbone of AI agents that can, for example, check stock availability, fetch weather updates, or orchestrate workflow steps.
 
-[Demo](https://hpe-my.sharepoint.com/:v:/r/personal/daniel_cao_hpe_com/Documents/18_AISSE/31_PCAI/08%20-%20Demo/01_recorded_trials/pcai-finetune-tool-calling-llm-using-nemo-microservices.mp4?csf=1&web=1&nav=eyJyZWZlcnJhbEluZm8iOnsicmVmZXJyYWxBcHAiOiJPbmVEcml2ZUZvckJ1c2luZXNzIiwicmVmZXJyYWxBcHBQbGF0Zm9ybSI6IldlYiIsInJlZmVycmFsTW9kZSI6InZpZXciLCJyZWZlcnJhbFZpZXciOiJNeUZpbGVzTGlua0NvcHkifX0&e=eoDyti)
-
 **Objectives:**
 - Validate NVIDIA NeMo Microservices works on PCAI
 
-Jupyter notebook sources: [Data flywheel tool calling repo by NVIDIA](https://github.com/NVIDIA/GenerativeAIExamples/tree/main/nemo/data-flywheel/tool-calling)
+![Demo workflow](./finetune-tool-call-llm.png)
+
+[Demo](https://hpe-my.sharepoint.com/:v:/r/personal/daniel_cao_hpe_com/Documents/18_AISSE/31_PCAI/08%20-%20Demo/01_recorded_trials/pcai-finetune-tool-calling-llm-using-nemo-microservices.mp4?csf=1&web=1&nav=eyJyZWZlcnJhbEluZm8iOnsicmVmZXJyYWxBcHAiOiJPbmVEcml2ZUZvckJ1c2luZXNzIiwicmVmZXJyYWxBcHBQbGF0Zm9ybSI6IldlYiIsInJlZmVycmFsTW9kZSI6InZpZXciLCJyZWZlcnJhbFZpZXciOiJNeUZpbGVzTGlua0NvcHkifX0&e=eoDyti)
+
+Jupyter notebook: [Data flywheel tool calling repo by NVIDIA](https://github.com/NVIDIA/GenerativeAIExamples/tree/main/nemo/data-flywheel/tool-calling)
 
 ## config.py
 
@@ -41,24 +43,32 @@ BASE_MODEL_VERSION = "v1.0.0+L40"
 
 ## Packaged custom frameworks (packaged helm charts)
 
-1. NeMo Microservices: 
+**1. NeMo Microservices:**
 - Contains Customizer, Evaluator, Guardrails, Data Store, Entity Store, NIM proxy, ...
 
 NVIDIA Nemo Microservices is an API-first modular set of tools that you can use to customize, evaluate, and secure LLMs and embedding models.
 
 **Customizer:** Facilitates the fine-tuning of LLMs and embedding models using full-supervised and parameter-efficient fine-tuning techniques/PEFT. 
+
 **Evaluator:** Provides comprehensive evaluation capabilities for LLMs and embedding models, supporting academic benchmarks, custom automated evaluations, and LLM-as-a-Judge approaches. 
+
 **Guardrails:** Adds safety checks and content moderation to LLM endpoints, protecting against hallucinations, harmful content, and security vulnerabilities.
+
 **Data Store:** Serves as the default file storage solution, exposing APIs compatible with the Hugging Face Hub client.
+
 **Entity Store:** Provides tools to manage and organize general entities such as namespaces, projects, datasets, and models.
+
 **Deployment Management:** Provides an API to deploy NIM on a Kubernetes cluster and manage them through the NIM Operator microservice.
+
 **NIM Proxy:** Provides a unified endpoint that you can use to access all deployed NIM for inference tasks.
+
 **Operator:** Manages custom resource definitions (CRDs) for NeMo Customizer fine-tuning jobs
+
 **DGX Cloud Admission Controller:** Enables multi-node training requirements for NeMo Customizer jobs through a mutating admission webhook.
 
 - To be imported as a custom framework. Once installed, this serves as the back-end data flywheel allowing users to prepare and register datasets, finetune and evaluate models, add safety check, and deploy models using NIM.
 
-2. OpenWebUI: Serves as the chat UI of this demo.
+**2. OpenWebUI:** Serves as the chat UI of this demo.
 
 - Set up a connection to expose the finetuned models: "http://nemo-nim-proxy.nemo.svc.cluster.local:8000/v1"
 
