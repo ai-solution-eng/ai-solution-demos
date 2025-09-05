@@ -1,19 +1,22 @@
 # Finetune a tool calling LLM on PCAI using NVIDIA NeMo Microservices
 
-## Why do we need to finetune LLMs for tool calling? 
-
-Tool calling equips LLMs with the ability to interact with external applications, trigger program execution, and access up-to-date information beyond their static training data. With this capability, LLMs can interpret natural language queries, map them to the right APIs or functions, and automatically fill in parameters from user inputs. This forms the backbone of AI agents that can, for example, check stock availability, fetch weather updates, or orchestrate workflow steps.
-
 **Objectives:**
 - Validate NVIDIA NeMo Microservices works on PCAI
+
+## Why finetune LLMs for tool calling? 
+
+Tool calling equips LLMs with the ability to interact with external applications, trigger program execution, and access up-to-date information beyond their static training data. With this capability, LLMs can interpret natural language queries, map them to the right APIs or functions, and automatically fill in parameters from user inputs. This forms the backbone of AI agents that can, for example, check stock availability, fetch weather updates, or orchestrate workflow steps.
 
 ![Demo workflow](./finetune-tool-call-llm.png)
 
 [Demo](https://hpe-my.sharepoint.com/:v:/r/personal/daniel_cao_hpe_com/Documents/18_AISSE/31_PCAI/08%20-%20Demo/01_recorded_trials/pcai-finetune-tool-calling-llm-using-nemo-microservices.mp4?csf=1&web=1&nav=eyJyZWZlcnJhbEluZm8iOnsicmVmZXJyYWxBcHAiOiJPbmVEcml2ZUZvckJ1c2luZXNzIiwicmVmZXJyYWxBcHBQbGF0Zm9ybSI6IldlYiIsInJlZmVycmFsTW9kZSI6InZpZXciLCJyZWZlcnJhbFZpZXciOiJNeUZpbGVzTGlua0NvcHkifX0&e=eoDyti)
 
-Jupyter notebook: [Data flywheel tool calling repo by NVIDIA](https://github.com/NVIDIA/GenerativeAIExamples/tree/main/nemo/data-flywheel/tool-calling)
+## Jupyter notebook
 
-## config.py
+**Source:** 
+We leverage and improve on the original notebooks from this [Data flywheel tool calling repo by NVIDIA](https://github.com/NVIDIA/GenerativeAIExamples/tree/main/nemo/data-flywheel/tool-calling).
+
+## Configuration changes
 
 We modify config.py to expose the right services endpoints exposed by PCAI and configure the relevant base model version.
 
@@ -42,6 +45,13 @@ BASE_MODEL_VERSION = "v1.0.0+L40"
 ```
 
 ## Packaged custom frameworks (packaged helm charts)
+
+We modified [the original helm chart](https://helm.ngc.nvidia.com/nvidia/nemo-microservices/charts/nemo-microservices-helm-chart-25.8.0.tgz) and then packaged the NeMo Microservices helm chart (version 25.8.0) (as of August 2025) as a custom framework on PCAI. 
+
+To download the original chart from NVIDIA, run the command below.
+```sh
+helm fetch https://helm.ngc.nvidia.com/nvidia/nemo-microservices/charts/nemo-microservices-helm-chart-25.8.0.tgz --username='$oauthtoken' --password=<PASSWORD> --insecure-skip-tls-verify
+```
 
 **1. NeMo Microservices:**
 - Contains Customizer, Evaluator, Guardrails, Data Store, Entity Store, NIM proxy, ...
