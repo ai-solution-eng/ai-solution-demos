@@ -1,0 +1,108 @@
+# This manifest defines a Deployment, Service, and Istio VirtualService
+# to run the Medical Visit Summarization Streamlit application.
+# All resources will be deployed to the 'hospital-visit-summary' namespace.
+
+# ==============================================================================
+# 1. Deployment: Manages the application pod.
+#    - Uses the specified Docker image.
+#    - Guarantees 4 CPU and 32Gi Memory.
+#    - Mounts a subpath from the PVC directly to the application's data directory.
+# ==============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: medical-summary-app
+  namespace: hospital-visit-summary
+  labels:
+    app: medical-summary-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: medical-summary-app
+  template:
+    metadata:
+      labels:
+        app: medical-summary-app
+    spec:
+      containers:
+      - name: medical-summary-app
+        image: fcaliva/medical_summary_app:0.0.1
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8501
+          name: http-streamlit
+          protocol: TCP
+        envFrom:
+        - secretRef:
+            name: visit-summary-secrets
+        resources:
+          requests:
+            cpu: "4"
+            memory: "32Gi"
+          limits:
+            cpu: "4"
+            memory: "32Gi"
+        env:
+        - name: STREAMLIT_SERVER_PORT
+          value: "8501"
+        - name: STREAMLIT_SERVER_ADDRESS
+          value: "0.0.0.0"
+        - name: JVM_PATH
+          value: "/usr/lib/jvm/java-21-openjdk-amd64/lib/server/libjvm.so"
+        - name: JDBC_JAR_PATH
+          value: "/app/drivers/jdbc-15.0.0.1.1.jar"
+        - name: MONGO_JAR_PATH
+          value: "/app/drivers/mongo-java-driver.jar"
+      volumes:
+      - name: data-storage
+        persistentVolumeClaim:
+          claimName: kubeflow-shared-pvc
+
+---
+# ==============================================================================
+# 2. Service: Exposes the Deployment internally in the cluster.
+#    - Selects the pod using the 'app' label.
+#    - Exposes the Streamlit port 8501.
+# ==============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: medical-summary-app-svc
+  namespace: hospital-visit-summary
+  labels:
+    app: medical-summary-app
+spec:
+  type: ClusterIP
+  selector:
+    app: medical-summary-app
+  ports:
+  - name: http-streamlit
+    port: 8501
+    targetPort: 8501
+    protocol: TCP
+
+---
+# ==============================================================================
+# 3. VirtualService: Exposes the Service to the outside world via Istio.
+#    - Maps the public URL to the internal Kubernetes service.
+#    - Assumes an existing 'istio-ingressgateway'.
+# ==============================================================================
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: medical-summary-app-vs
+  namespace: hospital-visit-summary
+spec:
+  hosts:
+    - visit-summary.ingress.pcai0103.sy6.hpecolo.net
+  gateways:
+    - istio-system/ezaf-gateway
+  http: # Using http route for a web application like Streamlit
+  - route:
+    - destination:
+        # Routes traffic to the service created above.
+        host: medical-summary-app-svc.hospital-visit-summary.svc.cluster.local
+        port:
+          # The port number defined in the service.
+          number: 8501
