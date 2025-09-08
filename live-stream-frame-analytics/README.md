@@ -1,7 +1,9 @@
 # Real-Time VLM-Powered Video Stream Analysis on HPE Private Cloud AI
 
-author: andrew.mendez@hpe.com
-
+| Owner                       | Name                              | Email                                     |
+| ----------------------------|-----------------------------------|-------------------------------------------|
+| Use Case Owner              | Akash Khanna                      | akash.khanna@hpe.com                      |
+| PCAI Deployment Owner       | Andrew Mendez                     | andrew.mendez@hpe.com                     |
 
 This project demonstrates a powerful, interactive web application for analyzing multiple, real-time video streams using a Vision Language Model (VLM). The application is built with Gradio, containerized with Docker, and designed for seamless deployment on **HPE Private Cloud AI (PCAI)** using a reusable Helm chart.
 
