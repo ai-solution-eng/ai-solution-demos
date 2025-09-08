@@ -1,4 +1,11 @@
-# Image Segmentation Demo
+# Image Segmentation
+
+| Owner                       | Name                              | Email                                     |
+| ----------------------------|-----------------------------------|-------------------------------------------|
+| Use Case Owner              | Tanguy Pomas                      | tanguy.pomas@hpe.com                      |
+| PCAI Deployment Owner       | Tanguy Pomas                      | tanguy.pomas@hpe.com                      |
+
+# Description
 
 This customizable PCAI demo consists of:
  * Python scripts and Jupyter notebooks that finetunes pretrained PyTorch Segmentation models
