@@ -1,5 +1,5 @@
 @import "@fontsource/inter/index.css";
-@import "tw-animate-css";
+
 
 .custom-text-sm {
   font-size: 0.8rem !important; /* Tailwind's text-sm font size */

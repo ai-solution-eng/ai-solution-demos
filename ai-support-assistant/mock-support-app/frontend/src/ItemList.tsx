@@ -19,7 +19,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import api from "@/lib/api";
-import ItemDetails from "./ItemDetails";
 
 interface SupportCase {
   id: number;
@@ -27,7 +26,7 @@ interface SupportCase {
 }
 
 export default function CaseList() {
-  const [cases, setCases] = useState<Case[]>([]);
+  const [cases, setCases] = useState<SupportCase[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [newSubject, setNewSubject] = useState("");
   const [newDesc, setNewDesc] = useState("");
@@ -39,6 +38,9 @@ export default function CaseList() {
 
   const fetchCases = async () => {
     const res = await api.get("/cases");
+    console.log("API response data:", res.data);
+    console.log("Type of data:", typeof res.data);
+    console.log("Is array?", Array.isArray(res.data));
     setCases(res.data);
   };
 
@@ -65,16 +67,22 @@ export default function CaseList() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {cases.map((item) => (
-                <TableRow
-                  key={ item.id}
-                  className="cursor-pointer hover:bg-muted border"
-                  onClick={() => navigate(`/cases/${item.id}`)}
-                >
-                  <TableCell className="min-w-[5ch] custom-text-sm text-center border-1 border-[#000000] px-4 py-2">{item.id}</TableCell>
-                  <TableCell className="min-w-[50ch] custom-text-sm border-1 border-[#000000] px-4 py-2">{item.subject}</TableCell>
-                </TableRow>
-              ))}
+              {Array.isArray(cases) ? (
+                cases.map((item) => (
+                  <TableRow
+                    key={ item.id}
+                    className="cursor-pointer hover:bg-muted border"
+                    onClick={() => navigate(`/cases/${item.id}`)}
+                  >
+                    <TableCell className="min-w-[5ch] custom-text-sm text-center border-1 border-[#000000] px-4 py-2">{item.id}</TableCell>
+                    <TableCell className="min-w-[50ch] custom-text-sm border-1 border-[#000000] px-4 py-2">{item.subject}</TableCell>
+                  </TableRow>
+                ))
+              ) : (
+                  <TableRow>
+                    <TableCell colSpan={2}>No cases available or invalid data</TableCell>
+                  </TableRow>
+              )}
             </TableBody>
           </Table>
         </div>

@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mock-support-app.fullname" . }}
+  labels:
+    {{- include "hpe-ezua.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ include "mock-support-app.name" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "mock-support-app.name" . }}
+        {{- include "hpe-ezua.labels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          env:
+            - name: MOCK_SUPPORT_APP_PORT
+              value: {{ .Values.env.port | quote }}
+            - name: MOCK_SUPPORT_APP_DBHOST
+              value: {{ .Values.env.dbHost | quote }}
+            - name: MOCK_SUPPORT_APP_DBPORT
+              value: {{ .Values.env.dbPort | quote }}
+            - name: MOCK_SUPPORT_APP_DBNAME
+              value: {{ .Values.env.dbName | quote }}
+            - name: MOCK_SUPPORT_APP_DBUSER
+              value: {{ .Values.env.dbUser | quote }}
+            - name: MOCK_SUPPORT_APP_DBPASSWORD
+              value: {{ .Values.env.dbPassword | quote }}
+          ports:
+            - containerPort: 80
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 80
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3

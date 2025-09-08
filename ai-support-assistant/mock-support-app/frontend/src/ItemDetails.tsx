@@ -13,9 +13,15 @@ import {
 
 import { Button } from "@/components/ui/button";
 
+type CaseDetail = {
+  id: number | string;
+  msg_type: string;
+  msg: string;
+};
+
 export default function ItemDetails() {
   const { id } = useParams();
-  const [details, setDetails] = useState([]);
+  const [details, setDetails] = useState<CaseDetail[]>([]);
 
   useEffect(() => {
     api.get(`/cases/${id}/details`).then(res => setDetails(res.data));
