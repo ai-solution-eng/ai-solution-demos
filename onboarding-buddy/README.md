@@ -1,5 +1,10 @@
 # Onboarding Buddy AI Assistant
 
+| Owner                       | Name                              | Email                                     |
+| ----------------------------|-----------------------------------|-------------------------------------------|
+| Use Case Owner              | Claudio Calderon                  | jose-claudio.calderon@hpe.com             |
+| PCAI Deployment Owner       | Claudio Calderon                  | jose-claudio.calderon@hpe.com             |
+
 ## Overview & Purpose
 
 **Onboarding Buddy** is an AI-powered application designed to help organizations streamline onboarding for new hires. It empowers hiring managers and admins to create, assign, and manage onboarding tasks, while providing new employees with an embedded AI Q&A Assistant to guide them through their journey. The platform is demo-oriented: all data except the AI configuration is in-memory, making it easy to reset for demos or testing.
