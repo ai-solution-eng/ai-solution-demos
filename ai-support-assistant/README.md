@@ -1,4 +1,10 @@
 # PCAI Use Case Demo: AI Support Assistant
+
+| Owner                       | Name                              | Email                                     |
+| ----------------------------|-----------------------------------|-------------------------------------------|
+| Use Case Owner              | Dale Georg                        | dale.georg@hpe.com                        |
+| PCAI Deployment Owner       | Dale Georg                        | dale.georg@hpe.com                        |
+
 ## Value Proposition
 
 Technical support requests filed by end users can be broadly classified into two groups:
@@ -69,4 +75,5 @@ Finally, variables must be defined to provide the connection paramters for OpenW
 ### Mock Support Application
 
 The Mock Support Application can be added to PCAI via the "Import Framework" feature. The tar file to import is `./mock-support-app/helm/mock-support-app-1.0.1.tgz`. The file `./mock-support-app/helm/logo small.png` can be used as the framework icon.
+
 
