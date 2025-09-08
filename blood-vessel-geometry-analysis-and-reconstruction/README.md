@@ -1,9 +1,9 @@
 # End-to-End 🩸 Automatic Vessels Geometry Analysis and 3D Reconstruction on HPE Private Cloud AI (PCAI)
 
-**Authors:**
-- Andrew Mendez andrew.mendez@hpe.com
-- Francesco Caliva francesco.caliva@hpe.com
-- Alejandro Morales Martinez alejandro.morales-martinez@hpe.com
+| Owner                       | Name                                | Email                                                        |
+| ----------------------------|-------------------------------------|--------------------------------------------------------------|
+| Use Case Owner              | Alejandro Morales, Francesco Caliva | alejandro.morales-martinez@hpe.com, francesco.caliva@hpe.com |
+| PCAI Deployment Owner       | Andrew Mendez, Francesco Caliva     | andrew.mendez@hpe.com, francesco.caliva@hpe.com              |
 
 **High level demo flow**
 ![workflow](./images/conceptual_workflow_white.png)
