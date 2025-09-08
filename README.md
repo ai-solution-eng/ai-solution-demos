@@ -24,6 +24,7 @@ This repository contains use case demos developed for Private Cloud AI (PCAI)
 | [Image Segmentation](image-segmentation)                      | Yes           | No            | Yes           |`Computer Vision`, `Fine-tune`, `CNN`, `streamlit`       |
 | [Fine-tuning LLM for Tool Calling](finetune-tool-calling-llm) | Yes           | Coming Soon   | Yes           |`Computer Vision`, `Fine-tune`, `CNN`, `streamlit`       |
 | [Voice Audio Agent](voice-audio-agent)                        | Yes           | Yes           | Yes           |`GenAI`, `ASR`,`NVIDIA`                    |
+| [Hospital Visit Summary](hospital-visit-summary)              | Yes           | Yes           | Yes           |`GenAI`, `SQL`, `LLM`                    |
 
 
 ### Upcoming
