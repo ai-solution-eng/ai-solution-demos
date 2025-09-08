@@ -1,0 +1,30 @@
+image:
+  repository: dgeorg42/mock-support-app
+  tag: 1.0.1
+  pullPolicy: IfNotPresent
+
+env:
+  port: "80"
+  dbHost: "postgresql.postgresql.svc.cluster.local"
+  dbPort: "5432"
+  dbName: "supportCases"
+  dbUser: "demo"
+  dbPassword: "demopass"
+
+service:
+  type: ClusterIP
+  port: 80
+
+# Resource requests and limits
+resources:
+  requests:
+    cpu: "500m"
+    memory: "512Mi"
+  limits:
+    cpu: "1000m"
+    memory: "1Gi"
+    
+ezua:
+  virtualService:
+    endpoint: "mock-support-app.${DOMAIN_NAME}"
+    istioGateway: "istio-system/ezaf-gateway"

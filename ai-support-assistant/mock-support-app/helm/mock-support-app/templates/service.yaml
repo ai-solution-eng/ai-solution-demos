@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mock-support-app.fullname" . }}
+  labels:
+    {{- include "hpe-ezua.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    app: {{ include "mock-support-app.name" . }}
+  ports:
+    - name: http-frontend
+      protocol: TCP
+      port: {{ .Values.service.port }}
+      targetPort: 80
+    - name: http-backend
+      protocol: TCP
+      port: 3001
+      targetPort: 3001
