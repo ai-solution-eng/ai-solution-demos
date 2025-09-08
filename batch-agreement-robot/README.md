@@ -1,5 +1,12 @@
 # BAR (Batch Agreement Robot)
 
+| Owner                       | Name                              | Email                                     |
+| ----------------------------|-----------------------------------|-------------------------------------------|
+| Use Case Owner              | Jeffrey Fougere                   | jeffrey.fougere@hpe.com                   |
+| PCAI Deployment Owner       | Tanguy Pomas                      | tanguy.pomas@hpe.com                      |
+
+## Description
+
 A containerized web application for batch document analysis through automated prompt execution using AI. 
 
 BAR processes multiple PDF and TXT documents simultaneously with custom analysis prompts, delivering consolidated results in Excel format.
