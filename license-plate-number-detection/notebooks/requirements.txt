@@ -1,0 +1,11 @@
+#ultralytics==8.3.77
+ultralytics==8.3.152
+onnxruntime-gpu==1.22.0
+onnx==1.17.0
+onnxslim==0.1.56
+tensorrt==10.8.0.43
+tensorrt-cu12-bindings==10.8.0.43
+tensorrt-cu12-libs==10.8.0.43
+tritonclient[all]
+easyocr==1.7.2
+lap==0.5.12

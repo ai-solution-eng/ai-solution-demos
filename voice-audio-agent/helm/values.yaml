@@ -1,0 +1,74 @@
+# FILE: helm/values.yaml
+
+# Default values for audio-pipeline-chart.
+replicaCount: 1
+
+# Configuration for the websocket-server container
+websocketServer:
+  image:
+    repository: mendeza/web-socket-server
+    pullPolicy: Always
+    tag: "0.0.3"
+  port: 8765
+  # Environment variables for the websocket server.
+  # These names MUST match the variables expected by websocket_server/app.py
+  env:
+    LLM_API_BASE: "<placeholder>"
+    LLM_API_KEY: "<placeholder>"
+    LLM_MODEL_NAME: "<placeholder>"
+    LLM_PROMPT_TEMPLATE: 'Answer the question: "{transcript}"\n\nAnswer concisely.'
+    ASR_SERVER_ADDRESS: "<placeholder>"
+    ASR_USE_SSL: "false"
+    ASR_LANGUAGE_CODE: "en-US"
+    TTS_SERVER_ADDRESS: "<placeholder>"
+    TTS_USE_SSL: "false"
+    TTS_VOICE: "<placeholder>"
+    TTS_LANGUAGE_CODE: "<placeholder>"
+    TTS_SAMPLE_RATE_HZ: "44100"
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "256Mi"
+    limits:
+      cpu: "1"
+      memory: "512Mi"
+
+# Configuration for the gradio-ui container
+gradioUi:
+  image:
+    repository: mendeza/web-socket-server-ui
+    pullPolicy: Always
+    tag: "0.0.3"
+  port: 8080
+  # Environment variables for the Gradio UI.
+  # These names MUST match the variables expected by gradio_ui/app_ui.py
+  env:
+    WEBSOCKET_URI: "ws://localhost:8765"
+    # --- ADDED: Pass configurations from the server to the UI for default values ---
+    ASR_SERVER_ADDRESS: "parakeet-asr-api-predictor-00004-deployment.andrew-mendez-184335fb.svc.cluster.local:50051"
+    TTS_SERVER_ADDRESS: "tts-api-predictor-00002-deployment.andrew-mendez-184335fb.svc.cluster.local:50051"
+    LLM_PROMPT_TEMPLATE: 'Answer the question: "{transcript}"\n\nAnswer concisely.'
+    TTS_VOICE: "Magpie-Multilingual.EN-US.Sofia"
+    TTS_LANGUAGE_CODE: "en-US"
+    TTS_SAMPLE_RATE_HZ: "44100"
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 8080
+
+# Istio configuration
+ezua:
+  enabled: true
+  virtualService:
+    # The external hostname for the service. Corresponds to VirtualService spec.hosts
+    endpoint: "riva-websocket.${DOMAIN_NAME}"
+    # The Istio gateway to bind to. Corresponds to VirtualService spec.gateways
+    istioGateway: "istio-system/ezaf-gateway"

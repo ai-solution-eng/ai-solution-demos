@@ -1,0 +1,8 @@
+ultralytics==8.3.77
+tritonclient[all] #==2.55.0
+# cuda-python==12.8.0
+lap==0.5.12
+fastapi[standard]==0.115.12
+python-multipart==0.0.20
+easyocr==1.7.2
+websockets==15.0.1

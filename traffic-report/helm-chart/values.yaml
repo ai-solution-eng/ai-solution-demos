@@ -1,0 +1,118 @@
+# Default values for traffic-report
+# This is a YAML-formatted file.
+
+replicaCount: 1
+
+image:
+  repository: caovd/traffic-report
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  automount: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext: {}
+
+securityContext: {}
+
+service:
+  type: ClusterIP
+  port: 8501
+  targetPort: 8501
+  protocol: TCP
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: traffic-report.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+  requests:
+    cpu: 500m
+    memory: 1Gi
+
+livenessProbe:
+  httpGet:
+    path: /
+    port: http
+  initialDelaySeconds: 60
+  periodSeconds: 30
+  timeoutSeconds: 10
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /
+    port: http
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 80
+
+volumes: []
+volumeMounts: []
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Application configuration
+app:
+  port: 8501
+  # API Endpoints - configure these for your deployment
+  # Use KServe/Knative model endpoints via Istio Ingress Gateway
+  yolo:
+    # Users will configure the full endpoint via Streamlit UI
+    # Example: https://yolo-model-predictor-namespace.ingress.cluster-dns/predict
+    endpoint: "https://your-yolo-endpoint.com/predict"
+    apiKey: "your-yolo-api-key-here"
+  qwen:
+    # Users will configure the full endpoint via Streamlit UI  
+    # Example: https://qwen-model-predictor-namespace.ingress.cluster-dns/v1/chat/completions
+    endpoint: "https://your-qwen-endpoint.com/v1/chat/completions"
+    apiKey: "your-qwen-api-key-here"
+
+# Environment variables
+env:
+  # Network configuration
+  PYTHONUNBUFFERED: "1"
+  # Proxy settings to allow localhost access
+  HTTP_PROXY: ""
+  HTTPS_PROXY: ""
+  NO_PROXY: "localhost,127.0.0.1,0.0.0.0,::1"
+  # Network configuration for container
+  REQUESTS_CA_BUNDLE: ""
+  CURL_CA_BUNDLE: ""
+
+# Platform related options
+ezua:
+  # Use next options in order to configure the application endpoint.
+  virtualService:
+    enabled: true
+    endpoint: "traffic-report.${DOMAIN_NAME}"
+    istioGateway: "istio-system/ezaf-gateway"

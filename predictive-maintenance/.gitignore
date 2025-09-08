@@ -1,0 +1,6 @@
+artifacts
+model
+data/*
+.env
+config_local.yaml
+*.logWhy

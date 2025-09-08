@@ -1,0 +1,10 @@
+apiVersion: v2
+name: audio-pipeline-chart
+description: A Helm chart for deploying the audio pipeline with a Gradio UI and WebSocket server.
+type: application
+
+# This is the chart version.
+version: 0.1.0
+
+# This is the version number of the application being deployed.
+appVersion: "0.0.1"

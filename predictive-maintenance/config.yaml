@@ -1,0 +1,27 @@
+# ticket_data: "./data/test-tickets.csv"
+
+classification_model:
+  name: "bert-base-uncased"
+  checkpoint_path: "./model/finetuned_bert/" 
+  label_encoder: "./artifacts/label_encoder.pkl"
+
+resolution_model:
+  embeddings_model: "sentence-transformers/paraphrase-MiniLM-L6-v2"
+  embeddings_path: "./artifacts/embeddings.npy"
+  inference_server_url: ""
+  inference_server_token: ""
+  llm_model: "meta-llama/Llama-3.1-8B-Instruct"
+
+ocr_model:
+  inference_server_url: ""
+  inference_server_token: ""
+  vlm_model: "Qwen/Qwen2.5-VL-7B-Instruct"
+
+postgresql:
+  host: 'postgresql.postgresql.svc.cluster.local'
+  # host: '127.0.0.1'
+  dbname: 'stapp'
+  user: 'stapp'
+  password: 'stapp123'
+  port: '5432'
+  tablename: 'tickets'

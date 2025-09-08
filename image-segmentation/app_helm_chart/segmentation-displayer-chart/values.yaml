@@ -1,0 +1,28 @@
+replicaCount: 1
+
+# Name of the PVC that contains the datasets under "datatsets/" and local model checkpoints under "checkpoints/"
+pvc: user-pvc
+
+appImage: tpomas/segmentation-display-app:0.0.12
+
+# Path to datasets and checkpoints under provided pvc
+datasetsPath: datasets
+checkpointsPath: checkpoints
+
+# Name of the secret containing auth token to be used for MLflow. It should contain AUTH_TOKEN value
+tokenSecret: access-token
+
+mlflowS3EndpointURL: "http://local-s3-service.ezdata-system.svc.cluster.local:30000"
+trackingURI: "http://mlflow.mlflow.svc.cluster.local:5000"
+
+service:
+  appPort: 8501
+
+resources:
+  appLimits:
+    cpu: 5
+
+ezua:
+  virtualService:
+    endpoint: "segmentation-displayer.${DOMAIN_NAME}"
+    istioGateway: "istio-system/ezaf-gateway"

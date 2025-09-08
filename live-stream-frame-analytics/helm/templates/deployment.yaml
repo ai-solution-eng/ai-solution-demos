@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "gradio-vlm-chart.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gradio-vlm-chart.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "gradio-vlm-chart.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "gradio-vlm-chart.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: gradio-app
+          image: "{{ .Values.app.image.repository }}:{{ .Values.app.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.app.image.pullPolicy }}
+          ports:
+            - name: http-gradio
+              containerPort: {{ .Values.app.port }}
+              protocol: TCP
+          env:
+            - name: OPENAI_API_KEY
+              value: {{ .Values.app.env.llmApiKey | quote }}
+            - name: OPENAI_API_BASE
+              value: {{ .Values.app.env.llmApiBase | quote }}
+          resources:
+            {{- toYaml .Values.app.resources | nindent 12 }}

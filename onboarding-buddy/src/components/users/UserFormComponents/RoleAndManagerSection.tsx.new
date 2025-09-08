@@ -1,0 +1,113 @@
+import React from 'react';
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { User, UserRole, useAuth } from '@/contexts/AuthContext';
+import { features } from '@/config/features';
+
+interface RoleAndManagerSectionProps {
+  role: UserRole;
+  managerId: string | undefined;
+  onRoleChange: (value: string) => void;
+  onManagerChange: (value: string) => void;
+  currentUserRole: UserRole | undefined;
+  availableManagers: User[];
+  isSelfEdit: boolean;
+  disabled?: boolean;
+  error?: string;
+}
+
+export const RoleAndManagerSection: React.FC<RoleAndManagerSectionProps> = ({
+  role,
+  managerId,
+  onRoleChange,
+  onManagerChange,
+  currentUserRole,
+  availableManagers,
+  isSelfEdit,
+  disabled = false,
+  error
+}) => {
+  const { user: currentUser } = useAuth();
+  const canEditRoles = currentUserRole === "admin" || 
+                    (currentUserRole === "manager" && !isSelfEdit);
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <Label htmlFor="role">Role</Label>
+        <Select
+          value={role}
+          onValueChange={onRoleChange}
+          disabled={!canEditRoles || isSelfEdit || disabled}
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="Select a role" />
+          </SelectTrigger>
+          <SelectContent>
+            {currentUserRole === "admin" && (
+              <SelectItem value="admin">Admin</SelectItem>
+            )}
+            {currentUserRole === "admin" && (
+              <SelectItem value="manager">Manager</SelectItem>
+            )}
+            {(currentUserRole === "admin" || currentUserRole === "manager") && (
+              <SelectItem value="mentor">Mentor</SelectItem>
+            )}
+            {(currentUserRole === "admin" || currentUserRole === "manager") && (
+              <SelectItem value="new-hire">New Hire</SelectItem>
+            )}
+          </SelectContent>
+        </Select>
+        
+        <p className="text-xs text-muted-foreground mt-1">
+          {role === "admin" && "Full access to the platform, including user management and all features."}
+          {role === "manager" && "Can manage new hires, mentors, task templates, and assignments."}
+          {role === "mentor" && "Reviews completed tasks and provides feedback to new hires."}
+          {role === "new-hire" && "Completes assigned onboarding tasks and views progress."}
+        </p>
+      </div>
+      
+      {/* Manager assignment for admin and manager users when editing mentor and new-hire roles */}
+      {(currentUserRole === "admin" || currentUserRole === "manager") && (role === "mentor" || role === "new-hire") && (
+        <div className="space-y-2">
+          <Label htmlFor="manager">Assign to Manager</Label>
+          <Select
+            value={managerId || ""}
+            onValueChange={onManagerChange}
+            disabled={disabled || (currentUserRole === "manager" && !isSelfEdit)}
+            required
+          >
+            <SelectTrigger className={(!managerId ? "border-destructive" : "") + (error ? " border-red-500" : "")}>
+              <SelectValue placeholder="Select a manager" />
+            </SelectTrigger>
+            <SelectContent>
+              {availableManagers.length > 0 ? (
+                availableManagers.map((manager) => (
+                  <SelectItem key={manager.id} value={manager.id}>
+                    {manager.name}
+                  </SelectItem>
+                ))
+              ) : (
+                <SelectItem value="" disabled>
+                  No managers available
+                </SelectItem>
+              )}
+            </SelectContent>
+          </Select>
+          {error && (
+            <p className="text-xs text-destructive mt-1">
+              {error}
+            </p>
+          )}
+          <p className="text-xs text-muted-foreground mt-1">
+            {availableManagers.length === 0 
+              ? "No managers available. Please contact an admin to create a manager account."
+              : currentUserRole === "manager" && managerId !== currentUser?.id
+                ? "You can only assign users to yourself as a manager"
+                : "The manager who will oversee this user's work"}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+};

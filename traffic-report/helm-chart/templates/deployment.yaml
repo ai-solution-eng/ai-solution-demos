@@ -1,0 +1,114 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "traffic-report.fullname" . }}
+  labels:
+    {{- include "traffic-report.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "traffic-report.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "traffic-report.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "traffic-report.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["streamlit"]
+          args:
+            - "run"
+            - "/app/app.py"
+            - "--server.port={{ .Values.app.port }}"
+            - "--server.address=0.0.0.0"
+            - "--server.headless=true"
+            - "--server.enableCORS=false"
+            - "--server.enableXsrfProtection=false"
+          ports:
+            - name: http
+              containerPort: {{ .Values.app.port }}
+              protocol: TCP
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          env:
+            - name: PYTHONUNBUFFERED
+              value: {{ .Values.env.PYTHONUNBUFFERED | quote }}
+            - name: HTTP_PROXY
+              value: {{ .Values.env.HTTP_PROXY | quote }}
+            - name: HTTPS_PROXY
+              value: {{ .Values.env.HTTPS_PROXY | quote }}
+            - name: NO_PROXY
+              value: {{ .Values.env.NO_PROXY | quote }}
+            - name: REQUESTS_CA_BUNDLE
+              value: {{ .Values.env.REQUESTS_CA_BUNDLE | quote }}
+            - name: CURL_CA_BUNDLE
+              value: {{ .Values.env.CURL_CA_BUNDLE | quote }}
+            {{- if .Values.ezua.virtualService.enabled }}
+            - name: DOMAIN_NAME
+              value: {{ .Values.ezua.virtualService.endpoint | quote }}
+            {{- end }}
+            - name: YOLO_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "traffic-report.fullname" . }}-config
+                  key: yolo-endpoint
+            - name: YOLO_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "traffic-report.fullname" . }}-config
+                  key: yolo-api-key
+            - name: QWEN_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "traffic-report.fullname" . }}-config
+                  key: qwen-endpoint
+            - name: QWEN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "traffic-report.fullname" . }}-config
+                  key: qwen-api-key
+          {{- with .Values.volumeMounts }}
+          volumeMounts:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.volumes }}
+      volumes:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

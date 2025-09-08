@@ -1,0 +1,54 @@
+# FILE: helm/templates/deployment.yaml
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "audio-pipeline-chart.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "audio-pipeline-chart.labels" . | nindent 4 }}
+    {{- include "hpe-ezua.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "audio-pipeline-chart.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "audio-pipeline-chart.selectorLabels" . | nindent 8 }}
+        {{- include "hpe-ezua.labels" . | nindent 8 }}
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+    spec:
+      containers:
+      - name: websocket-server
+        image: "{{ .Values.websocketServer.image.repository }}:{{ .Values.websocketServer.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.websocketServer.image.pullPolicy }}
+        ports:
+        - name: websocket
+          containerPort: {{ .Values.websocketServer.port }}
+          protocol: TCP
+        env:
+{{- range $key, $val := .Values.websocketServer.env }}
+        - name: {{ $key }}
+          value: {{ $val | quote }}
+{{- end }}
+        resources:
+          {{- toYaml .Values.websocketServer.resources | nindent 10 }}
+
+      - name: gradio-ui
+        image: "{{ .Values.gradioUi.image.repository }}:{{ .Values.gradioUi.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.gradioUi.image.pullPolicy }}
+        ports:
+        - name: http-ui
+          containerPort: {{ .Values.gradioUi.port }}
+          protocol: TCP
+        env:
+{{- range $key, $val := .Values.gradioUi.env }}
+        - name: {{ $key }}
+          value: {{ $val | quote }}
+{{- end }}
+        resources:
+          {{- toYaml .Values.gradioUi.resources | nindent 10 }}

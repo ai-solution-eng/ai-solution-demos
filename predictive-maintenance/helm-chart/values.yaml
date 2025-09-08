@@ -1,0 +1,99 @@
+# Default values for predictive-maintenance.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+ezua:
+  virtualService:
+    endpoint: "predictive-maintenance.${DOMAIN_NAME}"
+    istioGateway: "istio-system/ezaf-gateway"
+
+replicaCount: 1
+
+image:
+  repository: caovd/predictive-maintenance
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: "latest"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8501
+
+# Configure config.yaml values. It will be created as configMap and will be mounted at application's config.yaml file
+# Please only touch ML endpoints and tokens.
+appConfig:
+  classification_model:
+    name: "bert-base-uncased"
+    checkpoint_path: "./model/finetuned_bert/" 
+    label_encoder: "./artifacts/label_encoder.pkl"
+  resolution_model:
+    embeddings_model: "sentence-transformers/paraphrase-MiniLM-L6-v2"
+    embeddings_path: "./artifacts/embeddings.npy"
+    inference_server_url: ""
+    inference_server_token: ""
+    llm_model: "meta-llama/Llama-3.1-8B-Instruct"
+  ocr_model:
+    inference_server_url: ""
+    inference_server_token: ""
+    vlm_model: "Qwen/Qwen2.5-VL-7B-Instruct"
+  postgresql:
+    host: 'postgresql.postgresql.svc.cluster.local'
+    dbname: 'stapp'
+    user: 'stapp'
+    password: 'stapp123'
+    port: '5432'
+    tablename: 'tickets'
+
+# Additional volumes on the output Deployment definition.
+volumes: 
+  - name: config-volume
+    configMap:
+      items:
+      - key: config.yaml
+        path: config.yaml
+      name: predictive-maintenance-appconfig
+
+# Additional volumeMounts on the output Deployment definition.
+volumeMounts: 
+  - name: config-volume
+    mountPath: /app/config.yaml
+    subPath: config.yaml
+
+serviceAccount:
+  create: true
+  # Automatically mount a ServiceAccount's API credentials?
+  automount: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+podSecurityContext: {}
+securityContext: {}
+
+resources:
+  limits:
+    cpu: "4"
+    memory: 16Gi
+
+livenessProbe:
+  httpGet:
+    path: /
+    port: http
+readinessProbe:
+  httpGet:
+    path: /
+    port: http
+          
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
