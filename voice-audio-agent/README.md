@@ -1,6 +1,9 @@
-<!-- File: README.md (master) -->
-
 # End-to-End Audio Conversational Agent in HPE's Private Cloud AI (PCAI) Platform
+
+| Owner                       | Name                              | Email                                     |
+| ----------------------------|-----------------------------------|-------------------------------------------|
+| Use Case Owner              | Akash Khanna                      | akash.khanna@hpe.com                      |
+| PCAI Deployment Owner       | Andrew Mendez                     | andrew.mendez@hpe.com                     |
 
 ![Solution Overview](assets/slide1.jpg)
 
