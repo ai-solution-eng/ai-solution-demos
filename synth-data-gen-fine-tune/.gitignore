@@ -1,0 +1,5 @@
+/models/
+/hf_cache/
+/data/
+__pycache__/
+.venv

@@ -1,0 +1,245 @@
+/* body {
+    font-family: Arial, sans-serif;
+    padding: 20px;
+    background-color: #fcfcfc;
+    max-width: 800px;
+    margin: auto;
+}
+
+h1, h2, h3 {
+    color: #333;
+}
+
+input, textarea, button {
+    padding: 8px;
+    margin-top: 5px;
+    margin-bottom: 10px;
+}
+
+button {
+    cursor: pointer;
+    background-color: #0056b3;
+    color: white;
+    border: none;
+    border-radius: 4px;
+}
+
+button:hover {
+    background-color: #004494;
+}
+
+section {
+    margin-bottom: 30px;
+}
+
+pre {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+} */
+
+
+/* Base */
+* { box-sizing: border-box; }
+html, body { padding: 0; margin: 0; }
+
+:root{
+  --bg:        #0b0c10;
+  --panel:     #111318;
+  --panel-2:   #141821;
+  --text:      #e9eef4;
+  --muted:     #9aa4b2;
+  --border:    #1f2530;
+  --primary:   #4c8cff;
+  --primary-600:#3a74e6;
+  --danger:    #f16d6d;
+  --radius:    14px;
+  --shadow:    0 6px 24px rgba(0,0,0,0.25);
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --sans: ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+}
+
+@media (prefers-color-scheme: light){
+  :root{
+    --bg:#f6f7fb; --panel:#ffffff; --panel-2:#ffffff;
+    --text:#1b2430; --muted:#647086; --border:#e9edf5;
+    --primary:#2f6bff; --primary-600:#2456d6;
+    --danger:#d94d4d;
+  }
+}
+
+body{
+  font-family: var(--sans);
+  color: var(--text);
+  background: radial-gradient(1200px 600px at 10% -10%, rgba(76,140,255,0.15), transparent),
+              radial-gradient(1200px 600px at 100% 0%, rgba(255,166,77,0.12), transparent),
+              var(--bg);
+  line-height: 1.45;
+}
+
+/* Containers */
+.container{
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+/* Header */
+.app-header{
+  background: linear-gradient(180deg, rgba(76,140,255,0.15), rgba(76,140,255,0.03));
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(6px);
+}
+.header-inner{
+  padding: 28px 24px;
+}
+.title{
+  margin: 0 0 6px;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.subtitle{
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+/* Cards */
+.card{
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  margin: 18px 0 26px;
+  overflow: hidden;
+}
+.card-head{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(255,255,255,0.03), transparent);
+}
+.card-head h2{
+  font-size: 18px;
+  margin: 0;
+}
+.card-body{
+  padding: 18px;
+}
+
+/* Grid & fields */
+.grid{
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 16px;
+}
+.col-span-2{ grid-column: span 2; }
+
+.field{ display:flex; flex-direction:column; gap:8px; }
+.field label{ font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+
+input, select, textarea{
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--text);
+  outline: none;
+  transition: box-shadow .15s ease, border-color .15s ease, background .2s ease;
+}
+textarea{ resize: vertical; }
+input:focus, select:focus, textarea:focus{
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--primary) 20%, transparent);
+}
+
+.checkbox-field .checkbox{ display:flex; align-items:center; gap:10px; }
+input[type="checkbox"]{ width:auto; accent-color: var(--primary); }
+
+/* Buttons */
+.actions{ display:flex; gap:10px; flex-wrap:wrap; margin-top: 4px; }
+.btn{
+  appearance: none;
+  border: 1px solid color-mix(in srgb, var(--primary) 80%, #0000);
+  background: var(--primary);
+  color: white;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform .05s ease, background .15s ease, box-shadow .15s ease;
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--primary) 25%, transparent);
+}
+.btn:hover{ background: var(--primary-600); }
+.btn:active{ transform: translateY(1px); }
+
+.btn-secondary{
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+  box-shadow: none;
+}
+.btn-secondary:hover{ border-color: color-mix(in srgb, var(--text) 25%, var(--border)); }
+
+.btn-danger{
+  background: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 70%, #0000);
+}
+.btn-danger:hover{ filter: brightness(0.95); }
+
+/* Datasets list */
+.ds-list{ display:flex; flex-direction:column; gap:8px; }
+.ds-row{
+  display:flex; align-items:center; gap:12px;
+  padding: 10px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel) 92%, var(--primary) 8%);
+}
+.mono{ font-family: var(--mono); }
+.muted{ color: var(--muted); }
+
+/* Code panels */
+.codepanel{
+  background: linear-gradient(180deg, color-mix(in srgb, var(--panel-2) 85%, #0000), var(--panel-2));
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text);
+  margin-top: 12px;
+}
+.soft-blue{ background: linear-gradient(180deg, rgba(76,140,255,0.1), transparent), var(--panel-2); }
+.soft-orange{ background: linear-gradient(180deg, rgba(255,166,77,0.12), transparent), var(--panel-2); }
+
+/* Compare layout */
+.compare{
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0,1fr));
+  gap: 16px;
+  margin-top: 14px;
+}
+.compare-pane h3{
+  margin: 0 0 6px;
+  font-size: 14px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+
+/* Helpers */
+.align-end{ display:flex; align-items:end; }
+h3{ margin: 0; }
+
+@media (max-width: 840px){
+  .grid{ grid-template-columns: 1fr; }
+  .col-span-2{ grid-column: auto; }
+  .compare{ grid-template-columns: 1fr; }
+}

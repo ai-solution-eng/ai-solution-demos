@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-app
+  labels:
+    app: {{ .Release.Name }}-app
+spec:
+  replicas: {{ .Values.app.replicas }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-app
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-app
+    spec:
+      containers:
+        - name: app
+          image: {{ .Values.app.image }}
+          ports:
+            - containerPort: {{ .Values.app.containerPort }}
+          resources:
+            limits:
+              nvidia.com/gpu: 1
+          {{- if .Values.app.extraEnv }}
+          env:
+            {{ toYaml .Values.app.extraEnv | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: models-pvc
+              mountPath: /models-pvc
+      volumes:
+        - name: models-pvc
+          persistentVolumeClaim:
+            claimName: {{ .Values.app.pvcName }}

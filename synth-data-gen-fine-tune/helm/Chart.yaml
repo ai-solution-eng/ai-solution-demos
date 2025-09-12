@@ -1,0 +1,5 @@
+apiVersion: v2
+name: synth-data-gen-fine-tune
+description: Helm chart for deploying synthetic data generation + fine-tuning application
+version: 0.0.1
+appVersion: "1.0"

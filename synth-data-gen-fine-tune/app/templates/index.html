@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>LLM Fine-Tuning Application</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+
+  <script>
+    let currentJobId = null;
+
+    async function uiLog(event, payload) {
+      try {
+        await fetch('/event_log', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ event, payload })
+        });
+      } catch (_) {}
+    }
+
+    // Global error hooks
+    window.addEventListener('error', (e) =>
+      uiLog('js_error', { msg: e.message, src: e.filename, line: e.lineno, col: e.colno })
+    );
+    window.addEventListener('unhandledrejection', (e) =>
+      uiLog('js_unhandled_rejection', { reason: String(e.reason) })
+    );
+
+    async function generateData() {
+      const baseUrl  = document.getElementById("base-url").value.trim();
+      const model    = document.getElementById("model-name").value.trim();
+      const token    = document.getElementById("bearer-token").value.trim();
+      const numSamples = parseInt(document.getElementById("num-samples").value) || 5;
+      const requestTimeoutSec = parseFloat(document.getElementById("req-timeout").value) || 20;
+      const promptTemplate = document.getElementById("prompt-template").value;
+      const skipTlsVerify  = document.getElementById("skip-tls-verify").checked;
+
+      uiLog('generateData_clicked', { numSamples, baseUrl, model });
+
+      const resp = await fetch('/generate_data', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          base_url: baseUrl,
+          model: model,
+          bearer_token: token,
+          num_samples: numSamples,
+          prompt_template: promptTemplate,
+          skip_tls_verify: skipTlsVerify,
+          request_timeout_sec: requestTimeoutSec
+        })
+      });
+
+      const result = await resp.json();
+      if (result.status === "success") {
+        uiLog('generateData_success', { file: result.meta?.file_name, rows: result.meta?.num_rows });
+        const m = result.meta;
+        document.getElementById("data-preview").innerText =
+`Saved: ${m.file_name}
+Path: ${m.file_path}
+Rows: ${m.num_rows}`;
+        await refreshDatasets();
+      } else {
+        uiLog('generateData_error', { msg: result.message });
+        document.getElementById("data-preview").innerText = `Error: ${result.message}`;
+      }
+    }
+
+    async function refreshDatasets() {
+      uiLog('refreshDatasets_clicked');
+      const resp = await fetch('/list_datasets');
+      const result = await resp.json();
+      const container = document.getElementById("datasets");
+      if (result.status !== "success") {
+        container.innerText = `Error: ${result.message}`;
+        return;
+      }
+      const files = result.files;
+      if (!files.length) {
+        container.innerHTML = "<p class='muted'>No datasets found. Generate some above.</p>";
+        return;
+      }
+      const rows = files.map(
+        f => `<label class="ds-row">
+                <input type="checkbox" class="ds-check" value="${f.name}">
+                <span class="mono">${f.name}</span>
+                <span class="muted">(${f.num_rows} rows, ${Math.round(f.size_bytes/1024)} KB)</span>
+              </label>`
+      ).join("");
+      container.innerHTML = rows;
+    }
+
+    async function startFineTuneJob() {
+      const selected = Array.from(document.querySelectorAll(".ds-check:checked")).map(i => i.value);
+      uiLog('submitFineTune_clicked', { files: selected });
+      const st = document.getElementById("ft-status");
+      if (!selected.length) {
+        st.innerText = "Select at least one dataset file in section 2.";
+        return;
+      }
+
+      const payload = {
+        selected_files: selected,
+        base_model_id: document.getElementById("base-model-id")?.value.trim() || "microsoft/Phi-3-mini-4k-instruct",
+        num_epochs: parseInt(document.getElementById("ft-epochs")?.value) || 1,
+        learning_rate: parseFloat(document.getElementById("ft-lr")?.value) || 0.0002,
+        per_device_train_batch_size: parseInt(document.getElementById("ft-batch")?.value) || 1,
+        gradient_accumulation_steps: parseInt(document.getElementById("ft-gradacc")?.value) || 2,
+        max_seq_len: parseInt(document.getElementById("ft-maxseq")?.value) || 512
+      };
+
+      st.innerText = "Starting fine-tuning…";
+      const resp = await fetch('/finetune', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+      });
+      const out = await resp.json();
+      if (out.status === "started") {
+        currentJobId = out.job_id;
+        localStorage.setItem("ft_current_job_id", currentJobId);
+        st.innerText = `Job started: ${currentJobId}\nClick "Refresh Status" to poll progress.`;
+      } else {
+        st.innerText = `Error: ${out.message || JSON.stringify(out)}`;
+      }
+    }
+
+    async function pollFineTune() {
+      uiLog('pollFineTune_clicked', { job_id: currentJobId });
+      const st = document.getElementById("ft-status");
+      if (!currentJobId) { st.innerText = "No job started yet."; return; }
+      const resp = await fetch('/finetune_status?job_id=' + encodeURIComponent(currentJobId));
+      const out = await resp.json();
+      if (out.status === "not_found") {
+        st.innerText = "Job not found.";
+        return;
+      }
+      st.innerText = JSON.stringify(out, null, 2);
+
+      if (out.status === "done" || out.status === "error") {
+        localStorage.removeItem("ft_current_job_id");
+      }
+    }
+
+    async function refreshExportedAdapters() {
+      uiLog('refreshExportedAdapters_clicked');
+      const sel = document.getElementById("exported-adapters");
+      sel.innerHTML = "";
+      const r = await fetch('/list_exported_adapters');
+      const j = await r.json();
+      if (j.status !== "success" || !j.adapters.length) {
+        const opt = document.createElement("option");
+        opt.value = "";
+        opt.textContent = "No exported adapters found (finish fine-tuning first)";
+        sel.appendChild(opt);
+        return;
+      }
+      j.adapters.forEach(a => {
+        const opt = document.createElement("option");
+        opt.value = a.name;
+        opt.textContent = `${a.name}  (${a.path})`;
+        sel.appendChild(opt);
+      });
+    }
+
+    async function hotloadSelected() {
+      const status = document.getElementById("hotload-status");
+      const adapterName = document.getElementById("vllm-adapter").value.trim();
+      const selectedAdapter = document.getElementById("exported-adapters").value;
+      const url = document.getElementById("vllm-url").value.trim();
+      const token = document.getElementById("vllm-token").value.trim();
+      if (!selectedAdapter || !url) {
+        status.innerText = "Pick an exported adapter and enter your vLLM URL.";
+        return;
+      }
+      uiLog('hotload_clicked', { adapter: selectedAdapter, url });
+      status.innerText = "Loading adapter…";
+      const resp = await fetch('/hotload_adapter', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          vllm_url: url, adapter_name: adapterName, exported_adapter: selectedAdapter,
+          token: token || undefined
+        })
+      });
+      const out = await resp.json();
+      status.innerText = JSON.stringify(out, null, 2);
+    }
+
+    async function unloadSelected() {
+      const status = document.getElementById("hotload-status");
+      const name = document.getElementById("exported-adapters").value;
+      const url = document.getElementById("vllm-url").value.trim();
+      const token = document.getElementById("vllm-token").value.trim();
+      if (!name || !url) {
+        status.innerText = "Pick an exported adapter and enter your vLLM URL.";
+        return;
+      }
+      uiLog('unload_clicked', { adapter: name, url });
+      status.innerText = "Unloading adapter…";
+      const resp = await fetch('/unload_adapter', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          vllm_url: url, adapter_name: name,
+          token: token || undefined
+        })
+      });
+      const out = await resp.json();
+      status.innerText = JSON.stringify(out, null, 2);
+    }
+
+    async function runCompare() {
+      const url     = document.getElementById("cmp-vllm-url").value.trim();
+      const token   = document.getElementById("cmp-token").value.trim();
+      const baseM   = document.getElementById("cmp-base-model").value.trim();
+      const ftM     = document.getElementById("cmp-ft-model").value.trim();
+      const prompt  = document.getElementById("cmp-prompt").value;
+      const maxNew  = parseInt(document.getElementById("cmp-max").value)  || 256;
+      const temp    = parseFloat(document.getElementById("cmp-temp").value) || 0.7;
+      const topp    = parseFloat(document.getElementById("cmp-topp").value) || 0.95;
+      uiLog('compare_clicked', { baseModel: baseM, ftModel: ftM, url });
+
+      if (!url || !baseM || !ftM) {
+        alert("Enter vLLM URL, base model name, and FT model name.");
+        return;
+      }
+
+      document.getElementById("cmp-base").innerText = "Running…";
+      document.getElementById("cmp-ft").innerText   = "Running…";
+
+      const resp = await fetch('/compare', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          prompt: prompt,
+          base_url: url,
+          base_model: baseM,
+          ft_url: url,
+          ft_model: ftM,
+          token: token || undefined,
+          max_new_tokens: maxNew,
+          temperature: temp,
+          top_p: topp
+        })
+      });
+
+      const out = await resp.json();
+      if (out.status === "success") {
+        uiLog('compare_success', { baseLen: out.base?.length, ftLen: out.finetuned?.length });
+        document.getElementById("cmp-base").innerText = out.base;
+        document.getElementById("cmp-ft").innerText   = out.finetuned;
+      } else {
+        uiLog('compare_error', { msg: out.message });
+        document.getElementById("cmp-base").innerText = `Error: ${out.message}`;
+        document.getElementById("cmp-ft").innerText   = "";
+      }
+    }
+
+    document.addEventListener("DOMContentLoaded", async () => {
+      await refreshDatasets();
+      await refreshExportedAdapters();
+      const saved = localStorage.getItem("ft_current_job_id");
+      if (saved) {
+        currentJobId = saved;
+        pollFineTune();
+      }
+    });
+  </script>
+</head>
+
+<body>
+  <header class="app-header">
+    <div class="container header-inner">
+      <h1 class="title">Synthetic Data Generation & LoRA Fine‑Tuning</h1>
+      <p class="subtitle">Generate data • Fine-tune • Hot-load • Compare</p>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- 1. Synthetic Data Generation -->
+    <section class="card">
+      <div class="card-head">
+        <h2>1. Synthetic Data Generation</h2>
+      </div>
+      <div class="card-body">
+        <div class="grid">
+          <div class="field">
+            <label for="base-url">Base URL</label>
+            <input type="text" id="base-url" placeholder="https://vllm-lora-phi-3-mini-predictor-....hpecolo.net">
+          </div>
+
+          <div class="field">
+            <label for="model-name">Model name</label>
+            <input type="text" id="model-name" placeholder="microsoft/Phi-3-mini-4k-instruct">
+          </div>
+
+          <div class="field col-span-2">
+            <label for="bearer-token">Bearer token</label>
+            <input type="text" id="bearer-token" placeholder="eyJhbGciOiJSUzI....jeu75wRnIgppze7E2JQ">
+          </div>
+
+          <div class="field col-span-2">
+            <label for="prompt-template">Prompt template</label>
+            <textarea id="prompt-template" rows="3">Generate a useful instruction-response pair.</textarea>
+          </div>
+
+          <div class="field">
+            <label for="num-samples">Number of samples</label>
+            <input type="number" id="num-samples" value="5">
+          </div>
+
+          <div class="field">
+            <label for="req-timeout">Per-request timeout (sec)</label>
+            <input type="number" id="req-timeout" value="20">
+          </div>
+
+          <div class="field col-span-2 checkbox-field">
+            <label class="checkbox">
+              <input type="checkbox" id="skip-tls-verify">
+              <span>Skip TLS verification <span class="muted">(not recommended)</span></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button class="btn" onclick="generateData()">Generate Data</button>
+        </div>
+
+        <pre id="data-preview" class="codepanel"></pre>
+      </div>
+    </section>
+
+    <!-- 2. Datasets in Container -->
+    <section class="card">
+      <div class="card-head">
+        <h2>2. Datasets in Container</h2>
+        <div class="actions">
+          <button class="btn btn-secondary" onclick="refreshDatasets()">Refresh List</button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div id="datasets" class="ds-list"></div>
+      </div>
+    </section>
+
+    <!-- 3. Fine-Tune (LoRA) -->
+    <section class="card">
+      <div class="card-head">
+        <h2>3. Fine-Tune (LoRA)</h2>
+      </div>
+      <div class="card-body">
+        <div class="grid">
+          <div class="field col-span-2">
+            <label for="base-model-id">Base model</label>
+            <input type="text" id="base-model-id" value="microsoft/Phi-3-mini-4k-instruct">
+          </div>
+
+          <div class="field">
+            <label for="ft-epochs">Epochs</label>
+            <input type="number" id="ft-epochs" value="1">
+          </div>
+
+          <div class="field">
+            <label for="ft-lr">Learning rate</label>
+            <input type="number" step="0.00001" id="ft-lr" value="0.0002">
+          </div>
+
+          <div class="field">
+            <label for="ft-batch">Batch</label>
+            <input type="number" id="ft-batch" value="1">
+          </div>
+
+          <div class="field">
+            <label for="ft-gradacc">Grad Accum</label>
+            <input type="number" id="ft-gradacc" value="2">
+          </div>
+
+          <div class="field">
+            <label for="ft-maxseq">Max Seq</label>
+            <input type="number" id="ft-maxseq" value="512">
+          </div>
+        </div>
+
+        <div class="actions">
+          <button class="btn" onclick="startFineTuneJob()">Start Fine-Tuning</button>
+          <button class="btn btn-secondary" onclick="pollFineTune()">Refresh Status</button>
+        </div>
+
+        <pre id="ft-status" class="codepanel"></pre>
+      </div>
+    </section>
+
+    <!-- 4. Load Adapter to vLLM -->
+    <section class="card">
+      <div class="card-head">
+        <h2>4. Load Adapter to vLLM</h2>
+        <div class="actions">
+          <button class="btn btn-secondary" onclick="refreshExportedAdapters()">Refresh Exported</button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="grid">
+          <div class="field col-span-2">
+            <label for="exported-adapters">Exported adapters</label>
+            <select id="exported-adapters"></select>
+          </div>
+
+          <div class="field">
+            <label for="vllm-url">vLLM URL</label>
+            <input id="vllm-url" placeholder="https://vllm-lora-phi-3-mini-predictor-....hpecolo.net">
+          </div>
+
+          <div class="field">
+            <label for="vllm-token">Bearer token</label>
+            <input id="vllm-token" placeholder="eyJhbGciOiJSUzI....jeu75wRnIgppze7E2JQ">
+          </div>
+
+          <div class="field col-span-2">
+            <label for="vllm-adapter">Adapter name (optional, but preferred for ease of use)</label>
+            <input id="vllm-adapter" placeholder="(optional)">
+          </div>
+        </div>
+
+        <div class="actions">
+          <button class="btn" onclick="hotloadSelected()">Hot-Load Adapter</button>
+          <button class="btn btn-danger" onclick="unloadSelected()">Unload Adapter</button>
+        </div>
+
+        <pre id="hotload-status" class="codepanel"></pre>
+      </div>
+    </section>
+
+    <!-- 5. Compare: Base vs Fine-Tuned -->
+    <section class="card">
+      <div class="card-head">
+        <h2>5. Compare: Base vs Fine-Tuned (via vLLM)</h2>
+      </div>
+      <div class="card-body">
+        <div class="grid">
+          <div class="field">
+            <label for="cmp-vllm-url">vLLM URL</label>
+            <input id="cmp-vllm-url" placeholder="https://vllm-lora-phi-3-mini-predictor-....hpecolo.net">
+          </div>
+
+          <div class="field">
+            <label for="cmp-token">Bearer token</label>
+            <input id="cmp-token" placeholder="eyJhbGciOiJSUzI....jeu75wRnIgppze7E2JQ">
+          </div>
+
+          <div class="field">
+            <label for="cmp-base-model">Base model</label>
+            <input id="cmp-base-model" placeholder='e.g. "microsoft/Phi-3-mini-4k-instruct"' value="microsoft/Phi-3-mini-4k-instruct">
+          </div>
+
+          <div class="field">
+            <label for="cmp-ft-model">FT model</label>
+            <input id="cmp-ft-model" placeholder='Your LoRA name, e.g. "phi3-ft1"' value="phi3-ft1">
+          </div>
+
+          <div class="field col-span-2">
+            <label for="cmp-prompt">Prompt</label>
+            <textarea id="cmp-prompt" rows="4" placeholder="Enter a prompt to compare..."></textarea>
+          </div>
+
+          <div class="field">
+            <label for="cmp-max">Max New</label>
+            <input type="number" id="cmp-max" value="256">
+          </div>
+
+          <div class="field">
+            <label for="cmp-temp">Temp</label>
+            <input type="number" step="0.05" id="cmp-temp" value="0.7">
+          </div>
+
+          <div class="field">
+            <label for="cmp-topp">Top-p</label>
+            <input type="number" step="0.05" id="cmp-topp" value="0.95">
+          </div>
+
+          <div class="field align-end">
+            <button class="btn" onclick="runCompare()">Compare</button>
+          </div>
+        </div>
+
+        <div class="compare">
+          <div class="compare-pane">
+            <h3>Base</h3>
+            <pre id="cmp-base" class="codepanel soft-blue"></pre>
+          </div>
+          <div class="compare-pane">
+            <h3>Fine-Tuned</h3>
+            <pre id="cmp-ft" class="codepanel soft-orange"></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

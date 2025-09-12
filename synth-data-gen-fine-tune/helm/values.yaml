@@ -1,0 +1,17 @@
+app:
+  image: "bosterbuhrhpe/synth-gen-ft:0.1.0"
+  replicas: 1
+  servicePort: 80
+  containerPort: 5000
+  extraEnv:
+    - name: ADAPTER_EXPORT_DIR
+      value: /models-pvc/adapters
+  pvcName: "models-pvc"
+
+# Ezmeral Unified Analytics (EzUA) Configuration
+ezua:
+  virtualService:
+    # The endpoint where the service will be accessible (e.g., "service-name.${DOMAIN_NAME}")
+    endpoint: "synth-gen-ft.${DOMAIN_NAME}"
+    # The Istio Gateway to use (e.g., "istio-system/ezaf-gateway")
+    istioGateway: "istio-system/ezaf-gateway"

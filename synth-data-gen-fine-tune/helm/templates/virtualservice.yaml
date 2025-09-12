@@ -1,0 +1,24 @@
+{{- if .Values.ezua.virtualService.istioGateway }}
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: {{ printf "%s-%s-vs" .Release.Name .Chart.Name }}
+  namespace: {{ .Release.Namespace }}
+
+spec:
+  # EzUA Gateway Configuration
+  gateways:
+    - {{ .Values.ezua.virtualService.istioGateway | required ".Values.ezua.virtualService.istioGateway is required!" }}
+  hosts:
+    - {{ .Values.ezua.virtualService.endpoint | required ".Values.ezua.virtualService.endpoint is required!" }}
+  http:
+    - match:
+        - uri:
+            prefix: /
+      route:
+        - destination:
+            host: {{ .Release.Name }}-app.{{ .Release.Namespace }}.svc.cluster.local
+            port:
+              number: {{ .Values.app.servicePort }}
+{{- end }}
