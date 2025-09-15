@@ -1,4 +1,11 @@
 # PCAI Use Case Demo: AI Support Assistant
+
+| Owner                       | Name                              | Email                                     |
+| ----------------------------|-----------------------------------|-------------------------------------------|
+| Use Case Owner              | Dale Georg                        | dale.georg@hpe.com                        |
+| PCAI Deployment Owner       | Dale Georg                        | dale.georg@hpe.com                        |
+
+
 ## Value Proposition
 
 Technical support requests filed by end users can be broadly classified into two groups:
