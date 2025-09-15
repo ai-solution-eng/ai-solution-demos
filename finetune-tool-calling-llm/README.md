@@ -1,5 +1,10 @@
 # Finetune a tool calling LLM on PCAI using NVIDIA NeMo Microservices
 
+| Owner                       | Name                                | Email                                                        |
+| ----------------------------|-------------------------------------|--------------------------------------------------------------|
+| Use Case Owner              | Daniel Cao                          | daniel.cao@hpe.com                                           |
+| PCAI Deployment Owner       | Daniel Cao                          | daniel.cao@hpe.com                                           |
+
 **Objectives:**
 - Validate NVIDIA NeMo Microservices works on PCAI
 

@@ -14,13 +14,12 @@ A gen-AI powered predictive maintenance application built with Streamlit, featur
 
 ```
 .
-├── artifacts/
-│   ├── embeddings.npy              # Pre-computed sentence embeddings for resolution prediction
-│   └── label_encoder.pkl           # Sklearn label encoder for ticket classification (9 classes)
+├── pcai-custom-framework/
+│   ├── logo.jpg                    # App logo for PCAI deployment
+│   └── predictive-maintenance-0.1.8.tgz  # Custom packaged Helm chart for deployment on PCAI via Import Framework
 ├── assets/
 │   ├── HPE-logo-2025.png          # HPE logo for UI branding
-│   ├── logo.png                   # App logo for PCAI deployment
-│   └── predictive-maintenance-0.1.8.tgz  # Packaged Helm chart for deployment
+│   └── Overview.png               # Overview of the solution demo   
 ├── data/
 │   ├── test-image.jpg             # Sample network equipment image for OCR testing
 │   └── test-tickets.csv           # Sample ticket dataset for testing and development

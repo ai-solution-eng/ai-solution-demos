@@ -1,5 +1,10 @@
 # Genome Sequencing Acceleration with NVIDIA Parabricks on PCAI
 
+| Owner                       | Name                              | Email                                     |
+| ----------------------------|-----------------------------------|-------------------------------------------|
+| Use Case Owner              | Chandan Madhani                   | chandan.madhani@hpe.com                   |
+| PCAI Deployment Owner       | Chandan Madhani                   | chandan.madhani@hpe.com                   |
+
 ## 🧩 Problem Statement
 
 Traditional genome sequencing pipelines—covering alignment, sorting, recalibration, and variant calling—are CPU-bound and highly time-consuming, often taking **18–48 hours or more**. This delays critical research and diagnosis. Moreover, bioinformaticians often struggle with manual setup across Kubernetes and Slurm HPC environments.

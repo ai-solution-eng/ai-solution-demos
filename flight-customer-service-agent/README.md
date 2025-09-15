@@ -1,5 +1,10 @@
 # Langflow Agent Flight Assistant Demo
 
+| Owner                       | Name                                | Email                                                        |
+| ----------------------------|-------------------------------------|--------------------------------------------------------------|
+| Use Case Owner              | Alejandro Morales                   | alejandro.morales-martinez@hpe.com                           |
+| PCAI Deployment Owner       | Alejandro Morales                   | alejandro.morales-martinez@hpe.com                           |
+
 ## Summary
 - [Demo overview video](#demo-overview-video)
 - [Langflow installation in PCAI](#langflow-installation-in-pcai)
