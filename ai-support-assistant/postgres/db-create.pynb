@@ -1,0 +1,146 @@
+import psycopg2
+from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+
+# Connection settings (adjust as needed)
+DB_HOST = "postgresql.postgresql.svc.cluster.local"
+DB_PORT = "5432"
+DB_ADMIN = "postgres"   # superuser
+DB_PASSWORD = "admin123"
+
+NEW_USER = "demo"
+NEW_USER_PASSWORD = "demo123"
+NEW_DATABASE = "supportcases"
+
+# Connect to the default 'postgres' database as superuser
+conn = psycopg2.connect(
+    dbname="postgres",
+    user=DB_ADMIN,
+    password=DB_PASSWORD,
+    host=DB_HOST,
+    port=DB_PORT
+)
+conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+cur = conn.cursor()
+
+# 1. Create user if not exists
+cur.execute(f"""
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT FROM pg_catalog.pg_roles WHERE rolname = '{NEW_USER}'
+    ) THEN
+        CREATE ROLE {NEW_USER} LOGIN PASSWORD '{NEW_USER_PASSWORD}';
+    END IF;
+END
+$$;
+""")
+
+# 2. Drop database if it exists (terminate connections first)
+cur.execute(f"SELECT 1 FROM pg_database WHERE datname = '{NEW_DATABASE}';")
+if cur.fetchone():
+    print(f"Terminating active connections to '{NEW_DATABASE}'...")
+    cur.execute(f"""
+        SELECT pg_terminate_backend(pid)
+        FROM pg_stat_activity
+        WHERE datname = '{NEW_DATABASE}'
+          AND pid <> pg_backend_pid();
+    """)
+    cur.execute(f"DROP DATABASE {NEW_DATABASE};")
+    print(f"Dropped existing database '{NEW_DATABASE}'.")
+
+# 3. Create new database owned by the new user
+cur.execute(f"CREATE DATABASE {NEW_DATABASE} OWNER {NEW_USER};")
+print(f"Database '{NEW_DATABASE}' created with owner '{NEW_USER}'.")
+
+# Switch to the new database to grant schema + default privileges
+cur.close()
+conn.close()
+
+new_conn = psycopg2.connect(
+    dbname=NEW_DATABASE,
+    user=DB_ADMIN,
+    password=DB_PASSWORD,
+    host=DB_HOST,
+    port=DB_PORT
+)
+new_conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+new_cur = new_conn.cursor()
+
+# 4. Ensure the new user has full DBO-like rights
+new_cur.execute(f"GRANT ALL PRIVILEGES ON DATABASE {NEW_DATABASE} TO {NEW_USER};")
+new_cur.execute(f"GRANT CREATE ON DATABASE {NEW_DATABASE} TO {NEW_USER};")   # allow schema creation
+new_cur.execute(f"ALTER DATABASE {NEW_DATABASE} OWNER TO {NEW_USER};")
+new_cur.execute(f"GRANT ALL ON SCHEMA public TO {NEW_USER};")
+new_cur.execute(f"ALTER SCHEMA public OWNER TO {NEW_USER};")
+
+# Default privileges for public schema
+new_cur.execute(f"""
+ALTER DEFAULT PRIVILEGES FOR ROLE {NEW_USER} IN SCHEMA public
+GRANT ALL ON TABLES TO {NEW_USER};
+""")
+new_cur.execute(f"""
+ALTER DEFAULT PRIVILEGES FOR ROLE {NEW_USER} IN SCHEMA public
+GRANT ALL ON SEQUENCES TO {NEW_USER};
+""")
+new_cur.execute(f"""
+ALTER DEFAULT PRIVILEGES FOR ROLE {NEW_USER} IN SCHEMA public
+GRANT ALL ON FUNCTIONS TO {NEW_USER};
+""")
+
+# Default privileges for ANY schema created by this user
+new_cur.execute(f"""
+ALTER DEFAULT PRIVILEGES FOR ROLE {NEW_USER}
+GRANT ALL ON TABLES TO {NEW_USER};
+""")
+new_cur.execute(f"""
+ALTER DEFAULT PRIVILEGES FOR ROLE {NEW_USER}
+GRANT ALL ON SEQUENCES TO {NEW_USER};
+""")
+new_cur.execute(f"""
+ALTER DEFAULT PRIVILEGES FOR ROLE {NEW_USER}
+GRANT ALL ON FUNCTIONS TO {NEW_USER};
+""")
+
+print(f"User '{NEW_USER}' is now full DBO for database '{NEW_DATABASE}', including new schemas they create.")
+
+# Cleanup
+new_cur.close()
+new_conn.close()
+
+# --- Create tables ---
+print("Creating tables...")
+
+# Connect as the new user to the database
+user_conn = psycopg2.connect(
+    dbname=NEW_DATABASE,
+    user=NEW_USER,
+    password=NEW_USER_PASSWORD,
+    host=DB_HOST,
+    port=DB_PORT
+)
+user_conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+user_cur = user_conn.cursor()
+
+# Create 'cases' table
+user_cur.execute("""
+CREATE TABLE IF NOT EXISTS cases (
+    id SERIAL PRIMARY KEY,
+    subject TEXT
+);
+""")
+
+# Create 'msgs' table with foreign key to 'cases.id'
+user_cur.execute("""
+CREATE TABLE IF NOT EXISTS msgs (
+    id SERIAL PRIMARY KEY,
+    case_id INTEGER NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+    msg TEXT,
+    msg_type VARCHAR(100)
+);
+""")
+
+print("Tables 'cases' and 'msgs' created successfully.")
+
+# Cleanup
+user_cur.close()
+user_conn.close()

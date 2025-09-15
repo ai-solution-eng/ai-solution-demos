@@ -16,7 +16,7 @@ const host = '0.0.0.0'
 const poolConfig = {
   user: process.env.MOCK_SUPPORT_APP_DBUSER || "demo",
   host: process.env.MOCK_SUPPORT_APP_DBHOST || "host.docker.internal",
-  database: process.env.MOCK_SUPPORT_APP_DBNAME || "supportCases",
+  database: process.env.MOCK_SUPPORT_APP_DBNAME || "supportcases",
   password: process.env.MOCK_SUPPORT_APP_DBPASSWORD || "demo123",
   port: process.env.MOCK_SUPPORT_APP_DBPORT || 5432
 };
