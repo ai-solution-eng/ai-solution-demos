@@ -19,7 +19,9 @@
 
 ## Description
 
-<video src="https://storage.googleapis.com/ai-solution-engineering-videos/public/AI-coding-assistant.mp4" style="width: 1024px; height: 640px;" title="Recording of the demo"></video>
+<video width="1024" height="640" controls>
+  <source src="https://storage.googleapis.com/ai-solution-engineering-videos/public/AI-coding-assistant.mp4" type="video/mp4">
+</video>
 
 ### Overview
 
