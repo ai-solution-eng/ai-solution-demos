@@ -23,6 +23,11 @@
   <source src="https://storage.googleapis.com/ai-solution-engineering-videos/public/AI-coding-assistant.mp4" type="video/mp4">
 </video>
 
+Here 
+
+https://storage.googleapis.com/ai-solution-engineering-videos/public/AI-coding-assistant.mp4" type="video/mp4
+
+
 ### Overview
 
 ## Deployment
