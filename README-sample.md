@@ -20,7 +20,7 @@
 ## Description
 
 
-[![](https://storage.googleapis.com/ai-solution-engineering-videos/public/AI-coding-assistant.mp4)](https://storage.googleapis.com/ai-solution-engineering-videos/public/AI-coding-assistant.mp4)
+<video src="https://storage.googleapis.com/ai-solution-engineering-videos/public/AI-coding-assistant.mp4" width="1024" height="640"></video>
 
 
 ### Overview
