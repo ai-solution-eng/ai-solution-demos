@@ -19,13 +19,8 @@
 
 ## Description
 
-<video width="1024" height="640" controls>
-  <source src="https://storage.googleapis.com/ai-solution-engineering-videos/public/AI-coding-assistant.mp4" type="video/mp4">
-</video>
 
-Here 
-
-https://storage.googleapis.com/ai-solution-engineering-videos/public/AI-coding-assistant.mp4
+[![](https://storage.googleapis.com/ai-solution-engineering-videos/public/AI-coding-assistant.mp4)](https://storage.googleapis.com/ai-solution-engineering-videos/public/AI-coding-assistant.mp4)
 
 
 ### Overview
