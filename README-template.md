@@ -51,6 +51,8 @@ Recordings:
 
 *List all requirements that are needed to run the demo, like expected resources (mainly the number of GPUs), conditions the environment must meet, installed components, etc...*
 
+*For each framework that needs to be installed, specify all installation parameters that are required. Screenshots during the installation process are welcome.*
+
 ### Installation and configuration
 
 *Describe how to install the demo in a PCAI unit. This could be how to import a framework, how to setup notebooks, how to download sample data, etc...*
