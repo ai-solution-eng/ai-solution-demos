@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "bar.fullname" . }}-frontend-env
+  labels:
+    {{- include "bar.frontend.labels" . | nindent 4 }}
+data:
+  # This will be injected into the container at runtime
+  # But React apps need env vars at build time, so this won't work
+  # We'll use nginx to rewrite the API calls instead
+  env.js: |
+    window.REACT_APP_API_URL = '';
