@@ -64,7 +64,6 @@ We recommend using meta-llama/Llama-3.1-8B-Instruct as a starting point, but any
 
 ### Installation and configuration
 
-*Describe how to install the demo in a PCAI unit. This could be how to import a framework, how to setup notebooks, how to download sample data, etc...*
 1. **Set up environment variables:**
 Download the provided helm chart, **bar-0.1.0.tgz**
 
