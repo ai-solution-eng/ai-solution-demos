@@ -18,9 +18,8 @@ config = load_config()
 model_name = config["classification_model"]["name"]  
 checkpoint_path = config["classification_model"]["checkpoint_path"]  
 label_encoder = joblib.load(config["classification_model"]["label_encoder"])
-tokenizer = AutoTokenizer.from_pretrained(checkpoint_path)
 model = AutoModelForSequenceClassification.from_pretrained(checkpoint_path)
-
+tokenizer = AutoTokenizer.from_pretrained(config["classification_model"]["name"])  
 
 def get_metrics(df):
     accuracy = accuracy_score(df['ticketList_causegroup'], df['prediction'])

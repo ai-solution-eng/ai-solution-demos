@@ -45,4 +45,5 @@ Thumbs.db
 
 helm-chart/
 __pycache__
-data/*
+postgresql/
+pcai-custom-framework/

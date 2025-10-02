@@ -121,7 +121,7 @@ st.markdown("""
     <h1 class="app-title">Predictive Maintenance Demo</h1>
 </div>
 """.format(
-    base64.b64encode(open("assets/HPE-logo-2025.png", "rb").read()).decode()
+    base64.b64encode(open("./assets/HPE-logo-2025.png", "rb").read()).decode()
 ), unsafe_allow_html=True)
 
 # Function to clean column names for display

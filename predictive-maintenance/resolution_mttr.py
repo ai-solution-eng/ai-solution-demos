@@ -39,7 +39,7 @@ except Exception as e:
     print("Falling back to CSV file for testing...")
     
     # Use CSV file as fallback
-    csv_path = "data/test-tickets.csv"
+    csv_path = "./data/test-tickets.csv"
     ticket_df = pd.read_csv(csv_path, low_memory=False)
     print(f"Loaded {len(ticket_df)} tickets from CSV file")
     
