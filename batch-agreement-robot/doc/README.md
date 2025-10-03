@@ -106,9 +106,15 @@ Running the demo basically consists in using the BAR application:
 ![frontend02](images/frontend02.PNG)
 ![frontend03](images/frontend03.PNG)
 
-
 ## Limitations
 
 BAR will extract the text from entire documents and add it to the prompts. This process assumes that **the documents' content fits into the model context window**.
 
 For very large files (100s of pages) and/or models with small context windows (a few thousands tokens), the analysis is expected to fail.
+
+
+## Acknowledgements
+
+The BAR application has been developed internally by Hewlett Packard Labs.
+
+BAR original GitHub repository and source code is available at https://github.hpe.com/hpe/BAR/tree/main
