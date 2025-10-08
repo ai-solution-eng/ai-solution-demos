@@ -7,6 +7,12 @@ YOLO_API_KEY = os.getenv("YOLO_API_KEY", "")
 QWEN_ENDPOINT = os.getenv("QWEN_ENDPOINT", "")
 QWEN_API_KEY = os.getenv("QWEN_API_KEY", "")
 
+# Database Configuration
+DB_URL = os.getenv("DB_URL", "")
+DB_USER = os.getenv("DB_USER", "")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+DB_NAME = os.getenv("DB_NAME", "")
+
 # Detection Classes
 TRAFFIC_CLASSES = {
     0: "person",

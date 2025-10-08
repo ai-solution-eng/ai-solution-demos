@@ -4,9 +4,9 @@
 replicaCount: 1
 
 image:
-  repository: caovd/traffic-report
+  repository: eric021122/traffic-report
   pullPolicy: IfNotPresent
-  tag: "latest"
+  tag: 1.1.1
 
 imagePullSecrets: []
 nameOverride: ""
