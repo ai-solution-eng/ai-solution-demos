@@ -145,7 +145,7 @@ Before you can analyze frames, you must configure the VLM endpoint:
 1.  Select the **Image Understanding** tab.
 2.  Upload an image file, and  configure the prompt to specify what you want the vision language model to do
     * default prompt: `Describe this image in detail. Include key objects, colors, text, and notable actions.`
-    * The best prompt to use for this [image](assets/ak47.png) is: `Is there a weapon in this image, if so describe the image.`
+    * The best prompt to use for this [image](assets/wildfire2.png) is: `Describe the scene in the photo.`
 5.  When the model completes its analysis, it will send its response to the **LLM Response** field
 
 ### Analyze an video
@@ -153,7 +153,7 @@ Before you can analyze frames, you must configure the VLM endpoint:
 1.  Select the **Video Understanding** tab.
 2.  Upload a video file, and  configure the prompt to specify what you want the vision language model to do
     * default prompt: `Did a car run a redlight in this video?`
-    * The best prompt to use for [video](assets/fmv.mp4) is: `Are there people in this full motion video?`
+    * The best prompt to use for [video](assets/fmv_clip.mp4) is: `Describe the vehicles in this video.`
 5.  When the model completes its analysis, it will send its response to the **LLM Response** field
 
 ### Analyzing a Stream
