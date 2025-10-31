@@ -44,7 +44,7 @@ WeaviateClientType = Optional[Union['WeaviateClient', 'V3Client']]
 # ================================================================
 # Unified Pipeline
 # ================================================================
-class Pipeline:
+class OpenWebUIPipeline:
     class Valves(BaseModel):
         EMBEDDING_MODEL_URL: str = Field(
             default="https://integrate.api.nvidia.com/v1",
@@ -995,4 +995,14 @@ DETAILED ANSWER:"""
             return response            
         except Exception as e:
             logger.error(f"Pipeline error: {e}", exc_info=True)
-            return f"An error occurred while processing your request: {str(e)}"  
+
+            return f"An error occurred while processing your request: {str(e)}"
+
+pipelines = [
+    {
+        "id": "rag_pipeline_with_scraper",
+        "name": "RAG Pipeline with Scraper",
+        "module": "rag_pipeline_with_scraper",
+        "class": "OpenWebUIPipeline"
+    }
+]
