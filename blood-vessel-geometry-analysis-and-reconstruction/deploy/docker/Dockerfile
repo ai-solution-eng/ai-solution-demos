@@ -52,15 +52,15 @@ RUN mkdir -p /app/.streamlit /app/.config/matplotlib && \
 # First, copy only the requirements file and install dependencies.
 # This leverages Docker's layer caching. This layer will only be rebuilt
 # if requirements.txt changes, making subsequent builds much faster.
-COPY requirements.txt ./
+COPY ../requirements.txt ./
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 # Step 6: Copy the application code into the container
 # Copy all necessary Python files and the utils directory.
-COPY app.py .
-COPY analysis_pipeline.py .
-COPY utils/ ./utils/
+COPY ../app.py .
+COPY ../analysis_pipeline.py .
+COPY ../utils/ ./utils/
 
 # Step 7: Expose the port the app runs on
 # This informs Docker that the container listens on the specified network port.

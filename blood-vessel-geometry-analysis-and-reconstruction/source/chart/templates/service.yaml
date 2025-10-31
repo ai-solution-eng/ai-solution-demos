@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vessel-reconstruction.fullname" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "vessel-reconstruction.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "vessel-reconstruction.selectorLabels" . | nindent 4 }}
+  ports:
+  - name: {{ .Values.service.name }}
+    port: {{ .Values.service.port }}
+    targetPort: {{ .Values.service.name }}
+    protocol: TCP

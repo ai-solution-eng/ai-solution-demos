@@ -1,0 +1,73 @@
+---
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fileserver
+  namespace: ${NAMESPACE} # update namespace here (ensure it has access to the specified persistentVolumeClaim.claimName)
+  labels:
+    app: fileserver
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fileserver
+  template:
+    metadata:
+      labels:
+        app: fileserver
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      containers:
+        - name: fileserver
+          image: python:3.12-alpine
+          command: ["python", "-m", "http.server", "8082", "--directory", "/mnt"]
+          ports:
+            - containerPort: 8082
+          volumeMounts:
+            - name: shared
+              mountPath: /mnt
+      volumes:
+        - name: shared
+          persistentVolumeClaim:
+            claimName: kubeflow-shared-pvc
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: fileserver-service
+  namespace: ${NAMESPACE} # update namespace here (ensure it has access to the specified persistentVolumeClaim.claimName)
+  labels:
+    app: fileserver
+spec:
+  selector:
+    app: fileserver
+  ports:
+    - name: http
+      port: 8082         # matches the containerPort
+      targetPort: 8082
+  type: ClusterIP
+---
+# VirtualService
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: fileserver-vs
+  namespace: ${NAMESPACE} # update namespace here (ensure it has access to the specified persistentVolumeClaim.claimName)
+spec:
+  hosts:
+    - fileserver.ingress.{DOMAIN} # update the domain e.g. pcai0102.ld7.hpecolo.net
+  gateways:
+    - istio-system/ezaf-gateway
+  http:
+    - match:
+        - uri:
+            prefix: /
+      route:
+        - destination:
+            host: fileserver-service.${NAMESPACE}.svc.cluster.local # update namespace here (ensure it has access to the specified persistentVolumeClaim.claimName)
+            port:
+              number: 8082
+---

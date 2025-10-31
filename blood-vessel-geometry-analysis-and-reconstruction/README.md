@@ -1,47 +1,65 @@
-# End-to-End 🩸 Automatic Vessels Geometry Analysis and 3D Reconstruction on HPE Private Cloud AI (PCAI)
+# End-to-End 🩸 Automatic Vessels Geometry Analysis and 3D Reconstruction
 
-| Owner                       | Name                                | Email                                                        |
-| ----------------------------|-------------------------------------|--------------------------------------------------------------|
+| Owner                 | Name              | Email                              |
+| ----------------------|-------------------|------------------------------------|
 | Use Case Owner              | Alejandro Morales, Francesco Caliva | alejandro.morales-martinez@hpe.com, francesco.caliva@hpe.com |
 | PCAI Deployment Owner       | Andrew Mendez, Francesco Caliva     | andrew.mendez@hpe.com, francesco.caliva@hpe.com              |
 
-**High level demo flow**
-![workflow](./images/conceptual_workflow_white.png)
+## Abstract
+
+This demo shows how to obtain **geometrical biomarkers** (e.g. cross-sectional diameters and tortuosity index) from CT exams available in Dicom format. In order to achieve this the following steps are conducted:
+
+- Automatic segmention of the aorta, right and left common iliac arteries visible in the CT scans by using Nvidia Vista 3D model.
+- Postprocessing of the segmentation output, preparing it for geometrical analysis and 3D rendering.
+- Computer vision-based vascular geometry analysis and interactive visualization of the results via a dedicated Streamlit web application.
 
 
+Video recording:
 [**Click to watch demo**](https://storage.googleapis.com/ai-solution-engineering-videos/public/Enhancing%20Healthcare%20with%20AI_%20Blood%20Vessel%20Analysis%20and%203D%20Reconstruction(1).mp4)
 
-**Intro:**
+### Overview
 
-This repository contains a Helm chart for deploying the `🩸 Blood Vessels Geometry Analysis and 3D Reconstruction` Streamlit application on HPE's Private Cloud AI (PCAI) platform.
+![workflow](./docs/images/conceptual_workflow_white.png)
 
-The application provides a complete workflow for medical imaging analysis:
 
--   **Input:** Takes 3D segmentation predictions from NVIDIA's VISTA-3D model (A model that is deployed in PCAI).
--   **Processing:** Performs 3D reconstruction of three main blood vessels, such as aorta, common right and left iliac arteries.
--   **Analysis:** Calculates key clinical geometrical markers such as maximum diameter and tortuosity index.
--   **Visualization:** Presents segmentation output overlayed to the CT, and shows 3-D rendering of the segmented blood vessels. It also shows the analysis results in an interactive Streamlit web interface for review by clinicians.
+### Workflow
 
-By deploying on PCAI, the application is automatically deployed with turn-key infrastructure for guaranteed resource allocation, persistent storage, and scalability.
+This application provides a complete workflow for medical imaging analysis:
 
-## Data Preparation:
-Let's begin by preparing the data for further analysis.
-Data preparation entails 3 steps:
-1.  **Convert** CT Dicom data to Nifti format
-2.  **Submit** the Nifti data to NVIDIA NIM Vista-3D model to achieve the blood vessels segmentation
-3.  **Post-process** the segmentation output and **convert** it to point-clouds format
+-   **Input:** It takes 3D segmentation predictions from NVIDIA's VISTA-3D model (a model that is deployed in Private Cloud AI via its Machine Learning Inference Software (MLIS)).
+-   **Processing:** It performs 3D reconstruction of three main blood vessels, such as aorta, common right and left iliac arteries.
+-   **Analysis:** It calculates key clinical geometrical markers such as maximum diameter and tortuosity index.
+-   **Visualization:** It presents segmentation output overlayed to the CT, and shows 3-D rendering of the segmented blood vessels. It also shows the analysis results in an interactive Streamlit web interface for review by clinicians.
+- **Deployment:** It deploys the application with turn-key infrastructure for guaranteed resource allocation, persistent storage, and scalability.
 
-These steps are described in details within [demo.ipynb](./demo.ipynb). 
+## Deployment
 
-Please complete data preparation as shown in [demo.ipynb](./demo.ipynb) before you proceed.
-
-## Prerequisites
+### Deployment prerequisites
 
 Before deploying this chart, you must have the following:
 
 1.  Access to an HPE Private Cloud AI (PCAI) environment.
 2.  An existing **PersistentVolumeClaim (PVC)** available in your target namespace (e.g., `kubeflow-shared-pvc`) for storing input and output data.
 3.  Deploy Nvidia Vista-3D NIM model on MLIS. Please follow instruction on [how to deploy NIM to MLIS](./docs/deploy-NIM-to-MLIS.pdf) to complete this step.
+4. A fileserver where data will be hosted for consumption by the Nvidia Vista-3D NIM model. Please adapt the example [fileserver.yaml](./deploy/config/yaml_files/fileserver.example.yaml) accordingly, and use 
+```
+kubectl apply -f fileserver.yaml
+```
+
+ to create the fileserver.
+
+### Data Preparation:
+Let's begin by preparing the data for further analysis.
+Data preparation entails 3 steps:
+1.  **Conversion** of CT Dicom data to Nifti format.
+2.  **Feeding** the Nifti data to NVIDIA NIM Vista-3D model to achieve the blood vessels segmentation.
+3.  **Post-processing** of the segmentation output and **conversion** to a point-clouds format.
+
+These steps are described in details within the [dataprep_demo.ipynb](./notebooks/dataprep_demo.ipynb) notebook. 
+
+At this point, please complete data preparation as shown in the notebook [dataprep_demo.ipynb](./notebooks/dataprep_demo.ipynb) before you proceed.
+
+
 ## Codebase Structure
 The codebase contains the application code and Dockerfile used to containerize this application. The latest docker image is available at `fcaliva/vessel-analysis-app:0.0.10`. This codebase also contains the Helm chart to deploy this application in PCAI.
 
@@ -49,15 +67,17 @@ The codebase contains the application code and Dockerfile used to containerize t
 The application is packaged as a Helm chart with the following structure:
 
 ```
-helm/
-├── Chart.yaml          # Metadata about the chart (name, version, etc.).
-├── values.yaml         # Default configuration values for the chart.
-├── templates/
-│   ├── _helpers.tpl    # Helper templates for labels and names.
-│   ├── deployment.yaml # Manages the application pod and its resources.
-│   ├── service.yaml    # Exposes the application internally within the cluster.
-│   └── virtual-service.yaml # Exposes the service externally via the Istio gateway.
-└── .helmignore         # Specifies files to ignore when packaging the chart.
+deploy
+    |
+    └─charts/
+        ├ Chart.yaml          # Metadata about the chart (name, version, etc.).
+        ├── values.yaml         # Default configuration values for the chart.
+        ├── templates/
+        │   ├── _helpers.tpl    # Helper templates for labels and names.
+        │   ├── deployment.yaml # Manages the application pod and its resources.
+        │   ├── service.yaml    # Exposes the application internally within the cluster.
+        │   └── virtual-service.yaml # Exposes the service externally via the Istio gateway.
+        └── .helmignore         # Specifies files to ignore when packaging the chart.
 ```
 
 ## Deployment Instructions
@@ -68,10 +88,10 @@ To deploy this application in PCAI, follow these steps:
     Clone this repository to your local machine.
 
 2.  **Package the Helm Chart**
-    Navigate to the `helm/` directory and use the `helm package` command. This will create a compressed `.tgz` archive of the chart.
+    Navigate to the `deploy/charts/` directory and use the `helm package` command. This will create a compressed `.tgz` archive of the chart.
     ```bash
-    cd helm/
-    helm package vessel-reconstruction/
+    cd deploy/charts
+    helm package .
     # This will create a file like vessel-reconstruction-0.1.0.tgz
     ```
 
@@ -87,33 +107,51 @@ To deploy this application in PCAI, follow these steps:
 Once the deployment is complete, the application will be accessible at the URL https://reconstruction.\${DOMAIN_NAME}, where ${DOMAIN_NAME} is the domain name PCAI is deployed with. You can find the exact link in the PCAI **Tools & Frameworks** dashboard for your deployed instance.
 
 
-## Configuration
+## Helm charts configurations
 
-The following table lists the configurable parameters of the Vessels Analysis and Reconstruction chart and their default values, as defined in `values.yaml`.
+For a full list of the configurable parameters of the Vessels Analysis and Reconstruction helm charts and their default values, as defined in `values.yaml` please refer to this [helm_chart_config.md](deploy/notebook/helm_chart_config.md) file.
 
-| Parameter | Description | Default |
-| :--- | :--- | :--- |
-| `replicaCount` | The number of application pods to run. | `1` |
-| `namespace` | The Kubernetes namespace where all resources will be deployed. Please create the namespace beforehand. | `"vessel-analysis-ns"` |
-| **HPE Ezmeral (EzUA) Settings** | | |
-| `ezua.enabled` | If `true`, an Istio VirtualService will be created to expose the app. | `true` |
-| `ezua.virtualService.endpoint` | The external hostname for the service. `\${DOMAIN_NAME}` is a placeholder for your cluster's domain. | `"reconstruction.${DOMAIN_NAME}"` |
-| `ezua.virtualService.istioGateway` | The Istio gateway to bind the VirtualService to. | `"istio-system/ezaf-gateway"` |
-| **Image Settings** | | |
-| `image.repository` | The Docker image to use for the application. | `"mendeza/vessel-analysis-app"` |
-| `image.pullPolicy` | The image pull policy. | `"IfNotPresent"` |
-| `image.tag` | The tag of the Docker image to pull. | `"0.0.1"` |
-| **Resource Settings** | | |
-| `resources.requests.cpu` | CPU requested for the pod. | `"4"` |
-| `resources.requests.memory` | Memory requested for the pod. | `"32Gi"` |
-| `resources.limits.cpu` | CPU limit for the pod. | `"4"` |
-| `resources.limits.memory` | Memory limit for the pod. | `"32Gi"` |
-| **Service Settings** | | |
-| `service.type` | The type of Kubernetes service to create. | `"ClusterIP"` |
-| `service.port` | The port the service will expose. | `8501` |
-| `service.name` | The name of the service port. | `"http-streamlit"` |
-| **Persistence Settings** | | |
-| `persistence.enabled` | If `true`, mounts a volume for persistent data. | `true` |
-| `persistence.existingClaim` | The name of the pre-existing PersistentVolumeClaim to use. | `"kubeflow-shared-pvc"` |
-| `persistence.subPath` | The sub-path within the PVC to mount into the container. | `"califra/outputs"` |
-| `persistence.mountPath` | The path inside the container where the volume will be mounted. | `"/app/outputs"` |
+
+## Running the demo
+- **Step 1:** Data preparation using [dataprep_demo.ipynb](./notebooks/dataprep_demo.ipynb) notebook
+- **Step 2:** Install the helm chart into PCAI using the Import Tools & Framework wizard. 
+
+Suggested values for *Framework details* are:
+ 
+    - **Framework Name:** Automatic Vessels Geometry Analysis and 3D Reconstruction
+    - **Description:** Obtain geometrical biomarkers (e.g. cross-sectional diameters and tortuosity index) from CT exams available in Dicom format.
+    - **Category:**  Data Science
+    - **Framework icon:** [framework icon](./hpe_2025_logo.png)
+
+Follow instructions on screen to upload the helm chart `.tgz` file, **e.g.** [vessel-reconstruction-0.1.0.tgz](deploy/charts/vessel-reconstruction-0.1.0.tgz)
+
+Specify the namespace and adjust the `values` files if need to in the following window. Be sure that the name space has access to the specified PVC.
+
+Successful import should result in a framework that appears as:
+
+![successful deployment](docs/images/successful_deployment.png)
+
+- **Step 3:** Click Open to launch the application
+
+- **Step 4:** Execute analysis
+
+    - `Select Patient` and `Select Scan` using the dedicated dropdown menus
+    - Click `Run analysis`to execute the analysis
+
+![ongoing analysis](docs/images/ongoing_analysis.png)
+
+
+- **Step 5:** Inspect results on dedicated panels:
+    - Segmentation results
+        ![segmentation results](docs/images/inspect_segmentation_results.png)
+    - Diameter across along the centerline
+        ![Diameter across along the centerline](docs/images/inspect_vessels_diameter.png)
+    - Centerline and Max diameter location
+        ![Centerline and Max diameter location](docs/images/inspect_centerline.png)
+    - 3D rendering of the vessels
+        ![3D rendering of the vessels](docs/images/inspect_3d_render.png)
+
+## Limitations
+
+- At the time of this writing, Nvidia Vista 3D model is not able to segment brain CT, alternative segmentation models would need to be used.
+- Currently, as described within the dataprep notebook, the application relies on finding the data within folde `/shared/califra/outputs`. This will be improved in the next iterations of the work.
