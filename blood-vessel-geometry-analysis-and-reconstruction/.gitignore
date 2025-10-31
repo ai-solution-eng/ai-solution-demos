@@ -1,3 +1,9 @@
 __pycache__/
+outputs/
 *.env
 *.pyc
+node_modules
+*.ipynb_checkpoints
+*.vite
+*.venv
+*.idea
