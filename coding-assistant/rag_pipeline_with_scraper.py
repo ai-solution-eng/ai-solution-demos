@@ -140,8 +140,7 @@ class Pipeline:
                 if cell.get('data-label') == 'Date' or 'date' in cell.get('data-col-key-value', '').lower():
                     date_text = cell.get_text(strip=True)
                     if date_text and date_text != '':
-                        metadata['date'] = date_text
-                
+                        metadata['date'] = date_text                
                 cell_text = cell.get_text(strip=True)                
                 if not metadata['date'] and re.search(r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4}', cell_text):
                     metadata['date'] = cell_text
@@ -989,5 +988,6 @@ DETAILED ANSWER:"""
         except Exception as e:
             logger.error(f"Pipeline error: {e}", exc_info=True)
             return f"An error occurred while processing your request: {str(e)}"
+
 
 
