@@ -44,7 +44,7 @@ WeaviateClientType = Optional[Union['WeaviateClient', 'V3Client']]
 # ================================================================
 # Unified Pipeline
 # ================================================================
-class OpenWebUIPipeline:
+class Pipeline:
     class Valves(BaseModel):
         EMBEDDING_MODEL_URL: str = Field(
             default="https://integrate.api.nvidia.com/v1",
@@ -1003,6 +1003,7 @@ pipelines = [
         "id": "rag_pipeline_with_scraper",
         "name": "RAG Pipeline with Scraper",
         "module": "rag_pipeline_with_scraper",
-        "class": "OpenWebUIPipeline"
+        "class": "Pipeline"
     }
 ]
+
