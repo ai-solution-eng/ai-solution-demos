@@ -988,6 +988,6 @@ DETAILED ANSWER:"""
             return response            
         except Exception as e:
             logger.error(f"Pipeline error: {e}", exc_info=True)
-
             return f"An error occurred while processing your request: {str(e)}"
+
 
