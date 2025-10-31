@@ -945,14 +945,7 @@ class Pipeline:
         except Exception as e:
             return f"Error: {e}"
 
-    def pipes(self) -> List[dict]:
-        return [
-            {
-                "id": "rag.documentation",
-                "name": "RAG Documentation"
-            }
-        ]
-    
+
     def pipe(self, user_message: str, model_id: str, messages: List[dict], body: dict) -> Union[str, Generator, Iterator]:
         logger.info(f"pipe:{__name__}")
         logger.info(f"User message: {user_message}")
@@ -997,13 +990,4 @@ DETAILED ANSWER:"""
             logger.error(f"Pipeline error: {e}", exc_info=True)
 
             return f"An error occurred while processing your request: {str(e)}"
-
-pipelines = [
-    {
-        "id": "rag_pipeline_with_scraper",
-        "name": "RAG Pipeline with Scraper",
-        "module": "rag_pipeline_with_scraper",
-        "class": "Pipeline"
-    }
-]
 
