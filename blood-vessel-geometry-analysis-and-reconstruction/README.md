@@ -109,7 +109,7 @@ Once the deployment is complete, the application will be accessible at the URL h
 
 ## Helm charts configurations
 
-For a full list of the configurable parameters of the Vessels Analysis and Reconstruction helm charts and their default values, as defined in `values.yaml` please refer to this [helm_chart_config.md](deploy/notebook/helm_chart_config.md) file.
+For a full list of the configurable parameters of the Vessels Analysis and Reconstruction helm charts and their default values, as defined in `values.yaml` please refer to this [helm_chart_config.md](docs/helm_chart_config.md) file.
 
 
 ## Running the demo
@@ -154,4 +154,4 @@ Successful import should result in a framework that appears as:
 ## Limitations
 
 - At the time of this writing, Nvidia Vista 3D model is not able to segment brain CT, alternative segmentation models would need to be used.
-- Currently, as described within the dataprep notebook, the application relies on finding the data within folde `/shared/califra/outputs`. This will be improved in the next iterations of the work.
+- Currently, as described within the dataprep notebook, the application relies on finding the data within folder `/shared/califra/outputs`. This will be improved in the next iterations of the work.
