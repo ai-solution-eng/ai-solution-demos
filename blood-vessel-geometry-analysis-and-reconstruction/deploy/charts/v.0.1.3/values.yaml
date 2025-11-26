@@ -5,8 +5,11 @@
 # The number of pods to run.
 replicaCount: 1
 
+domainName: "${DOMAIN_NAME}"
+fileserver:
+  subdomain: fileserver
 # The Kubernetes namespace to deploy all resources into.
-namespace: "vessel-analysis-ns"
+# namespace: "vessel-analysis-ns"
 
 # -- HPE Ezmeral Unified Analytics (EzUA) specific settings
 # These values are used for platform integration, especially for exposing the service externally.
@@ -46,14 +49,26 @@ service:
 
 # -- Persistence configuration
 # Mounts a pre-existing PersistentVolumeClaim.
+
 persistence:
   enabled: true
-  # The name of the existing PVC to use.
-  existingClaim: "kubeflow-shared-pvc"
-  # The subpath within the PVC to mount.
+  create: true
+  name: "kubeflow-shared-pvc"
+  storageClassName: "gl4f-filesystem"
+  accessModes:
+    - ReadWriteMany
+  size: "10Gi"
   subPath: "califra/outputs"
-  # The path inside the container where the volume will be mounted.
   mountPath: "/app/outputs"
+
+# persistence:
+#   enabled: true
+#   # The name of the existing PVC to use.
+#   existingClaim: "kubeflow-shared-pvc"
+#   # The subpath within the PVC to mount.
+#   subPath: "califra/outputs"
+#   # The path inside the container where the volume will be mounted.
+#   mountPath: "/app/outputs"
 
 # -- Custom labels and annotations for pods
 podAnnotations: {}

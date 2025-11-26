@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "vessel-reconstruction.fullname" . }}
-  namespace: {{ .Values.namespace }}
+  namespace: {{ .Release.Namespace }}
   labels:
     {{- include "vessel-reconstruction.labels" . | nindent 4 }}
 spec:
@@ -46,5 +46,7 @@ spec:
       volumes:
       - name: data-storage
         persistentVolumeClaim:
-          claimName: {{ .Values.persistence.existingClaim }}
+          claimName: {{ .Values.persistence.name }}
+
+          # claimName: {{ .Values.persistence.existingClaim }}
       {{- end }}

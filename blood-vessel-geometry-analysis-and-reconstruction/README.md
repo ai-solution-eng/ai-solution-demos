@@ -41,12 +41,6 @@ Before deploying this chart, you must have the following:
 1.  Access to an HPE Private Cloud AI (PCAI) environment.
 2.  An existing **PersistentVolumeClaim (PVC)** available in your target namespace (e.g., `kubeflow-shared-pvc`) for storing input and output data.
 3.  Deploy Nvidia Vista-3D NIM model on MLIS. Please follow instruction on [how to deploy NIM to MLIS](./docs/deploy-NIM-to-MLIS.pdf) to complete this step.
-4. A fileserver where data will be hosted for consumption by the Nvidia Vista-3D NIM model. Please adapt the example [fileserver.yaml](./deploy/config/yaml_files/fileserver.example.yaml) accordingly, and use 
-```
-kubectl apply -f fileserver.yaml
-```
-
- to create the fileserver.
 
 ### Data Preparation:
 Let's begin by preparing the data for further analysis.
@@ -75,7 +69,10 @@ deploy
         ├── templates/
         │   ├── _helpers.tpl    # Helper templates for labels and names.
         │   ├── deployment.yaml # Manages the application pod and its resources.
+        │   ├── fileserver.yaml # Manages the creation of a fileserver to load data into the app
+        │   ├── pvc.yaml    # Manages creation of a PVC in the specified namespace, linking it to the shared already existing GL4FILE storage
         │   ├── service.yaml    # Exposes the application internally within the cluster.
+        |   ├── 
         │   └── virtual-service.yaml # Exposes the service externally via the Istio gateway.
         └── .helmignore         # Specifies files to ignore when packaging the chart.
 ```
@@ -88,24 +85,26 @@ To deploy this application in PCAI, follow these steps:
     Clone this repository to your local machine.
 
 2.  **Package the Helm Chart**
-    Navigate to the `deploy/charts/` directory and use the `helm package` command. This will create a compressed `.tgz` archive of the chart.
+    Navigate to the `deploy/charts/v.0.1.3` directory and use the `helm package` command. This will create a compressed `.tgz` archive of the chart.
     ```bash
     cd deploy/charts
     helm package .
-    # This will create a file like vessel-reconstruction-0.1.0.tgz
+    # This will create a file like vessel-reconstruction-0.1.3.tgz
     ```
 
 4.  **Import into PCAI**
     -   Navigate to your PCAI dashboard.
     -   Go to **Tools & Frameworks > Data Science** tab.
     -   Click **Import Framework**.
-    -   Follow the on-screen instructions, and when prompted, upload the `vessel-reconstruction-0.1.0.tgz` file you just created.
+    -   Follow the on-screen instructions, and when prompted, upload the `vessel-reconstruction-0.1.3.tgz` file you just created.
     -   During the import or deployment phase, PCAI will use the values from `values.yaml` to configure the application. 
 
 ## Accessing the Application
 
 Once the deployment is complete, the application will be accessible at the URL https://reconstruction.\${DOMAIN_NAME}, where ${DOMAIN_NAME} is the domain name PCAI is deployed with. You can find the exact link in the PCAI **Tools & Frameworks** dashboard for your deployed instance.
 
+
+Similarly the fileserver will be created at https://fileserver.\${DOMAIN_NAME}. Use that to feed data to the NVIDIA 3D VISTA model.
 
 ## Helm charts configurations
 

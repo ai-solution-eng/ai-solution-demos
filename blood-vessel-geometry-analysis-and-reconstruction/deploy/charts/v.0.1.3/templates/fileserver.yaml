@@ -1,0 +1,71 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fileserver
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: fileserver
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fileserver
+  template:
+    metadata:
+      labels:
+        app: fileserver
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      containers:
+        - name: fileserver
+          image: python:3.12-alpine
+          command: ["python", "-m", "http.server", "8082", "--directory", "/mnt"]
+          ports:
+            - containerPort: 8082
+          volumeMounts:
+            - name: shared
+              mountPath: /mnt
+      volumes:
+        - name: shared
+          persistentVolumeClaim:
+            claimName: kubeflow-shared-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fileserver-service
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: fileserver
+spec:
+  selector:
+    app: fileserver
+  ports:
+    - name: http
+      port: 8082
+      targetPort: 8082
+  type: ClusterIP
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: fileserver-vs
+  namespace: {{ .Release.Namespace }}
+spec:
+  hosts:
+    - {{ printf "%s.%s" .Values.fileserver.subdomain .Values.domainName }}
+  gateways:
+    - istio-system/ezaf-gateway
+  http:
+    - match:
+        - uri:
+            prefix: /
+      route:
+        - destination:
+            host: {{ printf "fileserver-service.%s.svc.cluster.local" .Release.Namespace }}
+            port:
+              number: 8082

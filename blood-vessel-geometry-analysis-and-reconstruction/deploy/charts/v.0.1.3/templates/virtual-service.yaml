@@ -3,7 +3,7 @@ apiVersion: networking.istio.io/v1beta1
 kind: VirtualService
 metadata:
   name: {{ include "vessel-reconstruction.fullname" . }}
-  namespace: {{ .Values.namespace }}
+  namespace: {{ .Release.Namespace }}
   labels:
     {{- include "vessel-reconstruction.labels" . | nindent 4 }}
 spec:
@@ -15,7 +15,7 @@ spec:
   - route:
     - destination:
         # Routes traffic to the templated service created by this chart.
-        host: {{ include "vessel-reconstruction.fullname" . }}.{{ .Values.namespace }}.svc.cluster.local
+        host: {{ include "vessel-reconstruction.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
         port:
           # The port number defined in the service values.
           number: {{ .Values.service.port }}
