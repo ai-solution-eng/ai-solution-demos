@@ -46,7 +46,6 @@ spec:
       volumes:
       - name: data-storage
         persistentVolumeClaim:
-          claimName: {{ .Values.persistence.name }}
-
+          claimName: {{ .Values.persistence.existingClaim }}
           # claimName: {{ .Values.persistence.existingClaim }}
       {{- end }}

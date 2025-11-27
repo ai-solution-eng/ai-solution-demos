@@ -122,9 +122,9 @@ Suggested values for *Framework details* are:
     - **Category:**  Data Science
     - **Framework icon:** [framework icon](./hpe_2025_logo.png)
 
-Follow instructions on screen to upload the helm chart `.tgz` file, **e.g.** [vessel-reconstruction-0.1.0.tgz](deploy/charts/vessel-reconstruction-0.1.0.tgz)
+Follow instructions on screen to upload the helm chart `.tgz` file, **e.g.** [vessel-reconstruction-0.1.3.tgz](deploy/charts/vessel-reconstruction-0.1.3.tgz)
 
-Specify the namespace and adjust the `values` files if need to in the following window. Be sure that the name space has access to the specified PVC.
+Specify the namespace and adjust the `values` files if need to in the following window. Be sure that the namespace has access to the specified PVC. A safe choice is to use your personal **NAMESPACE**, which you can retrieve by `kubectl get ns`.
 
 Successful import should result in a framework that appears as:
 

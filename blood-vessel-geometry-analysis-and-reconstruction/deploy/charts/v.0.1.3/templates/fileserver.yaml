@@ -2,24 +2,24 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: fileserver
+  name: {{ .Values.fileserver.subdomain }}-fileserver
   namespace: {{ .Release.Namespace }}
   labels:
-    app: fileserver
+    app: {{ .Values.fileserver.subdomain }}-fileserver
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: fileserver
+      app: {{ .Values.fileserver.subdomain }}-fileserver
   template:
     metadata:
       labels:
-        app: fileserver
+        app: {{ .Values.fileserver.subdomain }}-fileserver
       annotations:
         sidecar.istio.io/inject: "false"
     spec:
       containers:
-        - name: fileserver
+        - name: {{ .Values.fileserver.subdomain }}-fileserver
           image: python:3.12-alpine
           command: ["python", "-m", "http.server", "8082", "--directory", "/mnt"]
           ports:
@@ -36,13 +36,13 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: fileserver-service
+  name: {{ .Values.fileserver.subdomain }}-service
   namespace: {{ .Release.Namespace }}
   labels:
-    app: fileserver
+    app: {{ .Values.fileserver.subdomain }}-fileserver
 spec:
   selector:
-    app: fileserver
+    app: {{ .Values.fileserver.subdomain }}-fileserver
   ports:
     - name: http
       port: 8082
@@ -53,7 +53,7 @@ spec:
 apiVersion: networking.istio.io/v1beta1
 kind: VirtualService
 metadata:
-  name: fileserver-vs
+  name: {{ .Values.fileserver.subdomain }}-fileserver-vs
   namespace: {{ .Release.Namespace }}
 spec:
   hosts:
@@ -66,6 +66,6 @@ spec:
             prefix: /
       route:
         - destination:
-            host: {{ printf "fileserver-service.%s.svc.cluster.local" .Release.Namespace }}
+            host: {{ printf "%s-service.%s.svc.cluster.local" .Values.fileserver.subdomain .Release.Namespace }}
             port:
               number: 8082
