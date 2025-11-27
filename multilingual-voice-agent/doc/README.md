@@ -53,15 +53,13 @@ Supported languages:
 * Turkish (tr)
 * Chinese (zh)
 
-That list corresponds to languages supported by Chatterbox, Whisper can transcribe additional languages and the Qwen3 chat model can be swapped for another one if its performance for the chosen language are underwhelming.
+That list corresponds to languages supported by Chatterbox, Whisper can transcribe additional languages and the Qwen3 chat model can be swapped for another one if its performance for the chosen language is underwhelming.
 
 Recordings:
-- None for the moment
+* None for the moment
 
 
 ## Description
-
-*The two sections below are mandatory. Other sections can be added at will to accomodate the content.*
 
 ### Overview
 
@@ -161,7 +159,8 @@ Recordings:
 
 * **(Optional) Loading a CSV file as a SQL Database, and provide the chat model the ability to query it**
   * Follow this step only if you are interested in chatting with a SQL DB
-  * Using the Saudi Real Estate dataset CSV file, made available in **deploy/data/Saudi_Arabia_houses.csv**
+  * **This steps requires EzPrestoMCP** to be imported to your PCAI instance
+  * You can use the Saudi Real Estate dataset CSV file, made available in **deploy/data/Saudi_Arabia_houses.csv**
   * Make the CSV available in the right place:
     * In a notebook, go the shared folder, and, under that shared folder, create a new folder, a subfolder inside it, and upload your CSV file inside that subfolder.
     * Run chmod -R 777 on your folder. See example:
@@ -174,13 +173,34 @@ Recordings:
       * Data Dir: file:/data/shared/<YOUR FOLDER NAME>
       * File Type: CSV
     ![hive_connection](images/hive_connection.PNG)
-
+    * Make the newly created Data Source public by clicking on the three dots, then "Change to public access:"
+    ![public_access](images/public_access.PNG)
+  * Check that the CSV data has been successfully imported:
+    * Click on "Data Catalog" -> Select your Data Source, default, then your table name should appear under the "All Datasets" section
+    ![data_catalog](images/data_catalog.PNG)
+    * Click on you table name, and you should have access to your dataset preview
+    ![data_preview](images/data_preview.PNG)
+    * Alternatively, you could go to Data Engineering -> Query Editor and add your dataset there in a similar fashion to run SQL queries on your data
+  * Connect Open WebUI to the EzPrestoMCP server:
+    * As an Open WebUI admin user, go to Admin Panel -> Settings -> External Tools -> Add Connection
+    * Select Type as "MCP Streamable HTTP"
+    * Copy-paste your MCP server URL in the URL field
+    * Get a JWT token to paste in the Auth API Key field. You can get a JWT Token from a notebook instance with the command **cat /etc/secrets/ezua/.auth_token**. Note that, by default, **this token is valid only for 30 minutes, so you will need to refresh it**, unless its lifetime has been increased.
+    * Fill ID, Name and Description fields however you like
+  ![mcp](images/mcp.PNG)
+  * Allow your chat model to use tools from that MCP server:
+    * If you created a new model to customize its prompt, you can go back to edit this model (Workspace -> Models -> click on the logo next to your model name) and tick your newly added tools, under the Tools section, towards the bottom of that page:
+    ![selected_tools](images/selected_tools.PNG)
+      * Adding a tool this way will ensure the custom model will always have access to that tool, and you won't have to confirm connection to that toolset when using this model
+    * If you do not want to use a custom model, you will have to click on the "Integrations" button, at the right of the "+" sign below the place where you usually type your query, then Tools -> tick your tool. A wrench icon appears once the chat model is given access to the tool: 
+    ![integration](images/integration.PNG)
+      * You will have to do this every time you start a new chat
 
 * **Run the demo**  
 
 	  
 **Notes**:
-  1. [STT transcription API not being available in the official vLLM images](https://docs.vllm.ai/en/latest/serving/openai_compatible_server/#transcriptions-api), a custom image is needed. tpomas/vllm-audio:0.11.0 has been created from vllm/vllm-openai:v0.11.0 with the addition of running pip install vllm[audio]. It is provided for convenience, but 
+  1. [STT transcription API not being available in the official vLLM images](https://docs.vllm.ai/en/latest/serving/openai_compatible_server/#transcriptions-api), a custom image is needed. tpomas/vllm-audio:0.11.0 has been created from vllm/vllm-openai:v0.11.0 with the addition of running pip install vllm[audio]. It is provided for convenience, you can build and use your own image instead.
   2. Chatterbox is neither vLLM-compatible, nor provide an Open AI API compatibility by default. tpomas/chatterbox-uv-gpu:0.0.1 has been built using "Dockerfile.uv.gpu" under the "docker" folder from the (Chatterbox TTS API GitHub repo)[https://github.com/travisvn/chatterbox-tts-api], that aims to make Chatterbox more easily deployable using Open AI API compatible endpoints.
   3. The latter two samples come from datasets that are part of the same dataset collection, called CSS10. [CSS10 GitHub repository](https://github.com/Kyubyong/css10) can be a good source to quickly find other quality audio samples for other languages (German, Spanish, Finnish, Hungarian, ...). Quality of provided voice sample is crucial to generate qualitative speech.
 
@@ -207,7 +227,11 @@ Recordings:
 * Listen to the answer:
   * Wait for the chat answer to appear.
   * If "Auto-playback response" has been left disabled, you will have to press the little "Read aloud" button below the chat response to generate the audio using the specified Chatterbox voice
+  ![read_aloud](images/read_aloud.PNG)
   * If "Auto-playback response" has been enabled, you won't have to do anything else, but audio will only start being generated once the entire chat response is generated.
+* (Optional) Check the SQL query and result:
+  * Clicking on the "1 Source" button and then on the MCP server + Tool name will give you access to the list of parameters used by the model with that tool (the SQL query) and its output
+  ![check_query](images/check_query.PNG) 
 
 * **DO NOT USE VOICE MODE**: this demo will be updated to support voice mode, and make it the default way to run it over using "Dictate". Supporting it will make getting the audio response faster, especially for long answers (see limitations for more details).
 
@@ -217,5 +241,9 @@ Recordings:
 * **This Chatterbox deployment cannot handle concurrent requests**. As a consequence:
   * It is likely to fail if multiple persons are running this demo at the same time: some persons may not get any audio output, and the Chatterbox deployment may even crash and restart (voices will have to be re-added in that case)
   * It cannot handle Open WebUI Voice Mode: Voice Mode will spilt the chat response (by punctuation, or paragraph, based on the "Response Splitting" value in admin audio setting) **while it is being generated**, and immediately send each split as an independent request to Chatterbox. Chatterbox won't have time to process the first split before receiving the second one, and will fail to process the subsequent requests as well.
-  * "Dictate" mode on the other hand will wait for the entire chat response to be generated before splitting it and sending each split one by one to Chatterbox: waiting to receive the audio for the first split before sending the second one, and so on, and so forth... Note that if there is a single split (one sentence, paragraph, or "Response Splitting" set to None), Voice Mode will work, but won't allow for faster audio response compare to "Dictate"
+  * "Dictate" mode on the other hand will wait for the entire chat response to be generated before splitting it and sending each split one by one to Chatterbox: waiting to receive the audio for the first split before sending the second one, and so on, and so forth... Note that if there is a single split (one sentence, paragraph, or "Response Splitting" set to None), Voice Mode will work, but won't allow for faster audio response compared to "Dictate"
 
+## Advice
+
+* **Test different voices using different audio samples**, quality of the audio sample is crucial to the voice created by Chatterbox.
+* While we used Qwen/Qwen3-30B-A3B-Instruct-2507-FP8 as chat model **any Open AI API compatible chat model can be used**. Ability to make tool calls is only needed for the optional component of this demo.
