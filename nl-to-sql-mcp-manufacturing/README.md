@@ -22,7 +22,7 @@ This demo shows how a NL to SQL use case can be implemented levaraging HPE PCAIs
 * MCP
 * Superset
 
-## ** Steps for installation**
+## Steps for installation
 
 ### **1. Data Source**
 
@@ -96,33 +96,35 @@ Deploy **Qwen/Qwen3-8B-Instruct** :  This model has been deployed as it has the 
 One is however independent to choose models of their preference and deploy for usage.
 
 At the end copy the Model Endpoint and the API tokens to a text file as we will need them in next steps.
+
 **2.1 Create a Model Package on HPE MLIS.**
 
 Navigate to Tools & Frameworks > HPE MLIS (in earlier version Tab Data Science)
 
-- Create a Packaged Model with:
-  - Name: qwen3-8b
-  - Registry: None
-  - Model format: Custom
-  - Image: vllm/vllm-openai:v0.9.0
-  - (for 1.9 and greater) Model category: llm
-  - (for 1.9 and greater) Enable local caching
-  - Resource Template: Custom
-  - CPU: 1-> 8
-  - Memory: 8Gi -> 32Gi
-  - GPU: 1 -> 1
-  - Advanced Environment Variables: HUGGING_FACE_HUB_TOKEN your HuggingfaceToken
-  - Arguments: --model Qwen/Qwen3-8B --enable-reasoning --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser hermes --port 8080
+Add a Packaged Model with:
+- Name: qwen3-8b
+- Registry: None
+- Model format: Custom
+- Image: vllm/vllm-openai:v0.9.0
+- (for 1.9 and greater) Model category: llm
+- (for 1.9 and greater) Enable local caching
+- Resource Template: Custom
+- CPU: 1-> 8
+- Memory: 8Gi -> 32Gi
+- GPU: 1 -> 1
+- Advanced Environment Variables: HUGGING_FACE_HUB_TOKEN your HuggingfaceToken
+- Arguments: --model Qwen/Qwen3-8B --enable-reasoning --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser hermes --port 8080
 
 **2.2 Deloy the model with HPE MLIS.**
 - Deploy the Model with Auto scaling template **fixed-1**
 
 **2.3 Create a token**
+
 Once deployed you will need to create a token. For AIE 1.9 and greater you need to head to AIE -> Gen AI -> Model Endpoints -> 3 dots at Action -> Generate API Token.
 For earlier AIE versions you need to create the API Token within MLIS.
 
 ### **3. Chat Interface**
-**3.1 Download the Open-WebUI helm-chart and the Open-WebUI logo.**
+**3.1 Download the Open-WebUI helm-chart and the Open-WebUI logo**
 
 If you already have deployed Open WebUI in the environment for a different use case, you can just reuse that.
 
@@ -198,9 +200,11 @@ Underneath Tools tick the PrestoMCP Tool and click Save&Create.
 ### **4. Dashboard**
 
 **4.1 Superset Installation**
+
 Install Superset if not yet available in your cluster. Therefore go to Administration > Tools & Frameworks. Locate Superset, select the 3 Dots and click Install.
 
 **4.2 Superset Presto Connection**
+
 Open Superset ( BI Reporting ).
 Within Superset we first need to configure the connection to Presto. 
 Under Settings select Database Connections. 
@@ -209,9 +213,11 @@ Select Presto.
 Provide the following SQL Alchemy URL: presto://ezpresto.YOURDOMAINNAME:443/cache where you need to insert the domain name of the cluster you are working on. You can take that from the URL in your brwoser, eg home.YOURDOMAINNAME
 
 **4.3 Superset Dataset Creation**
+
 Now that we have connected Presto we need to create datasets in order to build charts and Dashboards out of them. 
 
 **4.4 Superset Import Dahsboardn**
+
 Import Dashboard
 
 
