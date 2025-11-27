@@ -80,9 +80,10 @@ Recordings:
 
 ### Installation and configuration
 
-* **Import Open WebUI**:
-  * Using the latest helm chart at your dispoal in our [Frameworks](https://github.com/ai-solution-eng/frameworks/tree/main/open-webui) repo. No change in the values is needed.
-* **Deploy the three models using MLIS**:
+**1. Import Open WebUI**:
+* Using the latest helm chart at your dispoal in our [Frameworks](https://github.com/ai-solution-eng/frameworks/tree/main/open-webui) repo. No change in the values is needed.
+
+**2. Deploy the three models using MLIS**:
   
   * **Qwen/Qwen3-30B-A3B-Instruct-2507-FP8** MLIS configuration:
     * Registry: None
@@ -121,7 +122,7 @@ Recordings:
 
 
      
-* **Add voices to Chatterbox (mandatory to generate non-English speech)**
+**3. Add voices to Chatterbox (mandatory to generate non-English speech)**
   * A few minutes after Chatterbox has been deployed, you should be able to add additional voices for it, using short audio samples. Details for this procedure can be found in the [Chatterbox TTS API repo](https://github.com/travisvn/chatterbox-tts-api/blob/main/docs/MULTILINGUAL.md#2-upload-voice-with-language).
   * For convenience, we are providing the following audio samples, under the deploy/data folder **(See Note 3 for details)**:
     * ARA_NORM_0002.wav, an Arabic audio sample coming from [this Kaggle dataset](https://www.kaggle.com/datasets/haithemhermessi/arabic-speech-corpus)
@@ -134,7 +135,7 @@ Recordings:
     * Run each cell, adding a voice to Chatterbox that way is almost instantaneous
     * Voices called "arabic_speaker", "french_speaker" and "japanese_speaker" will be added to Chatterbox, and you will be able to select them when running the demo
 
-* **Connect models to Open WebUI**:
+**4. Connect models to Open WebUI**:
   * Adding connection to Qwen3-30B-A3B-Instruct-2507-FP8:
     * As an Admin user on Open WebUI, go to Admin Panel -> Settings -> Connections
 	* Add an OpenAI API connection to your Qwen MLIS deployment using its MLIS endpoints and API Token
@@ -147,7 +148,7 @@ Recordings:
     ![STT_TTS_connection](images/stt-tts_connection.PNG)
 	* Take note of the "Response Splitting" value: either "Punctuation" and "Paragraph" values are OK 
 
-* **(Recommended) Create a custom chat model using prompt engineering**:
+**5. (Recommended) Create a custom chat model using prompt engineering**:
   * You may want to customize the prompt used by the chat model to avoid outputting numbers in digits (see related Chatterbox limitation)
   * Go to Workspace -> Models -> + New Model
   * Give a custom name to your new model (e.g. Voice Qwen) and select Qwen/Qwen3-30B-A3B-Instruct-2507-FP8 as your Base Model
@@ -157,7 +158,7 @@ Recordings:
   ![custom_prompt](images/custom_model_prompt.PNG)
   * Click on the "Save&Create" button
 
-* **(Optional) Loading a CSV file as a SQL Database, and provide the chat model the ability to query it**
+**6. (Optional) Loading a CSV file as a SQL Database, and provide the chat model the ability to query it**
   * Follow this step only if you are interested in chatting with a SQL DB
   * **This steps requires EzPrestoMCP** to be imported to your PCAI instance
   * You can use the Saudi Real Estate dataset CSV file, made available in **deploy/data/Saudi_Arabia_houses.csv**
@@ -170,7 +171,7 @@ Recordings:
     * Select Hive, and fill the following information:
       * Name: Any name you want (e.g. realestate)
       * Hive Metastore: Discovery
-      * Data Dir: file:/data/shared/<YOUR FOLDER NAME>
+      * Data Dir: file:/data/shared/YOUR FOLDER NAME
       * File Type: CSV
     ![hive_connection](images/hive_connection.PNG)
     * Make the newly created Data Source public by clicking on the three dots, then "Change to public access:"
@@ -196,7 +197,7 @@ Recordings:
     ![integration](images/integration.PNG)
       * You will have to do this every time you start a new chat
 
-* **Run the demo**  
+**7. Run the demo**  
 
 	  
 **Notes**:
@@ -206,33 +207,34 @@ Recordings:
 
 ## Running the demo
 
-* Go to Open WebUI, and select Qwen/Qwen3-30B-A3B-Instruct-2507-FP8 (or your model with custom prompt) as your chat model
-* To customize the language in which whisper will transcribe your speech, and the chatterbox voices:
-  * Go to your user settings -> Audio
-  * STT Settings -> Language dictates the whisper language. Expected value is the language two-letter code, defaults to "en" for "English". Provided example is "ar" for "Arabic"
-  * TTS Settings -> Set Voice refers to the Chatterbox voice to use. The list of available voices will NOT be displayed, but you can write down the name of the voice you want to use. If no voice is found with that name, Chatterbox will default to the Alloy English voice.
-* Relevant options to enable/leave disabled:
-  * Enabling "Instant Auto-Send After Voice Transcription" will automatically send your query to the chat model once it's transcribed by Whisper when using the "Dictate" button. It has no effect when using the "Voice mode" button.
-  * Enabling "Auto-playback response" will automatically send the chat response to Chatterbox and play the audio once it is ready. It has no effect when using the "Voice mode" button.
+1. **Go to Open WebUI and select your model with custom prompt** (or Qwen/Qwen3-30B-A3B-Instruct-2507-FP8 if you didn't customize the prompt)
+2. **Select the language for Whisper, and the voice for Chatterbox**:
+    * Go to your user settings -> Audio
+    * STT Settings -> Language dictates the Whisper language. Expected value is the language two-letter code, defaults to "en" for "English". Provided example is "ar" for "Arabic". See "Supported Languages" at the top of this page if you have a doubt.
+    * TTS Settings -> Set Voice refers to the Chatterbox voice to use. The list of available voices will NOT be displayed, but you can write down the name of the voice you want to use. If no voice is found with that name, Chatterbox will default to the Alloy English voice.
+3. **Note these relevant options**:
+    * Enabling "Instant Auto-Send After Voice Transcription" will automatically send your query to the chat model once it's transcribed by Whisper when using the "Dictate" button. It has no effect when using the "Voice mode" button.
+    * Enabling "Auto-playback response" will automatically send the chat response to Chatterbox and play the audio once it is ready. It has no effect when using the "Voice mode" button.
 ![user_settings](images/user_settings.PNG)
-* Ask your question to the chat model:
-  * Click on "New Chat", and then the second button on the right, "Dictate"
+4. **Ask your question to the chat model**:
+    * Click on "New Chat", and then the second button on the right, "Dictate"
 ![dictate_button](images/dictate_button.PNG)
-  * Allow Open WebUI to access your mic if prompted
-  * Ask your question verbally
-  * Click on the right tick button when you are done. Your speech will be send to whisper for transcription.
-* Check the transcription:
-  * If "Instant Auto-Send After Voice Transcription" has been left disabled, transcription will appear where you usually type your queries. You can review the transcription and decide to erase it, edit it, or send it. It is no different than if you had typed this transcription yourself.
-  * If "Instant Auto-Send After Voice Transcription" has been enabled, transcription will immediately be send to the chat model, as if you typed your question and pressed enter.
-* Listen to the answer:
-  * Wait for the chat answer to appear.
-  * If "Auto-playback response" has been left disabled, you will have to press the little "Read aloud" button below the chat response to generate the audio using the specified Chatterbox voice
-  ![read_aloud](images/read_aloud.PNG)
-  * If "Auto-playback response" has been enabled, you won't have to do anything else, but audio will only start being generated once the entire chat response is generated.
-* (Optional) Check the SQL query and result:
-  * Clicking on the "1 Source" button and then on the MCP server + Tool name will give you access to the list of parameters used by the model with that tool (the SQL query) and its output
+    * Allow Open WebUI to access your mic if prompted
+    * Ask your question verbally
+    * Click on the right tick button when you are done. Your speech will be send to whisper for transcription.
+5. **Check the transcription**:
+    * If "Instant Auto-Send After Voice Transcription" has been left disabled, transcription will appear where you usually type your queries. You can review the transcription and decide to erase it, edit it, or send it. It is no different than if you had typed this transcription yourself.
+    * If "Instant Auto-Send After Voice Transcription" has been enabled, transcription will immediately be send to the chat model, as if you typed your question and pressed enter.
+6. **Listen to the answer**:
+    * Wait for the chat answer to appear.
+    * If "Auto-playback response" has been left disabled, you will have to press the little "Read aloud" button below the chat response to generate the audio using the specified Chatterbox voice
+    ![read_aloud](images/read_aloud.PNG)
+    * If "Auto-playback response" has been enabled, you won't have to do anything else, but audio will only start being generated once the entire chat response is generated.
+7. **(Optional) Check the SQL query and result**:
+    * Clicking on the "1 Source" button and then on the MCP server + Tool name will give you access to the list of parameters used by the model with that tool (the SQL query) and its output
   ![check_query](images/check_query.PNG) 
 
+**Note:**
 * **DO NOT USE VOICE MODE**: this demo will be updated to support voice mode, and make it the default way to run it over using "Dictate". Supporting it will make getting the audio response faster, especially for long answers (see limitations for more details).
 
 ## Limitations
@@ -247,3 +249,4 @@ Recordings:
 
 * **Test different voices using different audio samples**, quality of the audio sample is crucial to the voice created by Chatterbox.
 * While we used Qwen/Qwen3-30B-A3B-Instruct-2507-FP8 as chat model **any Open AI API compatible chat model can be used**. Ability to make tool calls is only needed for the optional component of this demo.
+
