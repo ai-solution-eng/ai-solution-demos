@@ -5,6 +5,10 @@
 | Use Case Owner              | Isabelle Steinhauser              | isabelle.steinhauser@hpe.com              |
 | PCAI Deployment Owner       | Isabelle Steinhauser              | isabelle.steinhauser@hpe.com              |
 
+## Abstract
+
+This demo shows how a NL to SQL use case can be implemented levaraging HPE PCAIs capbalities to connect a datasource, deploy a model, Presto MCP server and build a Dashboard while using a manufactruing example dataset.
+
 #### This repository contains steps for deployment of an NLtoSQL use case leveraging MCP in the example of manufacturing industry on AIE software on a PCAI System. The demo can be easily adapted for another industry by swapping the dataset.
 
 ## **Demo overview video**
@@ -12,13 +16,11 @@
 
 ## **Tools and frameworks used:**
 
-**1. Presto**
-
-**2. HPE MLIS**
-
-**3. Open-WebUI**
-
-**4. Superset**
+* Presto
+* HPE MLIS
+* Open-WebUI
+* MCP
+* Superset
 
 ## ** Steps for installation**
 
@@ -26,7 +28,7 @@
 
 To connect a datasource to HPEs PCAI we first need to create one. 
 
-**1. Deploy Database**
+**1.1 Deploy Database**
 
 If you already have a DB available outside of PCAI or also within your PCAI you can import the .db file there.
 If not follow the steps below to import a Postgres into your environment.
@@ -56,15 +58,15 @@ If not follow the steps below to import a Postgres into your environment.
 If you want to define a custom password for the admin user define that ib line 38 postgresPassword
 - Submit
 
-**2. Load db file**
+**1.2 Load db file**
 
-You can use the .db file in this folder to load into a Database. If you care to adapt the data for example to a different industry or specific locations take a look at create_manufacturing_data.py script and adapt. After execution you have a .db file you can use as well for the following steps.
+If you care to adapt the data for example to a different industry or specific locations take a look at create_manufacturing_data.py script and adapt before executing. Execute the create_manufacturing_data.py script with python create_manufacturing_data.py . After execution you have a .db file you can use as for the following steps.
 
 Open your Jupyter Notebook server and upload the .db file and the loaddata.py. You will need to add the password you provided when Importing Postgres to line 9. of loaddata.py Also be aware if you adapt the db_name in line 13 you will need to change in the step of Connect Database to AIE in the URL manufacturing to whatever you decide for as a dbname.
 
 When you have uploaded those to files open a terminal in the JupyterNotebook Server. Execute ls to make sure you can see both files at this location. Install the library psycopg2 via pip installpsycopg2 and then execute the loaddata.py with python loaddata.py
 
-**3. Connect Database to AIE**
+**1.3 Connect Database to AIE**
 
 - Login into AIE software stack.
 - Navigate to **Data Engineering > Data Sources**
@@ -78,7 +80,7 @@ When you have uploaded those to files open a terminal in the JupyterNotebook Ser
   Click on PostgreSQl Advanced Settings
   Case Insensitive Name Matching: Tick
 
-**4. Explore the Data Catalog**
+**1.4 Explore the Data Catalog**
 
 Once the Connection is made you can explore the available data via the Data Catalog. 
 
@@ -89,13 +91,12 @@ Once the Connection is made you can explore the available data via the Data Cata
 - Click **Data Preview** to get an overview of the data.
 
 ### **2. Model Deployment**
-**3. Model deployment on HPE MLIS.**
-
-1. Deploy **Qwen/Qwen3-8B-Instruct** :  This model has been deployed as it has the capabilities of **chat**, and good experience on working with the Presto MCP feature, especially compared with LLama 3.1 8B Instruct. 
+Deploy **Qwen/Qwen3-8B-Instruct** :  This model has been deployed as it has the capabilities of **chat**, and good experience on working with the Presto MCP feature, especially compared with LLama 3.1 8B Instruct. 
 
 One is however independent to choose models of their preference and deploy for usage.
 
 At the end copy the Model Endpoint and the API tokens to a text file as we will need them in next steps.
+**2.1 Create a Model Package on HPE MLIS.**
 
 Navigate to Tools & Frameworks > HPE MLIS (in earlier version Tab Data Science)
 
@@ -113,13 +114,15 @@ Navigate to Tools & Frameworks > HPE MLIS (in earlier version Tab Data Science)
   - Advanced Environment Variables: HUGGING_FACE_HUB_TOKEN your HuggingfaceToken
   - Arguments: --model Qwen/Qwen3-8B --enable-reasoning --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser hermes --port 8080
 
+**2.2 Deloy the model with HPE MLIS.**
 - Deploy the Model with Auto scaling template **fixed-1**
 
+**2.3 Create a token**
 Once deployed you will need to create a token. For AIE 1.9 and greater you need to head to AIE -> Gen AI -> Model Endpoints -> 3 dots at Action -> Generate API Token.
 For earlier AIE versions you need to create the API Token within MLIS.
 
 ### **3. Chat Interface**
-**1. Download the Open-WebUI helm-chart and the Open-WebUI logo.**
+**3.1 Download the Open-WebUI helm-chart and the Open-WebUI logo.**
 
 If you already have deployed Open WebUI in the environment for a different use case, you can just reuse that.
 
@@ -127,7 +130,7 @@ If you already have deployed Open WebUI in the environment for a different use c
 
 [open-webui-logo.png](https://github.com/ai-solution-eng/frameworks/blob/main/open-webui/logo.png)
 
-**2. Import the framework into AIE stack on PCAI system.**
+**3.2 Import the framework into AIE stack on PCAI system.**
 
 - Login into AIE software stack.
 - Navigate to **Tools & Frameworks.**
@@ -158,7 +161,8 @@ When you see the values yaml in the wizard, take a moment to examine how you can
 - Submit
 
 Once deployed yous hould be able to sign in leveraging Single Sign On.
-**4. Open-WebUI Settings.**
+
+**3.3 Open-WebUI Settings.**
 
 We need to connect Open WebUI to our model deployed earlier in MLIS.
 
@@ -193,10 +197,10 @@ Underneath Tools tick the PrestoMCP Tool and click Save&Create.
 
 ### **4. Dashboard**
 
-**1. Superset Installation**
+**4.1 Superset Installation**
 Install Superset if not yet available in your cluster. Therefore go to Administration > Tools & Frameworks. Locate Superset, select the 3 Dots and click Install.
 
-**2. Superset Presto Connection**
+**4.2 Superset Presto Connection**
 Open Superset ( BI Reporting ).
 Within Superset we first need to configure the connection to Presto. 
 Under Settings select Database Connections. 
@@ -204,10 +208,10 @@ Add a new Database by clicking + Database on the top right.
 Select Presto.
 Provide the following SQL Alchemy URL: presto://ezpresto.YOURDOMAINNAME:443/cache where you need to insert the domain name of the cluster you are working on. You can take that from the URL in your brwoser, eg home.YOURDOMAINNAME
 
-**3. Superset Dataset Creation**
+**4.3 Superset Dataset Creation**
 Now that we have connected Presto we need to create datasets in order to build charts and Dashboards out of them. 
 
-**4. Superset Import Dahsboardn**
+**4.4 Superset Import Dahsboardn**
 Import Dashboard
 
 
