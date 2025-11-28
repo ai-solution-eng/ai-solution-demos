@@ -63,12 +63,37 @@ Recordings:
 
 ### Overview
 
-*Describe the demo here, trying to be specific and detailed. At least one general diagram is mandatory and should depict all actors/components/entities that participate to the demo. Looking at this diagram the audience should be able to understand the demo.*
+The demo relies on Whisper to transcribe the demo user queries into text, a standard chat model (Qwen3-30B-A3B-Instruct-2507-FP8) for interpreting the queries and respond to them, and Chatterbox TTS to generate an oral response from the text output. Those three models need to be deployed to MLIS, and the demo user is expected to connect them to Open WebUI to interact with them.
+
+Additionally, if the demo needs to be run in a non-english language, an audio speech sample file in that language must be passed to Chatterbox to make this voice available for the demo. Details are provided in the "Installation and configuration section" of this readme.
+
+Optional demo part involves uploading a CSV file to PCAI shared storage, creating a Hive Data Source from it, connecting Ez Presto MCP server to Open WebUI, and allowing the chat model to use tools from that MCP server to enable the chat model to leverage data from that CSV file. 
+
+#### Architecture Diagram
+![architecture](images/architecture.PNG)
 
 ### Workflow
 
-*Describe the workflow of the demo from an execution standpoint. Highlight any source of data, any processing in between and any place where the data will land in its final form. Also describe each component and the role/transformation it has/does. At least one diagram is mandatory and keep in mind that these could be shown to customers so keep it clear.*
+#### Basic Demo Workflow
 
+The actual demo workflow is quite simple, go to Open WebUI, set your user settings to:
+* Have Whisper transcribes your questions in the language you plan to speak
+* Chose the Chatterbox voice you want to listen to when the response is generated
+* **This assumes that a voice in the language you want to get an answer in has been created by Chatterbox during demo setup**
+
+After that, if you are not opting for the optional "Chat with SQL Data" component of this demo, you are free to use Open WebUI as usual, with the addition of qualitative and multilingual STT and TTS.
+
+![workflow1](images/workflow1.PNG)
+
+#### Demo Workflow with optional SQL Data
+
+If you are opting for the optional "Chat with SQL Data" component of this demo, a few things change:
+* Make sure that the JWT Token used for connecting to the MCP server has not expired, refresh it otherwise (requires Open WebUI admin rights)
+* You are expected to ask questions related to your data
+
+It is otherwise identical to chatting with access to SQL data.
+
+![workflow2](images/workflow2.PNG)
 
 ## Deployment
 
@@ -249,4 +274,5 @@ Recordings:
 
 * **Test different voices using different audio samples**, quality of the audio sample is crucial to the voice created by Chatterbox.
 * While we used Qwen/Qwen3-30B-A3B-Instruct-2507-FP8 as chat model **any Open AI API compatible chat model can be used**. Ability to make tool calls is only needed for the optional component of this demo.
+
 
