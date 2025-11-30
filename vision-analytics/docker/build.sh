@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Define variables
-IMAGE_NAME="mendeza/vision_analytics_demo"
-IMAGE_TAG="0.0.1"
+IMAGE_NAME="erdincka/vision_analytics_demo"
+IMAGE_TAG="0.0.2"
 PLATFORM="linux/amd64"
 
 # Ensure Docker Buildx is ready

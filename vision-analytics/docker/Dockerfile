@@ -15,29 +15,9 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Manually install Python dependencies (no requirements.txt)
-RUN pip install --no-cache-dir \
-    gradio \
-    gradio_client \
-    fastapi \
-    uvicorn \
-    starlette \
-    python-multipart \
-    pydantic \
-    pandas \
-    opencv-python-headless \
-    numpy \
-    openai \
-    pillow \
-    ffmpy \
-    pydub \
-    markdown-it-py \
-    mdurl \
-    httpx \
-    requests \
-    tqdm \
-    python-dateutil \
-    PyYAML
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy app code
 COPY . /app
@@ -45,6 +25,12 @@ COPY . /app
 # Expose default Gradio port
 EXPOSE 7860
 
-# Entry point
-CMD ["python", "app.py"]
+# Set Gradio environment variables
+ENV GRADIO_SERVER_NAME="0.0.0.0"
+ENV GRADIO_SERVER_PORT="7860"
+ENV GRADIO_ANALYTICS_ENABLED="False"
+ENV HF_HUB_DISABLE_TELEMETRY="1"
+
+# Entry point with Gradio hot reload
+CMD ["gradio", "app.py"]
 
