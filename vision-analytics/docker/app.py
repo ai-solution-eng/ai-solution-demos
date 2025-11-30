@@ -122,6 +122,20 @@ def call_vision_language_model(image_base64: str, prompt: str = "Describe this i
 # ==================================
 DEFAULT_IMAGE_PROMPT = "Describe this image in detail. Include key objects, colors, text, and notable actions."
 
+def load_image_from_explorer(file_list):
+    """Load an image from a file path selected in FileExplorer."""
+    if not file_list:
+        return None
+    # Gradio FileExplorer returns a list of paths (even for single selection)
+    path = file_list[0] if isinstance(file_list, list) else file_list
+    try:
+        # Open and convert to RGB (numpy array)
+        img = Image.open(path).convert('RGB')
+        return np.array(img)
+    except Exception as e:
+        logging.error(f"Error loading file from explorer {path}: {e}")
+        return None
+
 def analyze_uploaded_image(image_np: Optional[np.ndarray], prompt: str) -> str:
     if image_np is None:
         return "Please upload an image first."
@@ -303,7 +317,7 @@ DEFAULT_SUMMARY_PROMPT = (
 )
 
 def build_ui():
-    with gr.Blocks(title="Visual Analytics Studio • Powered by HPE Private Cloud AI (PCAI)") as demo:
+    with gr.Blocks(title="Visual Analytics Studio • Powered by HPE Private Cloud AI (PCAI)", analytics_enabled=False) as demo:
         gr.Markdown(
             """
 # Visual Analytics Studio — Powered by HPE Private Cloud AI (PCAI)
@@ -313,8 +327,8 @@ Deliver rich, real‑time visual understanding across **Images**, **Videos**, an
 **Recommended model:** `Qwen/Qwen2.5-VL-32B-Instruct-AWQ` deployed via PCAI for the best experience.
 
 **What you can do here**
-- **Image Understanding:** Upload an image, preview it, and analyze with your prompt.
-- **Video Understanding:** Upload a video and control extraction knobs (**num_frames**, **fps**, **max_duration**). The app passes your video to PCAI's served endpoint using a secure data URL and vLLM media I/O hints.
+- **Image Understanding:** Select/Upload an image, preview it, and analyze with your prompt.
+- **Video Understanding:** Select/Upload a video and control extraction knobs (**num_frames**, **fps**, **max_duration**). The app passes your video to PCAI's served endpoint using a secure data URL and vLLM media I/O hints.
 - **RTSP Stream:** View and analyze live network streams; capture a frame and ask questions in natural language.
 
 **Getting started**
@@ -339,20 +353,59 @@ Deliver rich, real‑time visual understanding across **Images**, **Videos**, an
 
         gr.Markdown("---")
 
-        with gr.Tabs():
-            # ---------------- Tab 1: Image Understanding (UNCHANGED)
-            with gr.TabItem("Image Understanding"):
+        with gr.Tabs(selected="imageUnderstanding"):
+            # ---------------- Tab 1: Image Understanding (UPDATED)
+            with gr.TabItem("Image Understanding", id="imageUnderstanding"):
+                # State to hold the currently selected image (numpy array)
+                current_image_state = gr.State()
+
                 with gr.Row():
-                    image_input = gr.Image(label="Upload Image", type="numpy")
-                    img_preview = gr.Image(label="Preview", interactive=False)
-                image_prompt = gr.Textbox(label="Prompt", value=DEFAULT_IMAGE_PROMPT, lines=5)
-                analyze_image_btn = gr.Button("Analyze Image")
+                    with gr.Column(scale=1):
+                        gr.Markdown("### 1. Select Input")
+                        image_upload = gr.Image(label="Upload Image", type="numpy", sources=["upload", "clipboard", "webcam"])
+                        file_explorer = gr.FileExplorer(
+                            glob="**/*.[pj][np]g",  # matches .png, .jpg, .jpeg
+                            root_dir=".",
+                            file_count="single",
+                            label="Or Select An Image File"
+                        )
+
+                    with gr.Column(scale=2):
+                        gr.Markdown("### 2. Preview")
+                        img_preview = gr.Image(label="Selected Image", interactive=False)
+
+                image_prompt = gr.Textbox(label="Prompt", value=DEFAULT_IMAGE_PROMPT, lines=3)
+                analyze_image_btn = gr.Button("Analyze Image", variant="primary")
                 image_llm_output = gr.Textbox(label="LLM Response", lines=10)
 
-                image_input.change(lambda x: x, inputs=[image_input], outputs=[img_preview])
+                # Event Wiring
+                
+                # 1. Handle Image Upload
+                image_upload.change(
+                    fn=lambda x: x,
+                    inputs=[image_upload],
+                    outputs=[current_image_state]
+                ).then(
+                    fn=lambda x: x,
+                    inputs=[current_image_state],
+                    outputs=[img_preview]
+                )
+
+                # 2. Handle File Explorer Selection
+                file_explorer.change(
+                    fn=load_image_from_explorer,
+                    inputs=[file_explorer],
+                    outputs=[current_image_state]
+                ).then(
+                    fn=lambda x: x,
+                    inputs=[current_image_state],
+                    outputs=[img_preview]
+                )
+
+                # 3. Handle Analysis
                 analyze_image_btn.click(
                     fn=analyze_uploaded_image,
-                    inputs=[image_input, image_prompt],
+                    inputs=[current_image_state, image_prompt],
                     outputs=[image_llm_output],
                 )
 
@@ -412,22 +465,14 @@ Deliver rich, real‑time visual understanding across **Images**, **Videos**, an
 
 
 # ==================================
-# FastAPI + Uvicorn server
+# Main execution
 # ==================================
-app = FastAPI()
-
-def main_server():
-    gradio_ui = build_ui()
-    global app
-    app = gr.mount_gradio_app(app, gradio_ui, path="/")
-    uvicorn_config = uvicorn.Config(app, host="0.0.0.0", port=7860, workers=1)
-    server = uvicorn.Server(uvicorn_config)
-    server.run()
-
+demo = build_ui()
 
 if __name__ == "__main__":
     if active_openai_api_key == "YOUR_API_KEY" or active_openai_api_base == "YOUR_API_BASE_URL":
         print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
         print("!!! IMPORTANT: Set OPENAI_API_KEY and OPENAI_API_BASE (or use UI config). !!!")
         print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-    main_server()
+    
+    demo.launch(server_name="0.0.0.0", server_port=7860)
