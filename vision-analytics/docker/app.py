@@ -365,7 +365,7 @@ Deliver rich, real‑time visual understanding across **Images**, **Videos**, an
                         image_upload = gr.Image(label="Upload Image", type="numpy", sources=["upload", "clipboard", "webcam"])
                         file_explorer = gr.FileExplorer(
                             glob="**/*.[pj][np]g",  # matches .png, .jpg, .jpeg
-                            root_dir=".",
+                            root_dir="./assets",
                             file_count="single",
                             label="Or Select An Image File"
                         )
