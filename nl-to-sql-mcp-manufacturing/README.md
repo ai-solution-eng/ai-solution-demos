@@ -209,6 +209,7 @@ Underneath Tools tick the PrestoMCP Tool and click Save&Create.
 **4.1 Superset Installation**
 
 Install Superset if not yet available in your cluster. Therefore go to Administration > Tools & Frameworks. Locate Superset, select the 3 Dots and click Install.
+![Install Superset](https://github.com/ai-solution-eng/ai-solution-demos/blob/nl2sql/nl-to-sql-mcp-manufacturing/images/DeploySuperset.png)
 
 **4.2 Superset Presto Connection**
 
@@ -252,15 +253,20 @@ SELECT o.shift , "sum"(m.units_produced) total_units , "sum"((m.defect_rate * m.
 WITH operator_performance AS ( SELECT m.location , o.name operator_name , "sum"(mm.units_produced) total_units , "sum"((mm.units_produced * (mm.defect_rate / DECIMAL '100.0'))) total_defects FROM ((manufacturingdb.public.operators o INNER JOIN manufacturingdb.public.machines m ON (o.machine_id = m.machine_id)) INNER JOIN manufacturingdb.public.machine_metrics mm ON (m.machine_id = mm.machine_id)) GROUP BY m.location, o.name ) SELECT location , operator_name , total_units , total_defects , "rank"() OVER (PARTITION BY location ORDER BY total_units DESC, total_defects ASC) rank FROM operator_performance ORDER BY location ASC, rank ASC
 ```
 
-**4.4 Superset Import Dahsboardn**
+**4.4 Superset Import Dahsboard**
 
-Import Dashboard
+To import the Dashboard open Superset. Naviagte to Dashboards and click import Dashboard. Use the .zip file in this folder to upload. 
 
+This will create the dashboard, the charts and the datasets for you. Again only if you created the Cached Assets with the same names as well as the Database connection to Presto. If you named something differently you will need to edit it accordingly.
+![Import Dashboard in Superset](https://github.com/ai-solution-eng/ai-solution-demos/blob/nl2sql/nl-to-sql-mcp-manufacturing/images/Superset_ImportDashboard.png)
 
+The final Dashboard should look similar to this:
 
-  
+![Final Dashboard in Superset](https://github.com/ai-solution-eng/ai-solution-demos/blob/nl2sql/nl-to-sql-mcp-manufacturing/images/Superset_FinalDashboard.png)
 
+In order to change the color of the Dashboard you can click on Edit Dashboard then Edit Properties. Play around with different Color Schemes.
 
+![Change Color Dashboard in Superset](https://github.com/ai-solution-eng/ai-solution-demos/blob/nl2sql/nl-to-sql-mcp-manufacturing/images/Superset_EditColor.png)
 
 
 
