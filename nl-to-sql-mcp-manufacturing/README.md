@@ -22,6 +22,12 @@ This demo shows how a NL to SQL use case can be implemented levaraging HPE PCAIs
 * MCP
 * Superset
 
+## Requirements
+
+The minimum OpenWebUI version needed is v0.6.31, which supports the MCP server as an external tool. In the installation steps it's pointed out how to install an OpenWebUI version that is recent enough.
+
+AIE version with MCP feature or manual install of EzPrestoMCP (not publicly available as of now, but possible to get for demo purposes, contact us for advice).
+
 ## Steps for installation
 
 ### **1. Data Source**
@@ -171,13 +177,14 @@ We need to connect Open WebUI to our model deployed earlier in MLIS.
 - Open OpenWebUI
 
 - Navigate to **Admin Panel >> Settings >> Connections**
-
+![OpenWebUI Navigate to AdminPanel](https://github.com/ai-solution-eng/ai-solution-demos/blob/nl2sql/nl-to-sql-mcp-manufacturing/images/OpenWebUI_AdminPanel.png) ![OpenWebUI Navigate to Settings](https://github.com/ai-solution-eng/ai-solution-demos/blob/nl2sql/nl-to-sql-mcp-manufacturing/images/OpenWebUI_Settings.png) ![OpenWebUI Navigate to Connections](https://github.com/ai-solution-eng/ai-solution-demos/blob/nl2sql/nl-to-sql-mcp-manufacturing/images/OpenWebUI_Connections.png)
+![OpenWebUI Add Connection to Open WebUI](https://github.com/ai-solution-eng/ai-solution-demos/blob/nl2sql/nl-to-sql-mcp-manufacturing/images/OpenWebUI_AddConnection.png)
 - Fill in the details below (Remember you saved the endpoint url and api token in the previous step):
 
   URL : Use model endpoint link from MLIS adn add /v1 to the end.
   
   Auth : Add the API Token generated from the model deployment and fill it in the API Key.
-
+![OpenWebUI Add PCAI Model to Open WebUI](https://github.com/ai-solution-eng/ai-solution-demos/blob/nl2sql/nl-to-sql-mcp-manufacturing/images/OpenWebUI_AddModel.png)
 - Save
 
 - Navigate to Admin Console >> Settings >> Connections and copy the pipeline key.
