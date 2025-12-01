@@ -91,7 +91,7 @@ If you are opting for the optional "Chat with SQL Data" component of this demo, 
 * Make sure that the JWT Token used for connecting to the MCP server has not expired, refresh it otherwise (requires Open WebUI admin rights)
 * You are expected to ask questions related to your data
 
-It is otherwise identical to chatting with access to SQL data.
+It is otherwise identical to chatting without access to SQL data.
 
 ![workflow2](images/workflow2.PNG)
 
@@ -149,11 +149,11 @@ It is otherwise identical to chatting with access to SQL data.
      
 **3. Add voices to Chatterbox (mandatory to generate non-English speech)**
   * A few minutes after Chatterbox has been deployed, you should be able to add additional voices for it, using short audio samples. Details for this procedure can be found in the [Chatterbox TTS API repo](https://github.com/travisvn/chatterbox-tts-api/blob/main/docs/MULTILINGUAL.md#2-upload-voice-with-language).
-  * For convenience, we are providing the following audio samples, under the deploy/data folder **(See Note 3 for details)**:
+  * For convenience, we are providing the following audio samples, under the [deploy/data](../deploy/data) folder **(See Note 3 for details)**:
     * ARA_NORM_0002.wav, an Arabic audio sample coming from [this Kaggle dataset](https://www.kaggle.com/datasets/haithemhermessi/arabic-speech-corpus)
     * lupincontresholme_0009.wav, a French audio sample coming from [this Kaggle dataset](https://www.kaggle.com/datasets/bryanpark/french-single-speaker-speech-dataset)
     * meian_0000.wav, a Japanese audio sample coming from [this Kaggle dataset](https://www.kaggle.com/datasets/bryanpark/japanese-single-speaker-speech-dataset)
-  * We also provide a simple notebook called **load_voices.ipynb, under deploy/notebook,** that contains the three commands used to add voices cloned from the three provided samples. In order to use it: 
+  * We also provide a simple notebook called [**load_voices.ipynb**](../deploy/notebook/load_voices.ipynb), that contains the three commands used to add voices cloned from the three provided samples. In order to use it: 
     * Start a notebook server on PCAI
     * Upload load_voices.ipynb and the three audio samples into the same folder
     * Copy and paste your Chatterbox MLIS endpoints and API Token into each of the three notebook cells
@@ -178,7 +178,7 @@ It is otherwise identical to chatting with access to SQL data.
   * Go to Workspace -> Models -> + New Model
   * Give a custom name to your new model (e.g. Voice Qwen) and select Qwen/Qwen3-30B-A3B-Instruct-2507-FP8 as your Base Model
   * In "System Prompt", give detailed instructions that the chat model should follow to avoid outputting digits in its answer.
-    * You can copy-paste the relevant passage of the prompt provided for the Saudi Real Estate example from **deploy/data/sa-houses-prompt.txt**
+    * You can copy-paste the relevant passage of the prompt provided for the Saudi Real Estate example from [**deploy/data/sa-houses-prompt.txt**](../deploy/data/sa-houses-prompt.txt)
 	* It is worth customizing that prompt, for example providing additional examples of good output vs bad output in the language you plan to run the demo with.
   ![custom_prompt](images/custom_model_prompt.PNG)
   * Click on the "Save&Create" button
@@ -186,7 +186,7 @@ It is otherwise identical to chatting with access to SQL data.
 **6. (Optional) Loading a CSV file as a SQL Database, and provide the chat model the ability to query it**
   * Follow this step only if you are interested in chatting with a SQL DB
   * **This steps requires EzPrestoMCP** to be imported to your PCAI instance
-  * You can use the Saudi Real Estate dataset CSV file, made available in **deploy/data/Saudi_Arabia_houses.csv**
+  * You can use the custom Saudi Real Estate dataset CSV file, **Saudi_Arabia_houses.csv**, made available in the [**deploy/data**](../deploy/data) folder
   * Make the CSV available in the right place:
     * In a notebook, go the shared folder, and, under that shared folder, create a new folder, a subfolder inside it, and upload your CSV file inside that subfolder.
     * Run chmod -R 777 on your folder. See example:
@@ -218,7 +218,9 @@ It is otherwise identical to chatting with access to SQL data.
     * If you created a new model to customize its prompt, you can go back to edit this model (Workspace -> Models -> click on the logo next to your model name) and tick your newly added tools, under the Tools section, towards the bottom of that page:
     ![selected_tools](images/selected_tools.PNG)
       * Adding a tool this way will ensure the custom model will always have access to that tool, and you won't have to confirm connection to that toolset when using this model
-    * If you do not want to use a custom model, you will have to click on the "Integrations" button, at the right of the "+" sign below the place where you usually type your query, then Tools -> tick your tool. A wrench icon appears once the chat model is given access to the tool: 
+    * If you have not created a new model with a custom prompt to bypass Chatterbox limitations to pronounce numbers written in digits, **you may still want a create a custom prompt to help the chat model generate better SQL queries**, to make a better use of tools available to it. In particular, describing at high level the database it has access to, and providing one or two examples of SQL queries will make it much more efficient at getting information from the provided CSV.
+      * Check the example provided in [**deploy/data/sa-houses-prompt.txt**](../deploy/data/sa-houses-prompt.txt) for guidance.
+    * If you are not using a custom model, you will have to click on the "Integrations" button, at the right of the "+" sign below the place where you usually type your query, then Tools -> tick your tool. A wrench icon appears once the chat model is given access to the tool: 
     ![integration](images/integration.PNG)
       * You will have to do this every time you start a new chat
 
@@ -227,7 +229,7 @@ It is otherwise identical to chatting with access to SQL data.
 	  
 **Notes**:
   1. [STT transcription API not being available in the official vLLM images](https://docs.vllm.ai/en/latest/serving/openai_compatible_server/#transcriptions-api), a custom image is needed. tpomas/vllm-audio:0.11.0 has been created from vllm/vllm-openai:v0.11.0 with the addition of running pip install vllm[audio]. It is provided for convenience, you can build and use your own image instead.
-  2. Chatterbox is neither vLLM-compatible, nor provide an Open AI API compatibility by default. tpomas/chatterbox-uv-gpu:0.0.1 has been built using "Dockerfile.uv.gpu" under the "docker" folder from the (Chatterbox TTS API GitHub repo)[https://github.com/travisvn/chatterbox-tts-api], that aims to make Chatterbox more easily deployable using Open AI API compatible endpoints.
+  2. Chatterbox is neither vLLM-compatible, nor provide an Open AI API compatibility by default. tpomas/chatterbox-uv-gpu:0.0.1 has been built using "Dockerfile.uv.gpu" under the "docker" folder from the [Chatterbox TTS API GitHub repo](https://github.com/travisvn/chatterbox-tts-api), that aims to make Chatterbox more easily deployable using Open AI API compatible endpoints.
   3. The latter two samples come from datasets that are part of the same dataset collection, called CSS10. [CSS10 GitHub repository](https://github.com/Kyubyong/css10) can be a good source to quickly find other quality audio samples for other languages (German, Spanish, Finnish, Hungarian, ...). Quality of provided voice sample is crucial to generate qualitative speech.
 
 ## Running the demo
@@ -272,7 +274,13 @@ It is otherwise identical to chatting with access to SQL data.
 
 ## Advice
 
-* **Test different voices using different audio samples**, quality of the audio sample is crucial to the voice created by Chatterbox.
-* While we used Qwen/Qwen3-30B-A3B-Instruct-2507-FP8 as chat model **any Open AI API compatible chat model can be used**. Ability to make tool calls is only needed for the optional component of this demo.
+
+* If Chatterbox audio output is of poor quality, **test different voices using different audio samples**, quality of the audio sample is crucial to the voice created by Chatterbox.
+* As a reminder, **Prompt Engineering** is needed here for:
+  * Avoiding the chat model to output numbers written in digits, as Chatterbox voices cannot pronounce them properly. 
+  * Help the chat model generate meaningful SQL queries to extract information from the provided dataset. **There is a world of difference between the model performance with and without customized prompt**.
+* While we used Qwen/Qwen3-30B-A3B-Instruct-2507-FP8 as chat model, **any Open AI API compatible chat model can be used**. Ability to make tool calls is only needed for the optional component of this demo.
+* Once Whisper and Chatterbox are deployed and connected to Open WebUI, you can of course use any Open WebUI feature to enrich your demo. That includes **using Open WebUI built-in RAG capabilities**. This is particularly relevant **if you want to chat with data from txt or PDF files**, and much easier to set up, compared to chatting with SQL data.
+
 
 
