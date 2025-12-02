@@ -7,20 +7,26 @@ import os
 import time
 from detection_service import DetectionService
 from analysis_service import AnalysisService
+from database_service import DatabaseService
 
 # Initialize services - will be done dynamically using session state
 # detector = None
 # analyzer = None
+# db_service = None
 
 # Global settings storage
 settings = {
     "yolo_endpoint": os.getenv("YOLO_ENDPOINT", "https://your-yolo-endpoint.com/predict"),
     "yolo_api_key": os.getenv("YOLO_API_KEY", "your-yolo-api-key-here"),
     "qwen_endpoint": os.getenv("QWEN_ENDPOINT", "https://your-qwen-endpoint.com/v1/chat/completions"),
-    "qwen_api_key": os.getenv("QWEN_API_KEY", "your-qwen-api-key-here")
+    "qwen_api_key": os.getenv("QWEN_API_KEY", "your-qwen-api-key-here"),
+    "db_url": os.getenv("DB_URL", "localhost"),
+    "db_user": os.getenv("DB_USER", "postgres"),
+    "db_password": os.getenv("DB_PASSWORD", ""),
+    "db_name": os.getenv("DB_NAME", "traffic_analysis")
 }
 
-def update_settings(yolo_endpoint, yolo_api_key, qwen_endpoint, qwen_api_key):
+def update_settings(yolo_endpoint, yolo_api_key, qwen_endpoint, qwen_api_key, db_url=None, db_user=None, db_password=None, db_name=None):
     """Update API settings and reinitialize services"""
     # Update settings
     settings["yolo_endpoint"] = yolo_endpoint
@@ -28,17 +34,35 @@ def update_settings(yolo_endpoint, yolo_api_key, qwen_endpoint, qwen_api_key):
     settings["qwen_endpoint"] = qwen_endpoint
     settings["qwen_api_key"] = qwen_api_key
     
+    # Update database settings if provided
+    if db_url is not None:
+        settings["db_url"] = db_url
+    if db_user is not None:
+        settings["db_user"] = db_user
+    if db_password is not None:
+        settings["db_password"] = db_password
+    if db_name is not None:
+        settings["db_name"] = db_name
+    
     # Update environment variables
     os.environ["YOLO_ENDPOINT"] = yolo_endpoint.replace("/predict", "") if yolo_endpoint else ""
     os.environ["YOLO_API_KEY"] = yolo_api_key if yolo_api_key else ""
     os.environ["QWEN_ENDPOINT"] = qwen_endpoint if qwen_endpoint else ""
     os.environ["QWEN_API_KEY"] = qwen_api_key if qwen_api_key else ""
     
+    # Update database environment variables
+    os.environ["DB_URL"] = settings["db_url"]
+    os.environ["DB_USER"] = settings["db_user"]
+    os.environ["DB_PASSWORD"] = settings["db_password"]
+    os.environ["DB_NAME"] = settings["db_name"]
+    
     # Force reinitialize services
     if 'detector' in st.session_state:
         del st.session_state.detector
     if 'analyzer' in st.session_state:
         del st.session_state.analyzer
+    if 'db_service' in st.session_state:
+        del st.session_state.db_service
     
     return "Settings updated successfully! You can now use the analysis features."
 
@@ -53,6 +77,12 @@ def get_analyzer():
     if 'analyzer' not in st.session_state:
         st.session_state.analyzer = AnalysisService()
     return st.session_state.analyzer
+
+def get_db_service():
+    """Get database service instance with current environment variables"""
+    if 'db_service' not in st.session_state:
+        st.session_state.db_service = DatabaseService()
+    return st.session_state.db_service
 
 def process_image(image):
     """Process single image for traffic analysis"""
@@ -306,6 +336,22 @@ def simulate_live_stream(frames, fps=2):
         yield frame
         time.sleep(1.0 / fps)  # Control playback speed
 
+def export_to_database(video_name, analysis_results):
+    """Export video analysis results to database"""
+    try:
+        # Get database service
+        db_service = get_db_service()
+        
+        # Save results to database
+        success, message = db_service.save_analysis_results(video_name, analysis_results)
+        
+        if success:
+            return True, message
+        else:
+            return False, message
+    except Exception as e:
+        return False, f"Error exporting to database: {str(e)}"
+
 # Create Streamlit interface
 def create_interface():
     # Initialize session state if needed
@@ -348,6 +394,15 @@ def create_interface():
                         st.info("🔄 Qwen API: Configured (will be tested during analysis)")
                     else:
                         st.warning("⚠️ Qwen API: Not configured")
+                    
+                    # Database connection check
+                    db_service = get_db_service()
+                    db_valid, db_msg = db_service.validate_connection()
+                    
+                    if db_valid:
+                        st.success(f"✅ Database: {db_msg}")
+                    else:
+                        st.warning(f"⚠️ Database: {db_msg}")
                         
                 except Exception as e:
                     st.error(f"Error checking API status: {str(e)}")
@@ -473,9 +528,46 @@ def create_interface():
                         st.session_state.video_results = (annotated_frames, video_results)
                         # Also store individual frame analysis results for frame-by-frame analysis
                         st.session_state.video_analysis_results = frame_results
+                        # Store video name for database export
+                        st.session_state.video_name = video_input.name
                     finally:
                         # Clean up temp file
                         os.unlink(tmp_path)
+            
+            # Export to database button - only show if we have results
+            if hasattr(st.session_state, 'video_analysis_results') and st.session_state.video_analysis_results:
+                st.markdown("---")
+                st.subheader("Database Export")
+                
+                # Optional custom video name input
+                custom_video_name = st.text_input(
+                    "Video Name (for database)",
+                    value=getattr(st.session_state, 'video_name', "traffic_video"),
+                    help="Name to identify this video in the database"
+                )
+                
+                if st.button("💾 Export to Database", type="primary"):
+                    with st.spinner("Exporting analysis results to database..."):
+                        # Get database service
+                        db_service = get_db_service()
+                        
+                        # Validate database connection
+                        db_valid, db_msg = db_service.validate_connection()
+                        
+                        if db_valid:
+                            # Export results
+                            success, message = export_to_database(
+                                custom_video_name, 
+                                st.session_state.video_analysis_results
+                            )
+                            
+                            if success:
+                                st.success(f"✅ {message}")
+                            else:
+                                st.error(f"❌ {message}")
+                        else:
+                            st.error(f"❌ Database connection failed: {db_msg}")
+                            st.info("Please configure database connection in Settings tab.")
         
         with col2:
             st.subheader("Results")
@@ -567,50 +659,144 @@ def create_interface():
         st.header("API Configuration")
         st.markdown("Configure your YOLO and Qwen2.5-VL model endpoints and API keys.")
         
-        col1, col2 = st.columns(2)
+        # Create tabs for different settings
+        settings_tab1, settings_tab2 = st.tabs(["Model APIs", "Database"])
         
-        with col1:
-            st.subheader("YOLO Detection Settings")
-            yolo_endpoint_input = st.text_input(
-                "YOLO Endpoint",
-                value=settings["yolo_endpoint"],
-                placeholder="https://your-yolo-endpoint.com/predict",
-                help="Full endpoint URL including /predict"
-            )
-            yolo_key_input = st.text_input(
-                "YOLO API Key",
-                value=settings["yolo_api_key"],
-                type="password",
-                placeholder="your-yolo-api-key-here",
-                help="Your YOLO API authentication key"
-            )
+        with settings_tab1:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.subheader("YOLO Detection Settings")
+                yolo_endpoint_input = st.text_input(
+                    "YOLO Endpoint",
+                    value=settings["yolo_endpoint"],
+                    placeholder="https://your-yolo-endpoint.com/predict",
+                    help="Full endpoint URL including /predict"
+                )
+                yolo_key_input = st.text_input(
+                    "YOLO API Key",
+                    value=settings["yolo_api_key"],
+                    type="password",
+                    placeholder="your-yolo-api-key-here",
+                    help="Your YOLO API authentication key"
+                )
+            
+            with col2:
+                st.subheader("Qwen2.5-VL Analysis Settings")
+                qwen_endpoint_input = st.text_input(
+                    "Qwen Endpoint",
+                    value=settings["qwen_endpoint"],
+                    placeholder="https://your-qwen-endpoint.com/v1/chat/completions",
+                    help="Full endpoint URL including /v1/chat/completions"
+                )
+                qwen_key_input = st.text_input(
+                    "Qwen API Key",
+                    value=settings["qwen_api_key"],
+                    type="password",
+                    placeholder="your-qwen-api-key-here",
+                    help="Your Qwen API authentication key"
+                )
+            
+            if st.button("Save API Settings", type="primary"):
+                result = update_settings(yolo_endpoint_input, yolo_key_input, qwen_endpoint_input, qwen_key_input)
+                st.success(result)
+            
+            st.markdown("### Instructions:")
+            st.markdown("1. **YOLO Endpoint**: Enter your YOLOv8 detection service URL ending with `/predict`")
+            st.markdown("2. **YOLO API Key**: Enter your authentication key for the YOLO service")
+            st.markdown("3. **Qwen Endpoint**: Enter your Qwen2.5-VL service URL ending with `/v1/chat/completions`")
+            st.markdown("4. **Qwen API Key**: Enter your authentication key for the Qwen service")
+            st.markdown("5. **Save API Settings**: Click to apply the new configuration")
         
-        with col2:
-            st.subheader("Qwen2.5-VL Analysis Settings")
-            qwen_endpoint_input = st.text_input(
-                "Qwen Endpoint",
-                value=settings["qwen_endpoint"],
-                placeholder="https://your-qwen-endpoint.com/v1/chat/completions",
-                help="Full endpoint URL including /v1/chat/completions"
+        with settings_tab2:
+            st.subheader("Database Settings")
+            st.markdown("Configure PostgreSQL database connection for storing analysis results.")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                db_url_input = st.text_input(
+                    "Database Host",
+                    value=settings["db_url"],
+                    placeholder="localhost or db.example.com",
+                    help="Database server hostname or IP address"
+                )
+                db_name_input = st.text_input(
+                    "Database Name",
+                    value=settings["db_name"],
+                    placeholder="traffic_analysis",
+                    help="Name of the database to use"
+                )
+            
+            with col2:
+                db_user_input = st.text_input(
+                    "Database User",
+                    value=settings["db_user"],
+                    placeholder="postgres",
+                    help="Username for database authentication"
+                )
+                db_password_input = st.text_input(
+                    "Database Password",
+                    value=settings["db_password"],
+                    type="password",
+                    placeholder="your-db-password",
+                    help="Password for database authentication"
+                )
+            
+            if st.button("Save Database Settings", type="primary"):
+                result = update_settings(
+                    settings["yolo_endpoint"], 
+                    settings["yolo_api_key"], 
+                    settings["qwen_endpoint"], 
+                    settings["qwen_api_key"],
+                    db_url_input,
+                    db_user_input,
+                    db_password_input,
+                    db_name_input
+                )
+                st.success("Database settings updated successfully!")
+                
+                # Test connection
+                with st.spinner("Testing database connection..."):
+                    db_service = get_db_service()
+                    db_valid, db_msg = db_service.validate_connection()
+                    
+                    if db_valid:
+                        st.success(f"✅ Database connection successful: {db_msg}")
+                        
+                        # Create table if it doesn't exist
+                        table_valid, table_msg = db_service.create_table_if_not_exists()
+                        if table_valid:
+                            st.success(f"✅ {table_msg}")
+                        else:
+                            st.error(f"❌ {table_msg}")
+                    else:
+                        st.error(f"❌ Database connection failed: {db_msg}")
+            
+            st.markdown("### Database Schema")
+            st.markdown("""
+            The application will create the following table in your PostgreSQL database:
+            ```sql
+            CREATE TABLE IF NOT EXISTS traffic_analysis (
+                id SERIAL PRIMARY KEY,
+                video_name VARCHAR(255),
+                frame_id VARCHAR(50),
+                traffic_status VARCHAR(50),
+                traffic_flow VARCHAR(50),
+                incident_analysis TEXT,
+                safety_assessment TEXT,
+                recommendations TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-            qwen_key_input = st.text_input(
-                "Qwen API Key",
-                value=settings["qwen_api_key"],
-                type="password",
-                placeholder="your-qwen-api-key-here",
-                help="Your Qwen API authentication key"
-            )
-        
-        if st.button("Save Settings", type="primary"):
-            result = update_settings(yolo_endpoint_input, yolo_key_input, qwen_endpoint_input, qwen_key_input)
-            st.success(result)
-        
-        st.markdown("### Instructions:")
-        st.markdown("1. **YOLO Endpoint**: Enter your YOLOv8 detection service URL ending with `/predict`")
-        st.markdown("2. **YOLO API Key**: Enter your authentication key for the YOLO service")
-        st.markdown("3. **Qwen Endpoint**: Enter your Qwen2.5-VL service URL ending with `/v1/chat/completions`")
-        st.markdown("4. **Qwen API Key**: Enter your authentication key for the Qwen service")
-        st.markdown("5. **Save Settings**: Click to apply the new configuration")
+            ```
+            """)
+            
+            st.markdown("### Instructions:")
+            st.markdown("1. **Database Host**: Enter your PostgreSQL server hostname or IP address")
+            st.markdown("2. **Database Name**: Enter the name of the database to use")
+            st.markdown("3. **Database User**: Enter the username for authentication")
+            st.markdown("4. **Database Password**: Enter the password for authentication")
+            st.markdown("5. **Save Database Settings**: Click to apply and test the connection")
         
         st.info("Settings are applied immediately and will be used for all subsequent analyses. The demo includes fallback detection data when APIs are unavailable.")
         
@@ -640,6 +826,12 @@ def create_interface():
             - Check if API endpoints require specific headers
             - Ensure the API service is running and accessible
             
+            **5. Database Connection Issues:**
+            - Verify PostgreSQL server is running and accessible
+            - Check if database user has proper permissions
+            - Ensure database name exists
+            - Verify firewall allows connections to PostgreSQL port (default 5432)
+            
             **Testing Commands:**
             ```bash
             # Test endpoint connectivity
@@ -650,6 +842,9 @@ def create_interface():
             
             # Test from pod (if in Kubernetes)
             kubectl exec -it pod-name -- curl -v https://your-endpoint.com
+            
+            # Test database connection
+            psql -h your-db-host -U your-db-user -d your-db-name
             ```
             """)
             
@@ -659,6 +854,7 @@ def create_interface():
             2. **Try different endpoints** if available (internal vs external)
             3. **Check deployment logs** for network-related errors
             4. **Contact your platform admin** for network policy adjustments
+            5. **For database issues**, verify PostgreSQL is running and accessible
             """)
     
     # Footer
@@ -668,6 +864,7 @@ def create_interface():
     st.markdown("2. **For Images**: Upload a traffic scene image to get real-time analysis")
     st.markdown("3. **For Videos**: Upload a traffic video to analyze multiple frames")
     st.markdown("4. **Results**: View detected objects and AI-generated traffic insights")
+    st.markdown("5. **Database Export**: Save video analysis results to PostgreSQL database")
     
     st.markdown("*Powered by YOLOv8 for object detection and Qwen2.5-VL for scene analysis*")
 
