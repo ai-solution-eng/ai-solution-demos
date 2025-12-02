@@ -6,20 +6,18 @@ replicaCount: 1
 # Configuration for the Gradio VLM container
 app:
   image:
-    repository: mendeza/vision_analytics_demo
+    repository: erdincka/vision_analytics_demo
     pullPolicy: Always
     # The image tag to deploy. Defaults to the chart's appVersion.
-    tag: "0.0.1"
+    tag: "0.0.2"
 
   port: 7860
 
   Note: |
-    The current version of the application (0.0.1) does not read credentials from
-    environment variables. They must be configured through the Gradio UI after deployment.
-    To enable environment variables, modify the app.py to use os.getenv() for the API key and base URL.
+    These values can be configured through the application UI after deployment (`Settings` tab).
   env:
-    llmApiKey: ""
     llmApiBase: ""
+    llmApiKey: ""
 
   resources:
     # High resource requests based on the k8s manifest. Adjust as needed for your cluster.

@@ -2,7 +2,8 @@
 
 # Define variables
 IMAGE_NAME="erdincka/vision_analytics_demo"
-IMAGE_TAG="0.0.2"
+# IMAGE_TAG="0.0.2"
+IMAGE_TAG="${1:-0.0.2}"
 PLATFORM="linux/amd64"
 
 # Ensure Docker Buildx is ready
