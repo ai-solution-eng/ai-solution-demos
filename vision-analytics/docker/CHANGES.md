@@ -16,3 +16,4 @@ v0.0.2
 - Added shared-pv: Dynamically mirrors existing 'ezpresto-shared-pv' using Helm lookup (no fallback) to enable read-only access to shared data
 - Added shared-pvc: Binds to the mirrored shared PV
 - Updated deployment: Mounts shared volume at /mnt/shared (read-only)
+- Updated system prompt: added system prompt for image LLM calls.
