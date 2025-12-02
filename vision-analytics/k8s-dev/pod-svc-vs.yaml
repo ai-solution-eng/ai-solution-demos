@@ -7,7 +7,7 @@ metadata:
 spec:
   containers:
     - name: gradio
-      image: mendeza/vision_analytics_demo:0.0.1
+      image: localhost:5000/erdincka/vision_analytics_demo:0.0.2
       ports:
         - containerPort: 7860
       resources:
@@ -29,25 +29,25 @@ spec:
     - protocol: TCP
       port: 7860
       targetPort: 7860
----
-apiVersion: networking.istio.io/v1beta1
-kind: VirtualService
-metadata:
-  name: gradio-stream-virtualservice
-  namespace: andrew-mendez-94dbc511
-spec:
-  hosts:
-    - vision-app.ingress.pcai0109.sv11.hpecolo.net
-  gateways:
-    - istio-system/ezaf-gateway
-  http:
-    - match:
-        - uri:
-            prefix: /
-      rewrite:
-        uri: /
-      route:
-        - destination:
-            host: vision-app-service.andrew-mendez-94dbc511.svc.cluster.local
-            port:
-              number: 7860
+# ---
+# apiVersion: networking.istio.io/v1beta1
+# kind: VirtualService
+# metadata:
+#   name: gradio-stream-virtualservice
+#   namespace: demo
+# spec:
+#   hosts:
+#     - vision-app.ingress.pcai0109.sv11.hpecolo.net
+#   gateways:
+#     - istio-system/ezaf-gateway
+#   http:
+#     - match:
+#         - uri:
+#             prefix: /
+#       rewrite:
+#         uri: /
+#       route:
+#         - destination:
+#             host: vision-app-service.demo.svc.cluster.local
+#             port:
+#               number: 7860

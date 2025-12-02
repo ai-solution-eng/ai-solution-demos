@@ -18,7 +18,7 @@ This demo is ideal for customers looking to analyze images, video, or live strea
 
 ### Solution Overview and Demo Video
 
-![Solution Overview](assets/SolutionOverview.png)
+![Solution Overview](images/SolutionOverview.png)
 
 ▶️ [Demo Video](https://storage.googleapis.com/ai-solution-engineering-videos/public/vision_analytics_pcai.mp4)
 

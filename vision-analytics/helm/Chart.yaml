@@ -1,10 +1,10 @@
 apiVersion: v2
 name: vision-analytics-chart
-description: A Helm chart for deploying the Gradio VLM Vision Analytics application on HPE PCAI.
+description: A Helm chart for Visual Analytics Studio on HPE PCAI.
 type: application
 
 # This is the chart version. This is incremented for chart changes.
-version: 0.1.0
+version: 0.1.1
 
 # This is the version number of the application being deployed.
-appVersion: "0.0.1"
+appVersion: "0.0.2"
