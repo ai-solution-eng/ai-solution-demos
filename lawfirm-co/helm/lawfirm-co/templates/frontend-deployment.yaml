@@ -1,0 +1,32 @@
+{{- $fullName := include "lawfirm.fullname" . -}}
+{{- $labels := include "lawfirm.labels" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-frontend
+  labels:
+    app.kubernetes.io/name: {{ $fullName }}-frontend
+    {{- $labels | nindent 4 }}
+spec:
+  replicas: {{ .Values.frontend.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $fullName }}-frontend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $fullName }}-frontend
+        {{- $labels | nindent 8 }}
+    spec:
+      containers:
+        - name: frontend
+          image: "{{ .Values.frontend.image.repository }}:{{ .Values.frontend.image.tag }}"
+          imagePullPolicy: {{ .Values.frontend.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.frontend.service.targetPort }}
+          env:
+{{- if .Values.frontend.env }}
+{{ toYaml .Values.frontend.env | indent 12 }}
+{{- end }}
+          resources:
+{{ toYaml .Values.frontend.resources | indent 12 }}
