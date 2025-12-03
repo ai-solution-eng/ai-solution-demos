@@ -13,16 +13,27 @@
 Law firms, particularly those handling public cases, face stringent confidentiality and privacy requirements. The rapid growth of digital media—including social platforms, device logs, camera footage, and police recordings—has dramatically increased the volume and complexity of case materials and legal documents requiring review. To address this challenge, AI-powered tools can streamline legal document analysis, ensuring that all evidence and records are thoroughly examined and appropriately referenced. By deploying these tools locally with rigorously defined guardrails, firms can maintain compliance with legal and privacy regulations while enhancing efficiency, accuracy, and trust in their casework.
 
 ⚡ Accelerates
+
 • Case material ingestion and indexing across diverse digital sources (social media, device logs, camera footage, police recordings).
+
 • Document review cycles by quickly surfacing relevant evidence and cross-references.
+
 • Legal research workflows by reducing repetitive manual scanning and classification.
+
 📑 Provides
+
 • Thorough, consistent analysis of legal documents with automated flagging of sensitive or high-priority content.
+
 • Guardrail-driven compliance checks to ensure confidentiality and privacy standards are upheld.
+
 • Transparent audit trails for every AI-assisted decision, reinforcing accountability.
+
 🔒 Enables
+
 • Secure, on-premises deployment that keeps all case data within the firm’s infrastructure.
+
 • Customizable workflows aligned with jurisdiction-specific legal and privacy regulations.
+
 • Scalable handling of growing digital evidence volumes without compromising security or trust.
 
 
@@ -57,7 +68,7 @@ Recordings:
 
 ### Overview
 
-![Architecture Diagram](./docs/images/DemoCard.png)
+![Architecture Diagram](./doc/DemoCard.png)
 
 ### Workflow
 
@@ -94,15 +105,15 @@ Use the UI.
 
 ### Case Chat
 
-![the case chat interface screenshot](./docs/images/CaseChat.png)
+![the case chat interface screenshot](./doc/CaseChat.png)
 
 ### Dramatis Personae
 
-![the Dramatis Personae interface screenshot](./docs/images/DramatisPersonae.png)
+![the Dramatis Personae interface screenshot](./doc/DramatisPersonae.png)
 
 ### Video Chat
 
-![the Video Chat interface screenshot](./docs/images/VideoAnalysis.png)
+![the Video Chat interface screenshot](./doc/VideoAnalysis.png)
 
 ## Limitations
 
