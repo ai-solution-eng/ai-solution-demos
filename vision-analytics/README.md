@@ -4,6 +4,7 @@
 | ----------------------------|-----------------------------------|-------------------------------------------|
 | Use Case Owner              | Hoang Phan                      | hoang.phan@hpe.com                      |
 | PCAI Deployment Owner       | Andrew Mendez                     | andrew.mendez@hpe.com                     |
+| PCAI Deployment Owner v2     | Erdinc Kaya                     | kaya@hpe.com                     |
 
 This project demonstrates a powerful, interactive application to analyze images, videos, and real-time video streams using a Vision Language Model (VLM). The application is built with Gradio, containerized with Docker, and designed for seamless deployment on **HPE Private Cloud AI (PCAI)** using a reusable Helm chart.
 

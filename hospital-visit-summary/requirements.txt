@@ -1,0 +1,7 @@
+jpype1
+jaydebeapi
+pandas
+streamlit
+langchain
+langchain_nvidia_ai_endpoints
+python-dotenv
