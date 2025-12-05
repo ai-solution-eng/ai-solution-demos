@@ -25,7 +25,7 @@ This repository contains use case demos developed for Private Cloud AI (PCAI)
 | [Fine-tuning LLM for Tool Calling](finetune-tool-calling-llm) | Yes           | Coming Soon   | Yes           |`Computer Vision`, `Fine-tune`, `CNN`, `streamlit`       |
 | [Voice Audio Agent](voice-audio-agent)                        | Yes           | Yes           | Yes           |`GenAI`, `ASR`,`NVIDIA`                    |
 | [Hospital Visit Summary](hospital-visit-summary)              | Yes           | Yes           | Yes           |`GenAI`, `SQL`, `LLM`                    |
-| [Multilingual Voice Audio Agent](multilingual-voice-agent)              | Yes           | Yes           | Yes           |`GenAI`, `Chatbot`, `ASR`, `TTS`, `SQL`                |
+| [Multilingual Voice Audio Agent](multilingual-voice-agent/doc)              | Yes           | Yes           | Yes           |`GenAI`, `Chatbot`, `ASR`, `TTS`, `SQL`                |
 
 ### Upcoming
 
