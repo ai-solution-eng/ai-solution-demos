@@ -55,8 +55,8 @@ Supported languages:
 
 That list corresponds to languages supported by Chatterbox, Whisper can transcribe additional languages and the Qwen3 chat model can be swapped for another one if its performance for the chosen language is underwhelming.
 
-Recordings:
-* None for the moment
+**Recordings**:
+* [Demo recording](https://storage.googleapis.com/ai-solution-engineering-videos/public/multilingual_voice_demo_combined.mp4)
 
 
 ## Description
@@ -220,6 +220,7 @@ It is otherwise identical to chatting without access to SQL data.
       * Adding a tool this way will ensure the custom model will always have access to that tool, and you won't have to confirm connection to that toolset when using this model
     * If you have not created a new model with a custom prompt to bypass Chatterbox limitations to pronounce numbers written in digits, **you may still want a create a custom prompt to help the chat model generate better SQL queries**, to make a better use of tools available to it. In particular, describing at high level the database it has access to, and providing one or two examples of SQL queries will make it much more efficient at getting information from the provided CSV.
       * Check the example provided in [**deploy/data/sa-houses-prompt.txt**](../deploy/data/sa-houses-prompt.txt) for guidance.
+      * If you use that example, double-check that its first few lines exactly corresponds to your database configuration: "realestate" is the source database, "default" the schema and "real_estate" the table. If you did not name your data source exactly "realestate" and/or the subfolder you created on the shared storage is not named exactly "real_estate", you will have to edit that part of the prompt, as the model will generate wrongly formatted SQL queries.
     * If you are not using a custom model, you will have to click on the "Integrations" button, at the right of the "+" sign below the place where you usually type your query, then Tools -> tick your tool. A wrench icon appears once the chat model is given access to the tool: 
     ![integration](images/integration.PNG)
       * You will have to do this every time you start a new chat
@@ -275,12 +276,13 @@ It is otherwise identical to chatting without access to SQL data.
 ## Advice
 
 
-* If Chatterbox audio output is of poor quality, **test different voices using different audio samples**, quality of the audio sample is crucial to the voice created by Chatterbox.
+* If Chatterbox audio output is of poor quality, **test different voices using different audio samples**, quality of the audio sample is crucial to the voice created by Chatterbox. **Don't limit yourself to provided audio samples**, they are only provided for convenience. While leading to the creation of decent voices for Chatterbox, there is no doubt better voices could be created for your needs after testing with a few other samples.
 * As a reminder, **Prompt Engineering** is needed here for:
   * Avoiding the chat model to output numbers written in digits, as Chatterbox voices cannot pronounce them properly. 
   * Help the chat model generate meaningful SQL queries to extract information from the provided dataset. **There is a world of difference between the model performance with and without customized prompt**.
 * While we used Qwen/Qwen3-30B-A3B-Instruct-2507-FP8 as chat model, **any Open AI API compatible chat model can be used**. Ability to make tool calls is only needed for the optional component of this demo.
 * Once Whisper and Chatterbox are deployed and connected to Open WebUI, you can of course use any Open WebUI feature to enrich your demo. That includes **using Open WebUI built-in RAG capabilities**. This is particularly relevant **if you want to chat with data from txt or PDF files**, and much easier to set up, compared to chatting with SQL data.
+
 
 
 
