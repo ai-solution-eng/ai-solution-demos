@@ -21,11 +21,11 @@ This repository contains use case demos developed for Private Cloud AI (PCAI)
 | [Traffic Report](traffic-report)                              | Yes           | Yes           | Yes           |`GenAI`, `Computer Vision`, `VLM`          |
 | [Predictive Maintenance](predictive-maintenance)              | Yes           | Yes           | Yes           |`Maintenance`, `GenAI`, `LLM`, `VLM`       |
 | [Blood Vessels Geometry Analysis and 3D Reconstruction](blood-vessel-geometry-analysis-and-reconstruction)              | Yes           | Yes           | Yes           |`Computer Vision`, `nvidia NIM vista-3d`, `3d rendering`, `streamlit`     |
-| [Image Segmentation](image-segmentation)                      | Yes           | No            | Yes           |`Computer Vision`, `Fine-tune`, `CNN`, `streamlit`       |
+| [Image Segmentation](image-segmentation)                      | Yes           | No            | Yes           |`Computer Vision`, `Fine-tune`, `CNN`, `streamlit`, `MLflow`      |
 | [Fine-tuning LLM for Tool Calling](finetune-tool-calling-llm) | Yes           | Coming Soon   | Yes           |`Computer Vision`, `Fine-tune`, `CNN`, `streamlit`       |
 | [Voice Audio Agent](voice-audio-agent)                        | Yes           | Yes           | Yes           |`GenAI`, `ASR`,`NVIDIA`                    |
 | [Hospital Visit Summary](hospital-visit-summary)              | Yes           | Yes           | Yes           |`GenAI`, `SQL`, `LLM`                    |
-
+| [Multilingual Voice Audio Agent](multilingual-voice-agent)              | Yes           | Yes           | Yes           |`GenAI`, `Chatbot`, `ASR`, `TTS`, `SQL`                |
 
 ### Upcoming
 
