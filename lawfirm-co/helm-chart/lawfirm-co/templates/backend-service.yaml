@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  labels:
+    app.kubernetes.io/name: {{ include "lawfirm.fullname" . }}-backend
+    {{- include "lawfirm.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: {{ include "lawfirm.fullname" . }}-backend
+  ports:
+    - protocol: TCP
+      port: {{ .Values.backend.service.port }}
+      targetPort: {{ .Values.backend.service.targetPort }}
+  type: ClusterIP

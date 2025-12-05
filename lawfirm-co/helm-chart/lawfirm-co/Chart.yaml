@@ -1,0 +1,6 @@
+apiVersion: v2
+name: lawfirm
+description: Helm chart for Law Firm Case Management System
+type: application
+version: "1.0.0"
+appVersion: "1.0.0"

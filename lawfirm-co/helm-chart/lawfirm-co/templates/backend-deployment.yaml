@@ -1,0 +1,35 @@
+{{- $fullName := include "lawfirm.fullname" . -}}
+{{- $labels := include "lawfirm.labels" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-backend
+  labels:
+    app.kubernetes.io/name: {{ $fullName }}-backend
+    {{- $labels | nindent 4 }}
+spec:
+  replicas: {{ .Values.backend.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $fullName }}-backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $fullName }}-backend
+        {{- $labels | nindent 8 }}
+    spec:
+      containers:
+        - name: backend
+          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.backend.service.targetPort }}
+          env:
+            - name: DATABASE_URL
+              value: "postgresql://user:password@db:5432/lawfirm"
+{{- if .Values.backend.env }}
+{{ toYaml .Values.backend.env | indent 12 }}
+{{- end }}
+          resources:
+{{ toYaml .Values.backend.resources | indent 12 }}
+      serviceAccountName: {{ include "lawfirm.serviceAccount" . }}

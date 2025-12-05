@@ -1,0 +1,20 @@
+fastapi==0.109.0
+numpy==1.26.3
+pydantic==2.6.0
+sqlalchemy==2.0.25
+psycopg2-binary==2.9.9
+python-multipart
+faker==22.5.1
+httpx==0.26.0
+uvicorn==0.27.0
+
+# RAG dependencies (document processing only, embeddings via API)
+pypdf==4.0.1
+striprtf==0.0.26
+reportlab==4.0.9
+
+# Kubernetes
+kubernetes==34.1.0
+# Visual analysis
+opencv-python-headless==4.9.0.80
+Pillow==10.2.0

@@ -1,0 +1,74 @@
+# Default values for lawfirm Helm chart
+
+ezua:
+  domainName: "${DOMAIN_NAME}"
+  virtualService:
+    endpoint: "lawfirm-co.${DOMAIN_NAME}"
+    istioGateway: "istio-system/ezaf-gateway"
+  authorizationPolicy:
+    namespace: "istio-system"
+    providerName: "oauth2-proxy"
+    matchLabels:
+      app: "lawfirm"
+
+backend:
+  replicaCount: 1
+  image:
+    repository: erdincka/lawfirm-backend
+    pullPolicy: Always
+    tag: "latest"
+  service:
+    port: 8000
+    targetPort: 8000
+  resources:
+    requests:
+      cpu: "1000m"
+      memory: "1Gi"
+    limits:
+      cpu: "2000m"
+      memory: "2Gi"
+  env:
+    - name: DEBUG
+      value: "false"
+    - name: ALLOWED_ORIGINS
+      value: "http://localhost:3000,https://${DOMAIN_NAME}"
+    - name: LOG_LEVEL
+      value: "INFO"
+    - name: LOG_FORMAT
+      value: "json"
+    - name: LOG_FILE
+      value: ""
+    - name: RAG_CHUNK_SIZE
+      value: "500"
+    - name: RAG_CHUNK_OVERLAP
+      value: "50"
+    - name: RAG_TOP_K
+      value: "5"
+    - name: LLM_TIMEOUT
+      value: "60"
+    - name: EMBEDDING_TIMEOUT
+      value: "60"
+
+frontend:
+  replicaCount: 1
+  image:
+    repository: erdincka/lawfirm-frontend
+    pullPolicy: Always
+    tag: "latest"
+  service:
+    port: 3000
+    targetPort: 3000
+  resources:
+    requests:
+      cpu: "1000m"
+      memory: "1Gi"
+    limits:
+      cpu: "2000m"
+      memory: "2Gi"
+  env: {}
+
+db:
+  persistence:
+    enabled: true # Set to false to disable PVC creation
+    size: "1Gi" # Default storage request
+    storageClass: "" # Optional storage class (leave empty for default)
