@@ -1,0 +1,46 @@
+{{- $fullName := include "lawfirm.fullname" . -}}
+{{- $labels := include "lawfirm.labels" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-db
+  labels:
+    app.kubernetes.io/name: {{ $fullName }}-db
+    {{- $labels | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $fullName }}-db
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $fullName }}-db
+        {{- $labels | nindent 8 }}
+    spec:
+      containers:
+      - name: db
+        image: postgres:18-alpine
+        ports:
+        - containerPort: 5432
+        env:
+        - name: POSTGRES_USER
+          value: "user"
+        - name: POSTGRES_PASSWORD
+          value: "password"
+        - name: POSTGRES_DB
+          value: "lawfirm"
+        volumeMounts:
+        - name: db-data
+          mountPath: /var/lib/postgresql
+      volumes:
+      - name: db-data
+        persistentVolumeClaim:
+          claimName: {{ $fullName }}-db-pvc
+      resources:
+        requests:
+          memory: "256Mi"
+          cpu: "1024m"
+        limits:
+          memory: "512Mi"
+          cpu: "2048m"
+          

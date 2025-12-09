@@ -1,0 +1,16 @@
+{{- $fullName := include "lawfirm.fullname" . -}}
+{{- $labels   := include "lawfirm.labels" . -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullName }}-db-pvc
+  labels:
+    app.kubernetes.io/name: {{ $fullName }}-db
+    {{- $labels | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.db.persistence.size | default "1Gi" }}
+  storageClassName: {{ .Values.db.persistence.storageClass | default "" }}
