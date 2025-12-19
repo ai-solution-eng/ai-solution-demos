@@ -26,6 +26,7 @@ This repository contains use case demos developed for Private Cloud AI (PCAI)
 | [Voice Audio Agent](voice-audio-agent)                        | Yes           | Yes           | Yes           |`GenAI`, `ASR`,`NVIDIA`                    |
 | [Hospital Visit Summary](hospital-visit-summary)              | Yes           | Yes           | Yes           |`GenAI`, `SQL`, `LLM`                    |
 | [Multilingual Voice Audio Agent](multilingual-voice-agent/doc)              | Yes           | Yes           | Yes           |`GenAI`, `Chatbot`, `ASR`, `TTS`, `SQL`                |
+| [Simple RAG Chatbot With LangGraph ](simple-rag-chatbot-with-langgraph/README.md)  | Work in progress           | Coming Soon           | Yes           |`GenAI`, `Chatbot`, `LangGraph`, `Qdrant`                |
 
 ### Upcoming
 
