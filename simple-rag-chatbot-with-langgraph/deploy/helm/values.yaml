@@ -1,0 +1,45 @@
+replicaCount: 1
+
+env:
+  EMBED_MODEL_NAME: 'SPECIFY MODEL NAME HERE OR IN A K8S SECRET'
+  EMBED_BASE_URL: 'SPECIFY MODEL ENPOINT URL HERE OR IN A K8S SECRET'
+  EMBED_API_KEY: 'SPECIFY MODEL TOKEN HERE OR IN A K8S SECRET'
+
+
+  # --- Specify the LLM
+  OPENAI_MODEL_NAME: 'SPECIFY MODEL NAME HERE OR IN A K8S SECRET'
+  OPENAI_BASE_URL: 'SPECIFY MODEL ENPOINT URL HERE OR IN A K8S SECRET'
+  OPENAI_API_KEY: 'SPECIFY MODEL TOKEN HERE OR IN A K8S SECRET'
+
+  QDRANT_URL: "qdrant.qdrant.svc.cluster.local:6333"
+  
+
+# Configuration for the gradio-ui container
+image:
+  repository: fcaliva/rag-gradio-app
+  pullPolicy: IfNotPresent
+  tag: 0.0.2
+
+gradioUi:
+  port: 7860
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 8080
+
+# Istio configuration
+ezua:
+  enabled: true
+  virtualService:
+    # The external hostname for the service. Corresponds to VirtualService spec.hosts
+    endpoint: "rag-app.${DOMAIN_NAME}"
+    # The Istio gateway to bind to. Corresponds to VirtualService spec.gateways
+    istioGateway: "istio-system/ezaf-gateway"

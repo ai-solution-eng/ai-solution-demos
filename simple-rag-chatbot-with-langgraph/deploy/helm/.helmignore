@@ -1,0 +1,8 @@
+*.env
+*.gradio/
+__pycache__/
+*.pyc
+*.ipynb_checkpoints
+*.venv
+*.png
+*.tgz

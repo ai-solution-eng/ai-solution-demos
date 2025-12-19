@@ -1,0 +1,38 @@
+# FILE: helm/templates/deployment.yaml
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "rag-app-chart.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rag-app-chart.labels" . | nindent 4 }}
+    {{- include "hpe-ezua.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "rag-app-chart.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "rag-app-chart.selectorLabels" . | nindent 8 }}
+        {{- include "hpe-ezua.labels" . | nindent 8 }}
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      containers:
+      - name: gradio-ui
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - name: http-ui
+          containerPort: {{ .Values.gradioUi.port }}
+          protocol: TCP
+        env:
+{{- range $key, $val := .Values.env }}
+        - name: {{ $key }}
+          value: {{ $val | quote }}
+{{- end }}
+        resources:
+          {{- toYaml .Values.gradioUi.resources | nindent 10 }}

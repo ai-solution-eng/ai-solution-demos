@@ -1,0 +1,25 @@
+{{- if .Values.ezua.enabled }}
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: {{ include "rag-app-chart.fullname" . }}-vs
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rag-app-chart.labels" . | nindent 4 }}
+spec:
+  gateways:
+  - {{ .Values.ezua.virtualService.istioGateway }}
+  hosts:
+  - {{ .Values.ezua.virtualService.endpoint }}
+  http:
+  - match:
+    - uri:
+        prefix: /
+    rewrite:
+      uri: /
+    route:
+    - destination:
+        host: {{ include "rag-app-chart.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
+        port:
+          number: {{ .Values.service.port }}
+{{- end }}
