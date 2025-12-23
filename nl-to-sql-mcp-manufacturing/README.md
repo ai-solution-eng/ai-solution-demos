@@ -12,7 +12,7 @@ This demo shows how a NL to SQL use case can be implemented levaraging HPE PCAIs
 #### This repository contains steps for deployment of an NLtoSQL use case leveraging MCP in the example of manufacturing industry on AIE software on a PCAI System. The demo can be easily adapted for another industry by swapping the dataset.
 
 ## **Demo overview video**
-[Demo Video](to be added)
+[Demo Video](https://hpe-my.sharepoint.com/:v:/r/personal/isabelle_steinhauser_hpe_com/Documents/PCAI%20Demo%20Videos/NL2SQL%20MCP.mp4?csf=1&web=1&e=iHew87)
 
 ## **Tools and frameworks used:**
 
@@ -26,7 +26,8 @@ This demo shows how a NL to SQL use case can be implemented levaraging HPE PCAIs
 
 The minimum OpenWebUI version needed is v0.6.31, which supports the MCP server as an external tool. In the installation steps it's pointed out how to install an OpenWebUI version that is recent enough.
 
-AIE version with MCP feature or manual install of EzPrestoMCP (not publicly available as of now, but possible to get for demo purposes, contact us for advice).
+AIE version with MCP feature (AIE 1.12 or greater) or manual install of EzPrestoMCP (not publicly available as of now, but possible to get for demo purposes, contact us for advice).
+
 
 ## Steps for installation
 
@@ -268,6 +269,8 @@ In order to change the color of the Dashboard you can click on Edit Dashboard th
 
 ![Change Color Dashboard in Superset](https://github.com/ai-solution-eng/ai-solution-demos/blob/nl2sql/nl-to-sql-mcp-manufacturing/images/Superset_EditColor.png)
 
+## Production-ready considerations
 
+When thinking about moving this into production you should make sure to deploy open-webui with an external postgres with large storage size. The default storage for open-webui is a embedded sqlite with 2GB storage, especially with several users and longer chat history we've seen this becoming a limitation.
 
-
+When adding the MCP server to OpenWebUI it auhtorizes with a token. This token is user specific. If you want to cover different data access for different groups/users, you will need to manage the different data access in AIE, retrieve the JWT token of users with that data access and configure several PrestoMCP servers within OpenWebUI granting access for those dfferent groups.
