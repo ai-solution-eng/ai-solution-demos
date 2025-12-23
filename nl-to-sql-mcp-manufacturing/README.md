@@ -71,7 +71,7 @@ If you care to adapt the data for example to a different industry or specific lo
 
 Open your Jupyter Notebook server and upload the .db file and the loaddata.py. You will need to add the password you provided when Importing Postgres to line 9. of loaddata.py Also be aware if you adapt the db_name in line 13 you will need to change in the step of Connect Database to AIE in the URL manufacturing to whatever you decide for as a dbname.
 
-When you have uploaded those to files open a terminal in the JupyterNotebook Server. Execute ls to make sure you can see both files at this location. Install the library psycopg2 via pip installpsycopg2 and then execute the loaddata.py with python loaddata.py
+When you have uploaded those to files open a terminal in the JupyterNotebook Server. Execute ls to make sure you can see both files at this location. Install the library psycopg2 via *pip installpsycopg2* and then execute the loaddata.py with *python loaddata.py*
 
 **1.3 Connect Database to AIE**
 
@@ -80,12 +80,12 @@ When you have uploaded those to files open a terminal in the JupyterNotebook Ser
 - In **Structured Data** click on **Add New Data Source**
 - Select **PostgreSQL** and click **Create Connection**
 - Fill in details as below:
-  Name*      : manufacturingdb
-  Connection URL*: jdbc:postgresql://postgresql.postgres.svc.cluster.local:5432/manufacturing
-  Connection User*: postgres
-  Connection Password*: YOURDEFINEDPASSWORD
-  Click on PostgreSQl Advanced Settings
-  Case Insensitive Name Matching: Tick
+  - Name*      : manufacturingdb
+  - Connection URL*: jdbc:postgresql://postgresql.postgres.svc.cluster.local:5432/manufacturing
+  - Connection User*: postgres
+  - Connection Password*: YOURDEFINEDPASSWORD
+  - Click on PostgreSQl Advanced Settings
+  - Case Insensitive Name Matching: Tick
 
 **1.4 Explore the Data Catalog**
 
@@ -147,21 +147,21 @@ If you already have deployed Open WebUI in the environment for a different use c
 - Fill in details as below:
   
   
-  Framework Name*      : Open-WebUI
+  - Framework Name*      : Open-WebUI
   
-  Description*         : Open WebUI is an extensible, feature-rich, and user-friendly AI platform.
+  - Description*         : Open WebUI is an extensible, feature-rich, and user-friendly AI platform.
   
-  Category (select)    : Data Science
+  - Category (select)    : Data Science
   
-  Framework Icon*      : Upload the [open-webui-logo.png](https://github.com/ai-solution-eng/frameworks/blob/main/open-webui/logo.png)
+  - Framework Icon*      : Upload the [open-webui-logo.png](https://github.com/ai-solution-eng/frameworks/blob/main/open-webui/logo.png)
   
-  Helm Chart (select)  : Upload New Chart
+  - Helm Chart (select)  : Upload New Chart
   
-  Select File          : Upload the [open-webui-8.12.2-pcai.tgz](https://github.com/ai-solution-eng/frameworks/blob/main/open-webui/open-webui-8.12.2-pcai.tgz)
+  - Select File          : Upload the [open-webui-8.12.2-pcai.tgz](https://github.com/ai-solution-eng/frameworks/blob/main/open-webui/open-webui-8.12.2-pcai.tgz)
   
-  Namespace*           : open-webui
+  - Namespace*           : open-webui
   
-  DEBUG                : TICK
+  - DEBUG                : TICK
   
 - Review
 
@@ -199,10 +199,10 @@ Now we need to as well add the MCP Server Connection. Therefore navigate in Open
 - Provide the ID and Name PrestoMCP
 ![OpenWebUI Add Presto MCP Server to Open WebUI](https://github.com/ai-solution-eng/ai-solution-demos/blob/nl2sql/nl-to-sql-mcp-manufacturing/images/OpenWebUI_PrestoMCP.png)
 
-As next step we need to Create a Model that is leveraging the Qwen3 8b Base Model and has the MCP Server as Tool available. Therefore click in OpenWebUI on Workspace. Click **New Model**. Provide your Model a Name for example Manufacturing select Qwen/Qwen3-8B as base Model. Edit Visibility to Public in case you want the model to be available for everyone to chat. Add a System Prompt for example: "Always use 'manufacturingdb' catalog and the schema 'public' for SQL queries. Syntax: catalog.schema.table is how you reference a table in presto"
+As next step we need to Create a Model that is leveraging the Qwen3 8b Base Model and has the MCP Server as Tool available. Therefore click in OpenWebUI on Workspace. Click **New Model**. Provide your Model a Name for example Manufacturing select Qwen/Qwen3-8B as base Model. Edit Visibility to *Public* in case you want the model to be available for everyone to chat. Add a System Prompt for example: "Always use 'manufacturingdb' catalog and the schema 'public' for SQL queries. Syntax: catalog.schema.table is how you reference a table in presto"
 
-Click on the Advance Params and set Function Calling to Native, otherwise it will only make one call. You can edit this within your chat as well.
-Underneath Tools tick the PrestoMCP Tool and click Save&Create.
+Click on the Advance Params and set *Function Calling* to *Native*, otherwise it will only make one call. You can edit this within your chat as well.
+Underneath Tools tick the *PrestoMCP Tool* and click Save&Create.
 
 
 ### **4. Dashboard**
@@ -219,7 +219,7 @@ Within Superset we first need to configure the connection to Presto.
 Under Settings select Database Connections. 
 Add a new Database by clicking + Database on the top right.
 Select Presto.
-Provide the following SQL Alchemy URL: presto://ezpresto.YOURDOMAINNAME:443/cache where you need to insert the domain name of the cluster you are working on. You can take that from the URL in your brwoser, eg home.YOURDOMAINNAME
+Provide the following SQL Alchemy URL: *presto://ezpresto.YOURDOMAINNAME:443/cache* where you need to insert the domain name of the cluster you are working on. You can take that from the URL in your brwoser, eg home.YOURDOMAINNAME
 
 **4.3 Superset Dataset Creation**
 
@@ -238,7 +238,7 @@ Save it as cached asset by going to Actions -> Save as View.
 Name this one location_performance and use the default schema.
 
 ![Presto Cached Asset](https://github.com/ai-solution-eng/ai-solution-demos/blob/nl2sql/nl-to-sql-mcp-manufacturing/images/Presto_CachedAsset.png)
-This will only work if you used the created script to create the data as well as if you imported it as manufacturingdb into datasources, if you have changed anything there you will need to replicate the changes here as well.
+This will only work if you used the created script to create the data as well as if you imported it as *manufacturingdb* into datasources, if you have changed anything there you will need to replicate the changes here as well.
 
 If you name the Cached Assets differently you will need to incorporate the changes within Superset as well.
 
@@ -256,7 +256,7 @@ WITH operator_performance AS ( SELECT m.location , o.name operator_name , "sum"(
 
 **4.4 Superset Import Dahsboard**
 
-To import the Dashboard open Superset. Naviagte to Dashboards and click import Dashboard. Use the .zip file in this folder to upload. 
+To import the Dashboard open Superset. Naviagte to Dashboards and click import Dashboard. Use the *.zip* file in this folder to upload. 
 
 This will create the dashboard, the charts and the datasets for you. Again only if you created the Cached Assets with the same names as well as the Database connection to Presto. If you named something differently you will need to edit it accordingly.
 ![Import Dashboard in Superset](https://github.com/ai-solution-eng/ai-solution-demos/blob/nl2sql/nl-to-sql-mcp-manufacturing/images/Superset_ImportDashboard.png)
