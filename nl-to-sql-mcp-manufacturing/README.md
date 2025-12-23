@@ -12,7 +12,7 @@ This demo shows how a NL to SQL use case can be implemented levaraging HPE PCAIs
 #### This repository contains steps for deployment of an NLtoSQL use case leveraging MCP in the example of manufacturing industry on AIE software on a PCAI System. The demo can be easily adapted for another industry by swapping the dataset.
 
 ## **Demo overview video**
-[Demo Video](https://hpe-my.sharepoint.com/:v:/r/personal/isabelle_steinhauser_hpe_com/Documents/PCAI%20Demo%20Videos/NL2SQL%20MCP.mp4?csf=1&web=1&e=iHew87)
+[Demo Video](https://storage.googleapis.com/ai-solution-engineering-videos/public/NL2SQL%20MCP.mp4)
 
 ## **Tools and frameworks used:**
 
