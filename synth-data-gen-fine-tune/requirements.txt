@@ -9,3 +9,4 @@ datasets==2.19.1
 huggingface_hub==0.23.2
 requests==2.32.2
 trl==0.9.6
+rich

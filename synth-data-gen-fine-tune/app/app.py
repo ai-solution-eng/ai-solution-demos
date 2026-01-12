@@ -3,6 +3,7 @@ import logging, sys, time, json, re
 from flask import Flask, render_template, request, jsonify
 from .synthetic_data import generate_synthetic_data, DATA_DIR
 from .fine_tune import start_finetune, get_finetune_status, BASE_MODEL_ID
+import urllib3
 
 REDACT_KEYS = {"authorization", "token", "bearer_token", "base_token", "ft_token"}
 
@@ -256,12 +257,20 @@ def hotload_adapter():
     lora_path = f"/models-pvc/{base_name}/{exported_adapter}"
 
     try:
-        resp = _post_json(
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+        headers = {"Content-Type": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        r = requests.post(
             base_url + "/v1/load_lora_adapter",
-            {"lora_name": adapter, "lora_path": lora_path},
-            token=token or None,
-            timeout=60
+            json={"lora_name": adapter, "lora_path": lora_path},
+            headers=headers,
+            timeout=60,
+            verify=False
         )
+        r.raise_for_status()
+        resp = _safe_parse_json(r)
         return jsonify({"status":"success","response":resp,"adapter_name":adapter,"lora_path":lora_path})
     except requests.HTTPError as e:
         txt = e.response.text if e.response is not None else str(e)
@@ -334,7 +343,7 @@ def compare():
             "temperature": temperature,
             "top_p": top_p
         }
-        r = requests.post(url + "/v1/chat/completions", json=payload, headers=headers, timeout=60)
+        r = requests.post(url + "/v1/chat/completions", json=payload, headers=headers, timeout=60, verify=False)
         r.raise_for_status()
         j = r.json()
         return j["choices"][0]["message"]["content"]
