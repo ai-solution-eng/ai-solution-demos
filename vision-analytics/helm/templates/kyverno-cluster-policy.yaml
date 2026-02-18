@@ -1,7 +1,7 @@
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
-  name: {{ printf "add-vendor-app-labels-%s-%s" .Release.Name .Chart.Name }}
+  name: {{ printf "add-labels-%s-%s" .Release.Name .Chart.Name }}
   annotations:
     "helm.sh/hook": pre-install
     "helm.sh/hook-weight": "-5"
