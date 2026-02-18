@@ -32,20 +32,35 @@
 
 # MLIS setup in PCAI
 
-1. Deploy the `Qwen/Qwen2.5-7B-Instruct` model using the following configuration:
-    - General:
-        - Registry: `None`
-        - Image: `vllm/vllm-openai:latest`
-    - Advanced:
-        - Environment Variables (add you HF token)
-            - HUGGING_FACE_HUB_TOKEN
-        - Arguments (vLLM serve arguments)
-            - `--model Qwen/Qwen2.5-7B-Instruct --enable-auto-tool-choice --tool-call-parser hermes --port 8080`
-2. Once successfully deployed, save the endpoint url and append `/v1` for later, as well as add an API token under the `Users` and save that as well.
-3. Deploy the `nvidia/nv-embedqa-e5-v5` model using the following configuration:
+1. Deploy the `nvidia/nv-embedqa-e5-v5` model using the following configuration:
     - General:
         - Registry: `NGC` (create an NGC registry if there is none)
         - NGC Supported Models: `nvidia/nv-embedqa-e5-v5`
+2. Once successfully deployed, save the endpoint url and append `/v1` for later, as well as add an API token under the `Users` and save that as well.
+3. Deploy the LLM (decide between NVIDIA Nemotron and Qwen)
+    - Deploy the `nvidia/NVIDIA-Nemotron-3-Nano-30B` model using the following configuration:
+        - General:
+            - Registry: `None`
+            - Image: `vllm/vllm-openai:latest`
+        - Resources:
+            - CPU: 2 -> 6
+            - Memory: 20Gi -> 40Gi
+            - GPU: 1
+        - Advanced:
+            - Environment Variables (add you HF token)
+                - HUGGING_FACE_HUB_TOKEN
+            - Arguments (vLLM serve arguments)
+                - `--model nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8 --max-model-len 32000 --trust-remote-code --enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser deepseek_r1 --kv-cache-dtype fp8 --port 8080`
+    OR
+    -  Deploy the `Qwen/Qwen2.5-7B-Instruct` model using the following configuration:
+        - General:
+            - Registry: `None`
+            - Image: `vllm/vllm-openai:latest`
+        - Advanced:
+            - Environment Variables (add you HF token)
+                - HUGGING_FACE_HUB_TOKEN
+            - Arguments (vLLM serve arguments)
+                - `--model Qwen/Qwen2.5-7B-Instruct --enable-auto-tool-choice --tool-call-parser hermes --port 8080`
 4. Once successfully deployed, save the endpoint url and append `/v1` for later, as well as add an API token under the `Users` and save that as well.
 
 ---
@@ -143,11 +158,11 @@ print(token)
         - If you want to skip SSL verify, set this to the predictor's internal K8s service name (e.g. `http://<model_deployment_name>.<deployment_namespace>.svc.cluster.local/v1`)
     - **`NV_EMBEDQA_E5_V5_NIM_TOKEN` (Credential):**
         - Set this to your embedding model API Token created earlier during MLIS setup step
-    - **`QWEN_2_5_INSTRUCT` (Generic):**
-        - Set this to your Qwen LLM model endpoint URL created earlier during MLIS setup step
-        - If you want to skip SSL verify, set this to the predictor's internal K8s service name (e.g. `http://<model_deployment_name>.<deployment_namespace>.svc.cluster.local/v1`)
-    - **`QWEN_2_5_INSTRUCT_TOKEN` (Credential):**
-        - Set this to your Qwen LLM model API Token created earlier during MLIS setup step
+    - **`LLM_ENDPOINT` (Generic):**
+            - Set this to your LLM model endpoint URL created earlier during MLIS setup step
+            - If you want to skip SSL verify, set this to the predictor's internal K8s service name (e.g. `http://<model_deployment_name>.<deployment_namespace>.svc.cluster.local/v1`)
+    - **`LLM_TOKEN` (Credential):**
+            - Set this to your LLM model API Token created earlier during MLIS setup step
     - **Only for `langflow-agent-v1-4.json`:**
         - **`QDRANT_ENDPOINT` (Generic):**
             - Set this to the Qdrant endpoint URL from Qdrant setup step
@@ -170,8 +185,8 @@ print(token)
         - NVIDIA Base URL: Click in the Globe icon and select the `NV_EMBEDQA_E5_V5_NIM` environment variable
         - NVIDIA API Key: Click in the Globe icon and select the `NV_EMBEDQA_E5_V5_NIM_TOKEN` environment variable
     - **NVIDIA Component** (LLM connected to the Agent Component)
-        - NVIDIA Base URL: Click in the Globe icon and select the `QWEN_2_5_INSTRUCT` environment variable
-        - NVIDIA API Key: Click in the Globe icon and select the `QWEN_2_5_INSTRUCT_TOKEN` environment variable
+        - NVIDIA Base URL: Click in the Globe icon and select the `LLM_ENDPOINT` environment variable
+        - NVIDIA API Key: Click in the Globe icon and select the `LLM_TOKEN` environment variable
     - **Qdrant Component** (there are two of these)
         - Collection Name: Click in the Globe icon and select the `QDRANT_COLLECTION` environment variable
         - If your `QDRANT_ENDPOINT` variable is set to the Qdrant VirtualService endpoint URL
