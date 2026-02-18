@@ -1,0 +1,191 @@
+# Voice Agent v5.0.0 - Natural Conversation (Doubled Resources)
+
+replicaCount: 1
+
+nameOverride: ""
+fullnameOverride: ""
+
+# =============================================================================
+# WebSocket Server (DOUBLED)
+# =============================================================================
+websocketServer:
+  image:
+    repository: liavna/web-socket-server
+    pullPolicy: Always
+    tag: "5.0.0"
+  port: 8765
+  env: {}
+  resources:
+    requests:
+      cpu: "2000m"       # Was: 1000m
+      memory: "2048Mi"   # Was: 1024Mi
+    limits:
+      cpu: "8"           # Was: 4
+      memory: "4Gi"      # Was: 2Gi
+
+# =============================================================================
+# Gradio UI (DOUBLED)
+# =============================================================================
+gradioUi:
+  image:
+    repository: liavna/web-socket-server-ui
+    pullPolicy: Always
+    tag: "5.0.0"
+  port: 8080
+  env:
+    WEBSOCKET_URI: "ws://localhost:8765"
+  resources:
+    requests:
+      cpu: "1000m"       # Was: 500m
+      memory: "1024Mi"   # Was: 512Mi
+    limits:
+      cpu: "4"           # Was: 2
+      memory: "2Gi"      # Was: 1Gi
+
+# =============================================================================
+# XTTS v2 TTS Server (DOUBLED - except GPU)
+# =============================================================================
+xttsTts:
+  enabled: true
+  image:
+    repository: liavna/xtts-server
+    pullPolicy: Always
+    tag: "5.0.0"
+  port: 8000
+  env:
+    PORT: "8000"
+    DEFAULT_LANGUAGE: "en"
+    DEFAULT_SPEAKER: "Ana Florence"
+    PRELOAD_MODEL: "true"
+    CUDA_VISIBLE_DEVICES: "0"
+    COQUI_TOS_AGREED: "1"
+  resources:
+    requests:
+      cpu: "4"           # Was: 2
+      memory: "16Gi"     # Was: 8Gi
+      nvidia.com/gpu: 1  # UNCHANGED
+    limits:
+      cpu: "16"          # Was: 8
+      memory: "32Gi"     # Was: 16Gi
+      nvidia.com/gpu: 1  # UNCHANGED
+  # Model cache - saves 30+ seconds on restart (2GB download)
+  modelCache:
+    enabled: true
+    persistentVolumeClaim: "xtts-model-cache"
+    size: "5Gi"
+    accessMode: "ReadWriteOnce"
+    storageClassName: ""
+  speakersVolume:
+    enabled: false
+    persistentVolumeClaim: ""
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 60
+    periodSeconds: 30
+    timeoutSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+
+# =============================================================================
+# Istio Sidecar
+# =============================================================================
+istioSidecar:
+  enabled: false
+
+# =============================================================================
+# Istio / EZUA
+# =============================================================================
+ezua:
+  enabled: true
+  virtualService:
+    endpoint: "voice-agent.${DOMAIN_NAME}"
+    istioGateway: "istio-system/ezaf-gateway"
+
+# =============================================================================
+# Service
+# =============================================================================
+service:
+  type: ClusterIP
+  port: 8080
+  websocketPort: 8765
+  ttsPort: 8000
+
+# =============================================================================
+# Service Account
+# =============================================================================
+serviceAccount:
+  create: false
+  name: ""
+  annotations: {}
+
+# =============================================================================
+# Ingress
+# =============================================================================
+ingress:
+  enabled: false
+  className: "nginx"
+  annotations: {}
+  hosts:
+    - host: voice-agent.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+# =============================================================================
+# Pod Configuration
+# =============================================================================
+nodeSelector: {}
+
+tolerations:
+  - key: "nvidia.com/gpu"
+    operator: "Exists"
+    effect: "NoSchedule"
+
+affinity: {}
+
+podSecurityContext:
+  fsGroup: 1000
+
+securityContext:
+  # SECURITY NOTE: It is recommended to run as non-root (e.g., 1001) in production.
+  # Ensure Docker images support this (correct permissions on /app and /tmp).
+  runAsNonRoot: false
+  runAsUser: 0
+
+# =============================================================================
+# Autoscaling
+# =============================================================================
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 80
+
+# =============================================================================
+# Pod Disruption Budget
+# =============================================================================
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+# =============================================================================
+# Network Policy
+# =============================================================================
+networkPolicy:
+  enabled: false
+
+# =============================================================================
+# Monitoring
+# =============================================================================
+monitoring:
+  enabled: false
+  serviceMonitor:
+    enabled: false
+    interval: 30s

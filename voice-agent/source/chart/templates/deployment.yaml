@@ -1,0 +1,159 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "voice-agent.fullname" . }}
+  labels:
+    {{- include "voice-agent.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "voice-agent.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- if .Values.istioSidecar }}
+        {{- if not .Values.istioSidecar.enabled }}
+        sidecar.istio.io/inject: "false"
+        {{- end }}
+        {{- end }}
+      labels:
+        {{- include "voice-agent.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        # =====================================================
+        # Container 1: WebSocket Server
+        # =====================================================
+        - name: websocket-server
+          image: "{{ .Values.websocketServer.image.repository }}:{{ .Values.websocketServer.image.tag }}"
+          imagePullPolicy: {{ .Values.websocketServer.image.pullPolicy }}
+          ports:
+            - name: websocket
+              containerPort: {{ .Values.websocketServer.port }}
+              protocol: TCP
+            - name: health
+              containerPort: 8766
+              protocol: TCP
+          {{- if .Values.websocketServer.env }}
+          env:
+            {{- range $key, $value := .Values.websocketServer.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.websocketServer.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8766
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8766
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+        # =====================================================
+        # Container 2: Gradio UI
+        # =====================================================
+        - name: gradio-ui
+          image: "{{ .Values.gradioUi.image.repository }}:{{ .Values.gradioUi.image.tag }}"
+          imagePullPolicy: {{ .Values.gradioUi.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.gradioUi.port }}
+              protocol: TCP
+          env:
+            {{- range $key, $value := .Values.gradioUi.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.gradioUi.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /
+              port: {{ .Values.gradioUi.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /
+              port: {{ .Values.gradioUi.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+        # =====================================================
+        # Container 3: XTTS v2 TTS Server (GPU)
+        # =====================================================
+        {{- if .Values.xttsTts.enabled }}
+        - name: xtts-tts
+          image: "{{ .Values.xttsTts.image.repository }}:{{ .Values.xttsTts.image.tag }}"
+          imagePullPolicy: {{ .Values.xttsTts.image.pullPolicy }}
+          ports:
+            - name: tts
+              containerPort: {{ .Values.xttsTts.port }}
+              protocol: TCP
+          env:
+            {{- range $key, $value := .Values.xttsTts.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- if and .Values.xttsTts.modelCache .Values.xttsTts.modelCache.enabled }}
+            # Model cache directory
+            - name: TTS_HOME
+              value: "/model-cache"
+            - name: XDG_CACHE_HOME
+              value: "/model-cache"
+            {{- end }}
+          resources:
+            {{- toYaml .Values.xttsTts.resources | nindent 12 }}
+          {{- if .Values.xttsTts.livenessProbe }}
+          livenessProbe:
+            {{- toYaml .Values.xttsTts.livenessProbe | nindent 12 }}
+          {{- end }}
+          {{- if .Values.xttsTts.readinessProbe }}
+          readinessProbe:
+            {{- toYaml .Values.xttsTts.readinessProbe | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            {{- if and .Values.xttsTts.modelCache .Values.xttsTts.modelCache.enabled }}
+            - name: model-cache
+              mountPath: /model-cache
+            {{- end }}
+            {{- if and .Values.xttsTts.speakersVolume .Values.xttsTts.speakersVolume.enabled }}
+            - name: speakers
+              mountPath: /app/speakers
+            {{- end }}
+        {{- end }}
+      
+      volumes:
+        {{- if and .Values.xttsTts .Values.xttsTts.enabled .Values.xttsTts.modelCache .Values.xttsTts.modelCache.enabled }}
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: {{ .Values.xttsTts.modelCache.persistentVolumeClaim | default "xtts-model-cache" }}
+        {{- end }}
+        {{- if and .Values.xttsTts .Values.xttsTts.enabled .Values.xttsTts.speakersVolume .Values.xttsTts.speakersVolume.enabled }}
+        - name: speakers
+          persistentVolumeClaim:
+            claimName: {{ .Values.xttsTts.speakersVolume.persistentVolumeClaim }}
+        {{- end }}

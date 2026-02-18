@@ -1,0 +1,57 @@
+🎙️ Voice Agent has been deployed!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📦 DEPLOYMENT INFO:
+   Release:    {{ .Release.Name }}
+   Namespace:  {{ .Release.Namespace }}
+   Version:    {{ .Chart.AppVersion }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔗 ACCESS THE APPLICATION:
+
+{{- if .Values.ezua.enabled }}
+   External URL: https://{{ .Values.ezua.virtualService.endpoint }}
+{{- else if .Values.ingress.enabled }}
+   External URL: http://{{ (index .Values.ingress.hosts 0).host }}
+{{- else }}
+   Port Forward (for local access):
+   kubectl port-forward svc/{{ include "voice-agent.fullname" . }} 8080:{{ .Values.service.port }} -n {{ .Release.Namespace }}
+   
+   Then open: http://localhost:8080
+{{- end }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🐳 CONTAINERS:
+   1. WebSocket Server  - Port {{ .Values.websocketServer.port }}
+   2. Gradio UI         - Port {{ .Values.gradioUi.port }}
+{{- if .Values.xttsTts.enabled }}
+   3. XTTS v2 TTS       - Port {{ .Values.xttsTts.port }} (GPU)
+{{- end }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚙️  CONFIGURATION:
+   All settings (ASR, LLM, TTS language/speaker) are configured via the UI.
+   TTS Server is fixed to localhost:8000 (sidecar container).
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 CHECK STATUS:
+   kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}
+   kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }} -c gradio-ui
+   kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }} -c websocket-server
+{{- if .Values.xttsTts.enabled }}
+   kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }} -c xtts-tts
+{{- end }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🌐 SUPPORTED LANGUAGES (XTTS v2):
+   English, Spanish, French, German, Italian, Portuguese, Polish,
+   Turkish, Russian, Dutch, Czech, Arabic, Chinese, Japanese,
+   Hungarian, Korean, Hindi
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
