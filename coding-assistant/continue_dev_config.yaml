@@ -6,8 +6,8 @@ models:
   # Reference: https://docs.continue.dev/reference
   - name: open-webui
     provider: openai
-    apiBase: https://open-webui-pipelines.ingress.pcai0201.fr2.hpecolo.net
-    model: codegen_pipeline_pipeline
+    apiBase: https://open-webui-pipelines.<DOMAIN-NAME>
+    model: code_genearation_pipeline
     apiKey: 0p3n-w3bu!
     env:
       useLegacyCompletionsEndpoint: false    
@@ -17,10 +17,10 @@ models:
       - apply
     requestOptions:
       verifySsl: false
-  - name: qwen25-coder-7b-instruct
+  - name: coder_llm
     provider: vllm
-    apiBase: https://qwen25-coder-7b-instruct-predictor-santosh-nagaraj-5e85d353.ingress.pcai0103.sy6.hpecolo.net/v1
-    model: Qwen/Qwen2.5-Coder-7B-Instruct 
+    apiBase: <MODEL_ENDPOINT>/v1
+    model: MODEL_NAME 
     apiKey: ***********************
     roles:
       - autocomplete
