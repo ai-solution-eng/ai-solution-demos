@@ -1,4 +1,4 @@
-# Multilingual Voice Agent Demo -> change name to what?
+# Voice Agent Demo
 
 
 | Owner                 | Name              | Email                              |
@@ -225,23 +225,34 @@ To use those models, an API token will have to be generated for each of those th
         * Increase the sensitivity using the yellow sensitivity bar, which will make the application less sensitive to noise
         * Click on the red Stop button to stop your mic input being monitored
       * Use the New Session button to refresh the whole conversation history
-5. **(Optional) Check the SQL query and result**:
-    * Clicking on the "1 Source" button and then on the MCP server + Tool name will give you access to the list of parameters used by the model with that tool (the SQL query) and its output
-  ![check_query](images/check_query.PNG)
-6. **(Optional) Visualize Data on Superset**:
-    * Clicking on the "1 Source" button and then on the MCP server + Tool name will give you access to the list of parameters used by the model with that tool (the SQL query) and its output
-  ![check_query](images/check_query.PNG) 
+5. **(Optional) Chat with the agent with connection to database enabled**:
+    * Note: **This mode has only been tested in English**
+    * Go to the Database tab and tick the Enable Database Connection box
+    * Go back to the Voice Chat tab, and start a new session:
+      * Interacting with the agent isn't any different from before, but the conversation will be railroaded to assume you are a customer from the database (whose data can be viewed beforehand in the Data Viewer tab)
+      * You will be asked a 4-digit PIN to authentify (see Customers table in the Data Viewer for existing customers with their PINs - you can also add new customers from there)
+      * Then, you can play around with multiple manners, for example:
+        * Check your subscription, your invoice, your tickets
+        * Complain about something (creating a sentiment alert)
+        * Ask to open/close a ticket
+        * Ask to change your plan
+        * ...
+    * If you want to go back to the free-form chat agent, untick the Enable Database Connection box in the Database tab 
+7. **(Optional) Visualize Data on Superset**:
+    * A
 
 **Notes:**
-* cache
-* non-english languages for DB mode
+* All values to fill in the Gradio app are cached into your browser, except for the Database Admin password (used for creating/deleting tables). Refreshing/Closing/Reopening the app on the same browser shouldn't have an impact on its connection to the different models, but opening the window in incognito mode, or in another browser will force you to fill in all the required values again.
+* While only English has been tested with the Database-connected agent conversation, it may work with all languages supported by XTTS. Test it in advance if this is something you plan to demo.
 
-## Limitations
-* A
+## Comments on Performance and Latency
 
-
-## Advice
-
-
+* Significant performance discrepancies have been noted on the Whisper deployment:
+  * Using the Whisper-v3-large NIM proved to be running slow using H200 GPUs (~5s for audio transcription), but fast on L40S
+  * Earlier versions of vLLM would lead to wrong Whisper output on L40S, but the issue has been solved with v0.15.1   
+* Note that these observations are partial, and not the result of rigorous benchmarking. If you notice any performance issue with Whisper, test another deployment method: vLLM if previously using NIM, NIM or a different vLLM version if already using vLLM.
+* The chat model should be significantly faster than both Whisper and XTTS, and as such, shouldn't be a source of high latency
+* The XTTS deployment used by the app is entirely custom, and no easy-to-plug alternative is provided for this demo. That being said, the application helm chart does allow for built-in XTTS server deployment: enabling it from the values may slightly improve the overall latency of the app (fill localhost:8000 with no API token on the app in that case), at the cost of the application blocking one GPU while deployed on the instance.
 
 * ABC
+
