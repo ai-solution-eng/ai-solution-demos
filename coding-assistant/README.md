@@ -156,7 +156,83 @@ You will see the **code_generation_pipeline** set as default pipeline.
 ![Config of Continue Dev](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/coding-assistant/images/config_vscode_extension_continue_dev.PNG)
 
   
+**6. SSL Configuration for Corporate Network (Zscaler)**
 
+If you are running this setup from within the HPE corporate network, HTTPS traffic may be inspected by Zscaler.
+
+In such cases, the Continue Dev VS Code extension or any Node.js based request to the Open-WebUI pipeline may fail with an error similar to:
+
+```
+UNABLE_TO_GET_ISSUER_CERT_LOCALLY
+```
+
+Some users temporarily bypass this issue by setting:
+
+```
+NODE_TLS_REJECT_UNAUTHORIZED=0
+```
+
+This is not recommended, as it disables SSL verification entirely.
+
+Follow the steps below to properly configure your system.
+
+---
+
+**Step 1 – Export the Corporate Root Certificate**
+
+1. Press `Win + R`
+2. Type `certmgr.msc` and press Enter
+3. Navigate to:
+
+   Trusted Root Certification Authorities → Certificates
+
+4. Locate **Zscaler Root CA**
+5. Right click → All Tasks → Export
+6. Select:
+
+   Base-64 encoded X.509 (.CER)
+
+7. Save the file to:
+
+```
+C:\certs\zscaler-root.cer
+```
+
+(Create the `C:\certs` folder if it does not exist.)
+
+---
+
+**Step 2 – Configure Node.js to Trust the Certificate**
+
+Open a new PowerShell window and run:
+
+```
+setx NODE_EXTRA_CA_CERTS "C:\certs\zscaler-root.cer"
+```
+
+Close all terminal windows and restart VS Code completely so the environment variable is loaded.
+
+---
+
+**Step 3 – Verify the Configuration**
+
+Run the following command:
+
+```
+node -e "fetch('https://open-webui-pipelines.<cluster_domain_name>').then(r=>r.text()).then(console.log)"
+```
+
+If configured correctly, you should receive a valid response (for example `{"status":true}`) and no SSL related errors.
+
+---
+
+**Notes**
+
+- This only needs to be done once per machine.
+- Do not use `NODE_TLS_REJECT_UNAUTHORIZED=0` in production environments.
+- If you switch laptops, repeat the steps above.
+
+---
 
 
 
