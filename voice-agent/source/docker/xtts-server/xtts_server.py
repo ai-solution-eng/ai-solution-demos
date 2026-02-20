@@ -7,6 +7,7 @@ Supports: EN, ES, FR, DE, IT, PT, PL, TR, RU, NL, CS, AR, ZH, JA, HU, KO, HI
 
 GPU optimized for L40S
 v4.1.0 - Fixed audio format (returns proper WAV from synthesize)
+v4.2.0 - Fixed Japanese audio not being generated (installing additional libraries)
 """
 
 import os

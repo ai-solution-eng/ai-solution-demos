@@ -10,9 +10,9 @@ fullnameOverride: ""
 # =============================================================================
 websocketServer:
   image:
-    repository: liavna/web-socket-server
+    repository: tpomas/web-socket-server
     pullPolicy: Always
-    tag: "5.0.0"
+    tag: "5.2.0"
   port: 8765
   env: {}
   resources:
@@ -28,9 +28,9 @@ websocketServer:
 # =============================================================================
 gradioUi:
   image:
-    repository: liavna/web-socket-server-ui
+    repository: tpomas/web-socket-server-ui
     pullPolicy: Always
-    tag: "5.0.0"
+    tag: "5.2.0"
   port: 8080
   env:
     WEBSOCKET_URI: "ws://localhost:8765"
@@ -46,11 +46,11 @@ gradioUi:
 # XTTS v2 TTS Server (DOUBLED - except GPU)
 # =============================================================================
 xttsTts:
-  enabled: true
+  enabled: false
   image:
-    repository: liavna/xtts-server
+    repository: tpomas/xtts-server
     pullPolicy: Always
-    tag: "5.0.0"
+    tag: "5.2.0"
   port: 8000
   env:
     PORT: "8000"

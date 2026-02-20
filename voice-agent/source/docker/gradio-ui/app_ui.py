@@ -37,7 +37,7 @@ def db_connection(host, port, dbname, user, password):
 warnings.filterwarnings('ignore', message='.*pandas only supports SQLAlchemy.*')
 
 # Build Metadata
-BUILD_NUMBER = "5.1.4"
+BUILD_NUMBER = "5.2.0"
 
 # === CRITICAL FIX: Patch Audio component BEFORE any usage ===
 def apply_audio_patch():
@@ -2430,8 +2430,10 @@ DEFAULT_CONFIG = {
     "llm_model_name": os.getenv("LLM_MODEL_NAME", "meta-llama/Llama-3.2-1B-Instruct"),
     "llm_prompt_template": os.getenv("LLM_PROMPT_TEMPLATE", 'Answer the question: "{transcript}"\n\nAnswer concisely.'),
     "asr_server_address": os.getenv("ASR_SERVER_ADDRESS", "whisper-large-v3-predictor-00002-deployment.liav-hpe-com-ba9ce2f9.svc.cluster.local:9000"),
-    "asr_language_code": "en-US",  # Input is always English (Whisper)
+    "asr_api_key": os.getenv("ASR_API_KEY", ""),
+    "asr_language_code": "en" # set short language code instead of "en-US",  # Input is always English (Whisper)
     "tts_server_address": os.getenv("TTS_SERVER_ADDRESS", "localhost:8000"),
+    "tts_api_key": os.getenv("TTS_API_KEY", ""),
     "tts_language_code": os.getenv("TTS_LANGUAGE_CODE", "en"),  # XTTS language code
     "tts_voice": os.getenv("TTS_VOICE", "default"),  # XTTS uses default speaker
     # Database configuration
@@ -2458,6 +2460,10 @@ def check_service_status(url: str, service_type: str = "generic", timeout: float
         if not url:
             return {"status": "⚠️ Not configured", "latency": "-"}
         
+        headers = None 
+        if api_token:
+            headers = {"Authorization": f"Bearer {api_token}"}
+
         # Normalize URL
         original_url = url.strip()
         if not original_url.startswith('http'):
@@ -2474,7 +2480,7 @@ def check_service_status(url: str, service_type: str = "generic", timeout: float
             return {"status": "🔒 Internal (OK)", "latency": "N/A"}
         
         # Helper function to try a request and handle SSL/connection variations
-        def try_request(test_url, method="GET", json_data=None, headers=None):
+        def try_request(test_url, method="GET", json_data=None, headers=None, headers=None):
             try:
                 req_headers = headers or {}
                 if method == "GET":
@@ -2485,7 +2491,10 @@ def check_service_status(url: str, service_type: str = "generic", timeout: float
                 # Any HTTP response (including 4xx errors) means the server is alive
                 # 401/403 = auth required but server is up, 404 = endpoint not found but server is up
                 if response.status_code < 500:
-                    return {"status": "✅ Online", "latency": f"{latency:.0f}ms"}
+                    if response.status_code >= 400:
+                        return {"status": f"⚠️ {response.status_code} {response.reason}", "latency": f"{latency:.0f}ms"}
+                    else:
+                        return {"status": f"✅ {response.status_code} {response.reason}", "latency": f"{latency:.0f}ms"}
                 # Even 5xx might mean server is overloaded but responding
                 if response.status_code < 600:
                     return {"status": "⚠️ Responding (5xx)", "latency": f"{latency:.0f}ms"}
@@ -2512,7 +2521,8 @@ def check_service_status(url: str, service_type: str = "generic", timeout: float
         
         # Different endpoints for different services
         if service_type == "whisper":
-            endpoints = ['/v1/models', '/health', '/docs', '/']
+            #endpoints = ['/v1/models', '/health', '/docs', '/']
+            endpoints = ['/v1/models', '/v1/health/ready'] # /v1/models for vLLM deployment, /v1/health/ready for NIM
             for endpoint in endpoints:
                 result = try_request(f"{original_url}{endpoint}")
                 if result:
@@ -2529,12 +2539,12 @@ def check_service_status(url: str, service_type: str = "generic", timeout: float
             # Try multiple endpoints - prioritize common LLM API patterns
             # Many ingress-based LLMs respond to /v1/models or just the base URL
             test_urls = [
-                original_url,  # Try original URL first (user provided this URL for a reason)
-                f"{base_url}/v1/models",
-                base_url,
-                f"{base_url}/health", 
-                f"{base_url}/api/health",
-                f"{base_url}/v1",
+                #original_url,  # Try original URL first (user provided this URL for a reason)
+                f"{base_url}/v1/models" # Only test /v1/models, OpenAI API compliant models should have this
+                #base_url,
+                #f"{base_url}/health", 
+                #f"{base_url}/api/health",
+                #f"{base_url}/v1",
             ]
             
             # Remove duplicates while preserving order
@@ -2606,24 +2616,26 @@ def check_database_status(host, port, dbname, user, password):
         return f"❌ {str(e)[:30]}"
 
 
-def check_all_services(asr_server, tts_server, llm_api_base, 
+def check_all_services(asr_server, asr_api_key, tts_server, tts_api_key, llm_api_base, llm_api_key,
                        db_host, db_port, db_name, db_user, db_password, db_enabled):
     """Check status of all services"""
     timestamp = datetime.now().strftime("%H:%M:%S")
     results = []
     
     # ASR (Whisper) - usually internal cluster service
-    asr = check_service_status(asr_server, service_type="whisper")
-    asr_display = (asr_server[:50] + "...") if asr_server and len(asr_server) > 50 else (asr_server or 'N/A')
+    asr = check_service_status(asr_server, service_type="whisper", api_token=asr_api_key)
+    #asr_display = (asr_server[:50] + "...") if asr_server and len(asr_server) > 50 else (asr_server or 'N/A')
+    asr_display = asr_server if asr_server else "N/A"
     results.append(f"🎤 **ASR (Whisper):** {asr['status']} | {asr['latency']} | `{asr_display}`")
     
     # TTS (XTTS) - localhost in same pod
-    tts = check_service_status(tts_server, service_type="xtts")
+    tts = check_service_status(tts_server, service_type="xtts", api_token=tts_api_key)
     results.append(f"🔊 **TTS (XTTS):** {tts['status']} | {tts['latency']} | `{tts_server or 'N/A'}`")
     
     # LLM - external ingress
-    llm = check_service_status(llm_api_base, service_type="llm")
-    llm_display = (llm_api_base[:45] + "...") if llm_api_base and len(llm_api_base) > 45 else (llm_api_base or 'N/A')
+    llm = check_service_status(llm_api_base, service_type="llm", api_token=llm_api_key)
+    #llm_display = (llm_api_base[:45] + "...") if llm_api_base and len(llm_api_base) > 45 else (llm_api_base or 'N/A')
+    llm_display = llm_api_base if llm_api_base else "N/A"
     results.append(f"🤖 **LLM:** {llm['status']} | {llm['latency']} | `{llm_display}`")
     
     # Database
@@ -2750,8 +2762,10 @@ async def websocket_producer(audio_filepath, event_queue, settings):
                     "llm_model_name": settings.get('llm_model_name'),
                     "llm_prompt_template": settings.get('llm_prompt_template'),
                     "asr_server_address": settings.get('asr_server_address'),
+                    "asr_api_key": settings.get('asr_api_key'),
                     "asr_language_code": settings.get('asr_language_code'),
                     "tts_server_address": settings.get('tts_server_address'),
+                    "tts_api_key": settings.get('tts_api_key'),
                     "tts_language_code": settings.get('tts_language_code'),
                     "tts_voice": settings.get('tts_voice'),
                     "tts_sample_rate_hz": TTS_SAMPLE_RATE,
@@ -2844,8 +2858,8 @@ async def websocket_producer(audio_filepath, event_queue, settings):
 async def process_audio(
     audio_filepath,
     llm_api_base, llm_api_key, llm_model_name, llm_prompt_template,
-    asr_server_address, asr_language_code,
-    tts_server_address, tts_language_code, tts_voice,
+    asr_server_address, asr_api_key, asr_language_code,
+    tts_server_address, tts_api_key, tts_language_code, tts_voice,
     db_enabled, db_host, db_port, db_name, db_user, db_password,
     session_suffix="initial",
     client_session_id=None
@@ -2897,8 +2911,10 @@ async def process_audio(
         'llm_model_name': str(llm_model_name) if llm_model_name else "",
         'llm_prompt_template': str(llm_prompt_template) if llm_prompt_template else "",
         'asr_server_address': str(asr_server_address) if asr_server_address else "",
+        'asr_api_key': str(asr_api_key) if asr_api_key else "",
         'asr_language_code': str(asr_language_code) if asr_language_code else "en",
         'tts_server_address': str(tts_server_address) if tts_server_address else "",
+        'tts_api_key': str(tts_api_key) if tts_api_key else "",
         'tts_language_code': str(tts_language_code) if tts_language_code else "en",
         'tts_voice': str(tts_voice) if tts_voice else "default",
         'db_enabled': bool(db_enabled),
@@ -3296,11 +3312,11 @@ def create_ui():
         block_background_fill="white"
     )
     
-    with gr.Blocks(title="HPE AI Voice Agent v5.1.4", theme=modern_theme, css=custom_css) as demo:
+    with gr.Blocks(title="HPE AI Voice Agent v5.2.0", theme=modern_theme, css=custom_css) as demo:
         
         gr.Markdown("""
         # 🎙️ AI Voice Agent
-        ### Powered by HPE Private Cloud AI | v5.1.4
+        ### Powered by HPE Private Cloud AI | v5.2.0
         
         **Interaction Modes:**
         - **Push-to-Talk**: Record → Click Send → Listen to response
@@ -3593,6 +3609,7 @@ def create_ui():
                 gr.Markdown("*Whisper supports 99+ languages for input. The agent will understand any language but respond in the TTS language.*")
                 
                 asr_server_address = gr.Textbox(label="ASR Server", value=DEFAULT_CONFIG['asr_server_address'], elem_id="asr_server_address")
+                asr_api_key = gr.Textbox(label="ASR API Key", value=DEFAULT_CONFIG['asr_api_key'], type="password", elem_id="asr_api_key")
                 asr_language_code = gr.Dropdown(
                     label="Input Language (Your Speech)", 
                     choices=list(ASR_LANGUAGES.keys()),
@@ -3614,6 +3631,7 @@ def create_ui():
                 with gr.Tabs():
                     with gr.TabItem("Settings"):
                         tts_server_address = gr.Textbox(label="TTS Server", value=DEFAULT_CONFIG['tts_server_address'], elem_id="tts_server_address")
+                        tts_api_key = gr.Textbox(label="TTS API Key", value=DEFAULT_CONFIG['tts_api_key'], type="password", elem_id="tts_api_key")
                         tts_language_code = gr.Dropdown(
                             label="Response Language", 
                             choices=get_tts_language_codes(), 
@@ -3681,7 +3699,7 @@ def create_ui():
                             "Kazuhiko Atallah",    # 🇯🇵 Japanese accent - Professional
                         ]
                         
-                        ALL_XTTS_VOICES = ["default"] + XTTS_VOICES_FEMALE + XTTS_VOICES_MALE
+                        ALL_XTTS_VOICES = ["default"] + XTTS_VOICES_FEMALE + XTTS_VOICES_MALE # All original XTTS voices, not the cloned ones
                         
                         # Recommended voices per OFFICIALLY SUPPORTED language
                         # Note: Hebrew is NOT supported - will use English voices with Hebrew text
@@ -3764,11 +3782,14 @@ def create_ui():
                             return ALL_XTTS_VOICES
                         
                         # Gender selector
-                        voice_gender = gr.Radio(
-                            label="Voice Gender",
-                            choices=["All", "Female", "Male"],
-                            value="All",
-                            info="Filter voices by gender"
+                        #voice_gender = gr.Radio(
+                        voice_filter = gr.Radio(
+                            #label="Voice Gender",
+                            label="Voice Filter",
+                            #choices=["All", "Female", "Male"],
+                            choices=["All Recommended Voices", "Recommended Female Voices Only", "Recommended Male Voices Only", "Custom Cloned Voices Only", "All Voices"],
+                            value="All Recommended Voices",
+                            info="Filter voices to chose from"
                         )
 
                         tts_voice = gr.Dropdown(
@@ -3781,31 +3802,51 @@ def create_ui():
                         
                         # Update voice choices when language changes
                         def update_voice_choices(lang, gender):
-                            if lang in VOICES_BY_LANG:
-                                if gender == "Female":
-                                    choices = ["default"] + VOICES_BY_LANG[lang].get("female", [])
-                                elif gender == "Male":
-                                    choices = ["default"] + VOICES_BY_LANG[lang].get("male", [])
-                                else:
-                                    choices = get_voices_for_lang(lang)
-                            else:
-                                if gender == "Female":
-                                    choices = ["default"] + XTTS_VOICES_FEMALE
-                                elif gender == "Male":
-                                    choices = ["default"] + XTTS_VOICES_MALE
-                                else:
-                                    choices = ALL_XTTS_VOICES
+
+                            if voice_filter == "Recommended Female Voices Only":
+                                choices = ["default"] + VOICES_BY_LANG[lang].get("female", [])
+                                
+                            elif voice_filter == "Recommended Male Voices Only":
+                                choices = ["default"] + VOICES_BY_LANG[lang].get("male", [])
+                                
+                            elif voice_filter == "All Recommended Voices":
+                                choices = get_voices_for_lang(lang)
+                                
+                            else: # get all voices, remove default ones if custom cloned only
+                                headers = {"Authorization": f"Bearer {tts_api_key}"}
+                                info = requests.get(f"{tts_server_address}/info", verify=False, headers=headers)
+                                choices = ["default"] + ast.literal_eval(info.text)['speakers']
+                                
+                                if voice_filter == "Custom Cloned Voices Only":
+                                    for preexisting_voice in ALL_XTTS_VOICES:
+                                        if preexisting_voice in choices:
+                                            choices.remove(preexisting_voice)
+
+                            #if lang in VOICES_BY_LANG:
+                            #    if gender == "Female":
+                            #        choices = ["default"] + VOICES_BY_LANG[lang].get("female", [])
+                            #    elif gender == "Male":
+                            #        choices = ["default"] + VOICES_BY_LANG[lang].get("male", [])
+                            #    else:
+                            #        choices = get_voices_for_lang(lang)
+                            #else:
+                            #    if gender == "Female":
+                            #        choices = ["default"] + XTTS_VOICES_FEMALE
+                            #    elif gender == "Male":
+                            #        choices = ["default"] + XTTS_VOICES_MALE
+                            #    else:
+                            #        choices = ALL_XTTS_VOICES
                             return gr.update(choices=choices, value=choices[1] if len(choices) > 1 else "default")
                         
                         tts_language_code.change(
                             fn=update_voice_choices,
-                            inputs=[tts_language_code, voice_gender],
+                            inputs=[tts_language_code, voice_filter, tts_server_address, tts_api_key],
                             outputs=[tts_voice]
                         )
                         
-                        voice_gender.change(
+                        voice_filter.change(
                             fn=update_voice_choices,
-                            inputs=[tts_language_code, voice_gender],
+                            inputs=[tts_language_code, voice_filter, tts_server_address, tts_api_key],
                             outputs=[tts_voice]
                         )
                     
@@ -3820,19 +3861,24 @@ def create_ui():
                         clone_btn = gr.Button("🧬 Upload & Clone Voice", variant="primary")
                         clone_status = gr.Textbox(label="Status", interactive=False)
                         
-                        def upload_voice(name, file_obj, server_url):
+                        def upload_voice(name, file_obj, server_url, tts_api_key):
                             if not name or not file_obj:
                                 return "❌ Name and file are required"
                             
+                            headers = None
+                            if tts_api_key:
+                                headers = {"Authorization": f"Bearer {tts_api_key}"}
+
                             try:
-                                url = f"http://{server_url}/speakers/upload"
+                                #url = f"http://{server_url}/speakers/upload"
+                                url = f"{server_url}/speakers/upload"
                                 if not server_url.startswith('http'):
                                     url = f"http://{server_url}/speakers/upload"
                                     
                                 files = {'audio': open(file_obj, 'rb')}
                                 data = {'name': name}
                                 
-                                response = requests.post(url, files=files, data=data, timeout=30)
+                                response = requests.post(url, files=files, data=data, timeout=30, verify=False, headers=headers)
                                 
                                 if response.status_code == 200:
                                     return f"✅ Success! Voice '{name}' cloned and saved."
@@ -3843,7 +3889,7 @@ def create_ui():
                         
                         clone_btn.click(
                             fn=upload_voice,
-                            inputs=[clone_name, clone_file, tts_server_address],
+                            inputs=[clone_name, clone_file, tts_server_address, tts_api_key],
                             outputs=[clone_status]
                         )
             
@@ -4110,7 +4156,7 @@ def create_ui():
             
             with gr.TabItem("ℹ️ About"):
                 gr.Markdown(f"""
-                ## 🎙️ AI Voice Agent v5.1.4
+                ## 🎙️ AI Voice Agent v5.2.0
                 
                 **Official XTTS v2 Voices & Retention Logic - Powered by HPE Private Cloud AI**
                 
@@ -4193,7 +4239,14 @@ def create_ui():
                 *   **Sentiment Analysis:** Detects customer frustration and churn risk automatically.
                 
                 ### 📋 Changelog
-                
+                **v5.2.0 - Adapting demo for easier use within PCAI**
+                *   API keys for Whisper and XTTS models to use MLIS endpoints
+                *   Whisper can be served with vLLM
+                *   Improved Model Status checks
+                *   Option to use any voice for every language
+                *   Increased agent's sensitivity to interruptions
+                *   Fixed various other issues
+
                 **v5.1.4 - Official Voices & Retention**
                 *   Official XTTS v2 voices only (33 verified)
                 *   Hebrew marked as experimental
@@ -4526,7 +4579,7 @@ def create_ui():
         # Status monitoring
         check_status_btn.click(
             fn=check_all_services,
-            inputs=[asr_server_address, tts_server_address, llm_api_base,
+            inputs=[asr_server_address, asr_api_key, tts_server_address, tts_api_key, llm_api_base, llm_api_key,
                     db_host, db_port, db_name, db_user, db_password, db_enabled],
             outputs=[service_status_display]
         )
@@ -4534,21 +4587,21 @@ def create_ui():
         # Audio processing - Uses global cache for customer info persistence
         all_inputs = [
             input_audio, llm_api_base, llm_api_key, llm_model_name, llm_prompt_template,
-            asr_server_address, asr_language_code, tts_server_address, tts_language_code, tts_voice,
+            asr_server_address, asr_api_key, asr_language_code, tts_server_address, tts_api_key, tts_language_code, tts_voice,
             db_enabled, db_host, db_port, db_name, db_user, db_password, session_suffix, client_session_id
         ]
         submit_btn.click(fn=process_audio, inputs=all_inputs, outputs=[audio_data_holder, status_log, input_audio, customer_info_display, performance_display, rich_card_display])
         
         upload_inputs = [
             upload_audio, llm_api_base, llm_api_key, llm_model_name, llm_prompt_template,
-            asr_server_address, asr_language_code, tts_server_address, tts_language_code, tts_voice,
+            asr_server_address, asr_api_key, asr_language_code, tts_server_address, tts_api_key, tts_language_code, tts_voice,
             db_enabled, db_host, db_port, db_name, db_user, db_password, session_suffix, client_session_id
         ]
         submit_upload_btn.click(fn=process_audio, inputs=upload_inputs, outputs=[audio_data_holder, status_log, upload_audio, customer_info_display, performance_display, rich_card_display])
         
         conv_inputs = [
             conv_audio, llm_api_base, llm_api_key, llm_model_name, llm_prompt_template,
-            asr_server_address, asr_language_code, tts_server_address, tts_language_code, tts_voice,
+            asr_server_address, asr_api_key, asr_language_code, tts_server_address, tts_api_key, tts_language_code, tts_voice,
             db_enabled, db_host, db_port, db_name, db_user, db_password, session_suffix, client_session_id
         ]
         conv_audio.change(fn=process_audio, inputs=conv_inputs, outputs=[audio_data_holder, status_log, conv_audio, customer_info_display, performance_display, rich_card_display])
@@ -5128,8 +5181,8 @@ def create_ui():
                 fields: [
                     'llm_api_base', 'llm_api_key', 'llm_model', 'agent_persona',
                     'db_host', 'db_port', 'db_name', 'db_user', 'db_password',
-                    'tts_server_address', 'tts_language_code',
-                    'asr_server_address', 'asr_language_code',
+                    'tts_server_address', 'tts_api_key', 'tts_language_code',
+                    'asr_server_address', 'asr_api_key', 'asr_language_code',
                     'sensitivity-slider'
                 ],
                 
@@ -6025,15 +6078,15 @@ def create_ui():
                         const isGracePeriod = window.vad.currentAudio && (window.vad.currentAudio.currentTime < 1.5);
                         
                         // Dynamic barge-in threshold:
-                        // 1. Must be significantly louder than background (threshold * 3.0)
-                        // 2. Must be sustained for longer (15 frames = ~0.35s)
+                        // 1. Must be significantly louder than background (threshold * 3.0) -> lower to 2 + reduce min threshold to 20 instead of 40
+                        // 2. Must be sustained for longer (15 frames = ~0.35s) -> set to 10 frames instead
                         // 3. Absolute minimum volume requirement (40) to avoid quiet echo triggering it
-                        const bargeInThreshold = Math.max(40, startThreshold * 3.0);
+                        const bargeInThreshold = Math.max(20, startThreshold * 2.0);
                         
                         if (window.vad.paused && !isGracePeriod && avgLevel > bargeInThreshold) {
                             window.vad.consecutiveSpeech++;
                             // Require ~350ms of continuous loud speech to interrupt
-                            if (window.vad.consecutiveSpeech >= 15) { 
+                            if (window.vad.consecutiveSpeech >= 10) { 
                                 console.log('[VAD] Barge-in triggered: Level ' + avgLevel + ' > ' + bargeInThreshold);
                                 handleBargeIn();
                             }
@@ -6171,7 +6224,7 @@ def create_ui():
     return demo
 
 if __name__ == "__main__":
-    print(f"Starting Voice Agent v5.1.4 (Build {BUILD_NUMBER}) - Official XTTS v2 Voices, Customer Retention, 17 Languages...")
+    print(f"Starting Voice Agent v5.2.0 (Build {BUILD_NUMBER}) - Official XTTS v2 Voices, Customer Retention, 17 Languages...")
     demo = create_ui()
     demo.queue()
     demo.launch(server_name="0.0.0.0", server_port=8080, show_error=True)

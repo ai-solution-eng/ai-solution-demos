@@ -45,6 +45,10 @@ RUN pip install --no-cache-dir \
 # Clean pip cache to reduce image size
 RUN pip cache purge || true
 
+# This is needed for japanese
+RUN pip install cutlet==0.5.0
+RUN pip install 'fugashi[unidic-lite]'
+
 # Create directories
 RUN mkdir -p /app/speakers /model-cache
 

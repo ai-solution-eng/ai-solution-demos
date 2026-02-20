@@ -1,5 +1,17 @@
 # FILE: docker/websocket_server/app.py
-# Version: 5.1.4 - Official XTTS v2 Voices & Retention Logic
+# Version: 5.2.0 - Adapting demo for easier use within PCAI, by a wider audience
+# Changes v5.2.0:
+#   - API keys can be passed to the Gradio app for Whisper and XTTS models, allowing the possibility to copy-paste endpoints provided by MLIS. No need to use the internal service URL of Whisper, nor to have the app deploy its own XTTS server (although both remain possible - leave API key fields empty in that case)  
+#   - Caching API key values for both Whisper and XTTS: no need to fill those fields again when refreshing the application page
+#   - Made the app compatible with vLLM for Whisper deployments using short language codes, making NIM not the only option
+#   - Made the agent's responses more easily interruptible by increasing sensitivity to user's input
+#   - Improved Model Status check - will return response code and reason
+#   - All XTTS voices can be selected regardless of output language: recommended ones are hightlighted in a list of their own
+#   - Made interaction with Database theoretically work in all 17 XTTS-supported languages by providing missing translations where needed
+#   - Fixed issue with chat history being ignored in standard chat mode
+#   - Fixed issue with voice cloning failing using external (MLIS) XTTS server
+#   - Fixed issue with custom cloned voices not appearing for selection
+#   - Fixed issue with xTTS not being able to generate output for Japanese characters
 # Changes v5.1.4:
 #   - Official XTTS v2 voices only (33 verified speakers)
 #   - Hebrew marked as experimental (not officially supported)
@@ -85,7 +97,7 @@ except ImportError:
     ASYNCPG_AVAILABLE = False
 
 # Build Metadata
-BUILD_NUMBER = "5.1.4"
+BUILD_NUMBER = "5.2.0"
 
 # =============================================================================
 # GLOBAL CONNECTION POOLS (Performance improvement)
@@ -297,9 +309,11 @@ DEFAULT_SETTINGS = {
     "llm_model_name": os.getenv("LLM_MODEL_NAME", "meta-llama/Llama-3.2-1B-Instruct"),
     # ASR - Whisper
     "asr_server_address": os.getenv("ASR_SERVER_ADDRESS", "whisper-large-v3-predictor-00002-deployment.liav-hpe-com-ba9ce2f9.svc.cluster.local:9000"),
+    "asr_api_key": os.getenv("ASR_API_KEY"),
     "asr_language_code": os.getenv("ASR_LANGUAGE_CODE", "en"),
     # TTS - XTTS v2
     "tts_server_address": os.getenv("TTS_SERVER_ADDRESS", "localhost:8000"),
+    "tts_api_key": os.getenv("TTS_API_KEY"),
     "tts_language_code": os.getenv("TTS_LANGUAGE_CODE", "en"),
     "tts_speaker": os.getenv("TTS_SPEAKER", ""),
     "tts_sample_rate_hz": int(os.getenv("TTS_SAMPLE_RATE_HZ", "24000")),
@@ -317,32 +331,32 @@ SENTENCE_TERMINATORS = ['.', '?', '!']
 # =============================================================================
 # LOCALE MAPPING - For ASR language codes (moved outside function for performance)
 # =============================================================================
-LOCALE_MAP = {
-    'en': 'en-US', 'he': 'he-IL', 'es': 'es-ES', 'fr': 'fr-FR',
-    'de': 'de-DE', 'it': 'it-IT', 'pt': 'pt-PT', 'pl': 'pl-PL',
-    'tr': 'tr-TR', 'ru': 'ru-RU', 'nl': 'nl-NL', 'cs': 'cs-CZ',
-    'ar': 'ar-SA', 'zh': 'zh-CN', 'ja': 'ja-JP', 'hu': 'hu-HU',
-    'ko': 'ko-KR', 'hi': 'hi-IN', 'vi': 'vi-VN', 'th': 'th-TH',
-    'uk': 'uk-UA', 'el': 'el-GR', 'ro': 'ro-RO', 'sv': 'sv-SE',
-    'da': 'da-DK', 'fi': 'fi-FI', 'no': 'no-NO', 'bg': 'bg-BG',
-    'ca': 'ca-ES', 'hr': 'hr-HR', 'et': 'et-EE', 'id': 'id-ID',
-    'lv': 'lv-LV', 'lt': 'lt-LT', 'ms': 'ms-MY', 'sk': 'sk-SK',
-    'sl': 'sl-SI', 'tl': 'tl-PH', 'ta': 'ta-IN', 'te': 'te-IN',
-    'ur': 'ur-PK', 'cy': 'cy-GB', 'sw': 'sw-KE', 'af': 'af-ZA',
-    'is': 'is-IS', 'km': 'km-KH', 'lo': 'lo-LA', 'mk': 'mk-MK',
-    'ml': 'ml-IN', 'mr': 'mr-IN', 'my': 'my-MM', 'ne': 'ne-NP',
-    'sr': 'sr-RS', 'si': 'si-LK', 'hy': 'hy-AM', 'az': 'az-AZ',
-    'be': 'be-BY', 'bs': 'bs-BA', 'gl': 'gl-ES', 'ka': 'ka-GE',
-    'gu': 'gu-IN', 'kn': 'kn-IN', 'kk': 'kk-KZ', 'ky': 'ky-KG',
-    'mn': 'mn-MN', 'fa': 'fa-IR', 'sd': 'sd-PK', 'tt': 'tt-RU',
-    'uz': 'uz-UZ', 'am': 'am-ET', 'jw': 'jv-ID', 'su': 'su-ID',
-    'ha': 'ha-NG', 'yo': 'yo-NG', 'ln': 'ln-CD', 'so': 'so-SO',
-    'ps': 'ps-AF', 'yi': 'yi-001',
-    'bn': 'bn-IN', 'pa': 'pa-IN', 'sq': 'sq-AL', 'la': 'la-VA',
-    'mi': 'mi-NZ', 'ht': 'ht-HT', 'mg': 'mg-MG', 'mt': 'mt-MT',
-    'sn': 'sn-ZW', 'tg': 'tg-TJ', 'uz': 'uz-UZ', 'xh': 'xh-ZA',
-    'zu': 'zu-ZA',
-}
+#LOCALE_MAP = {
+#    'en': 'en-US', 'he': 'he-IL', 'es': 'es-ES', 'fr': 'fr-FR',
+#    'de': 'de-DE', 'it': 'it-IT', 'pt': 'pt-PT', 'pl': 'pl-PL',
+#    'tr': 'tr-TR', 'ru': 'ru-RU', 'nl': 'nl-NL', 'cs': 'cs-CZ',
+#    'ar': 'ar-SA', 'zh': 'zh-CN', 'ja': 'ja-JP', 'hu': 'hu-HU',
+#    'ko': 'ko-KR', 'hi': 'hi-IN', 'vi': 'vi-VN', 'th': 'th-TH',
+#    'uk': 'uk-UA', 'el': 'el-GR', 'ro': 'ro-RO', 'sv': 'sv-SE',
+#    'da': 'da-DK', 'fi': 'fi-FI', 'no': 'no-NO', 'bg': 'bg-BG',
+#    'ca': 'ca-ES', 'hr': 'hr-HR', 'et': 'et-EE', 'id': 'id-ID',
+#    'lv': 'lv-LV', 'lt': 'lt-LT', 'ms': 'ms-MY', 'sk': 'sk-SK',
+#    'sl': 'sl-SI', 'tl': 'tl-PH', 'ta': 'ta-IN', 'te': 'te-IN',
+#    'ur': 'ur-PK', 'cy': 'cy-GB', 'sw': 'sw-KE', 'af': 'af-ZA',
+#    'is': 'is-IS', 'km': 'km-KH', 'lo': 'lo-LA', 'mk': 'mk-MK',
+#    'ml': 'ml-IN', 'mr': 'mr-IN', 'my': 'my-MM', 'ne': 'ne-NP',
+#    'sr': 'sr-RS', 'si': 'si-LK', 'hy': 'hy-AM', 'az': 'az-AZ',
+#    'be': 'be-BY', 'bs': 'bs-BA', 'gl': 'gl-ES', 'ka': 'ka-GE',
+#    'gu': 'gu-IN', 'kn': 'kn-IN', 'kk': 'kk-KZ', 'ky': 'ky-KG',
+#    'mn': 'mn-MN', 'fa': 'fa-IR', 'sd': 'sd-PK', 'tt': 'tt-RU',
+#    'uz': 'uz-UZ', 'am': 'am-ET', 'jw': 'jv-ID', 'su': 'su-ID',
+#    'ha': 'ha-NG', 'yo': 'yo-NG', 'ln': 'ln-CD', 'so': 'so-SO',
+#    'ps': 'ps-AF', 'yi': 'yi-001',
+#    'bn': 'bn-IN', 'pa': 'pa-IN', 'sq': 'sq-AL', 'la': 'la-VA',
+#    'mi': 'mi-NZ', 'ht': 'ht-HT', 'mg': 'mg-MG', 'mt': 'mt-MT',
+#    'sn': 'sn-ZW', 'tg': 'tg-TJ', 'uz': 'uz-UZ', 'xh': 'xh-ZA',
+#    'zu': 'zu-ZA',
+#}
 
 # =============================================================================
 # CIRCUIT BREAKER - Prevents cascading failures when services are down
@@ -561,6 +575,14 @@ NUMBER_WORDS = {
         'शून्य': '0', 'एक': '1', 'दो': '2', 'तीन': '3', 'चार': '4',
         'पांच': '5', 'छह': '6', 'सात': '7', 'आठ': '8', 'नौ': '9',
     },
+    'hu': {
+    'nulla': '0', 'egy': '1', 'kettő': '2', 'három': '3', 'négy': '4',
+    'öt': '5', 'hat': '6', 'hét': '7', 'nyolc': '8', 'kilenc': '9',
+    },
+    'cs': {
+    'nula': '0', 'jeden': '1', 'dva': '2', 'tři': '3', 'čtyři': '4',
+    'pět': '5', 'šest': '6', 'sedm': '7', 'osm': '8', 'devět': '9',
+    }
 }
 
 # =============================================================================
@@ -988,195 +1010,27 @@ NEGATIVE_SENTIMENT_KEYWORDS = {
 # Churn risk indicators - phrases that suggest customer might leave
 # Expanded with more variations and languages
 CHURN_INDICATORS = {
-    'en': [
-        'cancel subscription', 'close account', 'switch to', 'moving to', 'looking elsewhere', 
-        'had enough', 'last chance', 'final warning', 'cancel my plan', 'stop service',
-        'end my contract', 'unsubscribe', 'delete my account', 'remove me', 'too expensive',
-        'found better', 'cheaper elsewhere', 'not worth it', 'waste of money', 'goodbye forever'
-    ],
-    'he': [
-        'לבטל מנוי', 'לסגור חשבון', 'לעבור ל', 'מחפש מקום אחר', 'נמאס לי', 'הזדמנות אחרונה',
-        'לבטל את התוכנית', 'להפסיק שירות', 'לסיים חוזה', 'להסיר אותי', 'יקר מדי',
-        'מצאתי יותר טוב', 'יותר זול', 'לא שווה', 'בזבוז כסף', 'שלום ולא להתראות',
-        'רוצה להתנתק', 'תנתקו אותי', 'עובר למתחרים'
-    ],
-    'es': [
-        'cancelar suscripción', 'cerrar cuenta', 'cambiar a', 'buscar otro', 'harto',
-        'última oportunidad', 'advertencia final', 'cancelar mi plan', 'detener servicio',
-        'terminar contrato', 'darse de baja', 'borrar cuenta', 'eliminarme', 'muy caro',
-        'encontré mejor', 'más barato', 'no vale la pena', 'pérdida de dinero', 'adiós para siempre'
-    ],
-    'fr': [
-        'annuler abonnement', 'fermer compte', 'changer pour', 'chercher ailleurs',
-        'j\'en ai assez', 'dernière chance', 'dernier avertissement', 'arrêter service',
-        'résilier contrat', 'supprimer compte', 'trop cher', 'trouvé mieux', 'adieu pour toujours'
-    ],
-    'de': [
-        'Abonnement kündigen', 'Konto schließen', 'wechseln zu', 'woanders suchen',
-        'genug davon', 'letzte Chance', 'letzte Warnung', 'Vertrag kündigen',
-        'zu teuer', 'Besseres gefunden', 'nie wieder', 'auf Wiedersehen'
-    ],
-    'ja': [
-        'サブスクリプションをキャンセル', 'アカウントを閉じる', '乗り換える', '他を探す',
-        'もう十分', '最後のチャンス', '解約', '高すぎる', 'もっと良いものを見つけた'
-    ],
-    'it': [
-        'arrabbiato', 'furioso', 'frustrato', 'deluso', 'terribile', 'orribile',
-        'odio', 'inaccettabile', 'ridicolo', 'cancellare', 'rimborso', 'reclamo',
-        'avvocato', 'denuncia', 'responsabile', 'truffa', 'inutile', 'spreco di tempo',
-        'stufo', 'stanco', 'vergogna', 'mai più', 'rotto', 'lento', 'pessimo servizio',
-        'maleducato', 'non funziona', 'concorrenza', 'vado via', 'disdire',
-    ],
-    'pt': [
-        'bravo', 'furioso', 'frustrado', 'decepcionado', 'terrível', 'horrível',
-        'odeio', 'inaceitável', 'ridículo', 'cancelar', 'reembolso', 'reclamação',
-        'gerente', 'supervisor', 'advogado', 'processo', 'golpe', 'fraude', 'inútil',
-        'perda de tempo', 'farto', 'cansado', 'vergonha', 'nunca mais', 'quebrado',
-        'lento', 'péssimo serviço', 'grosseiro', 'não funciona', 'concorrente',
-        'vou sair', 'encerrar', 'lixo', 'porcaria',
-    ],
-    'tr': [
-        'kızgın', 'öfkeli', 'hayal kırıklığı', 'berbat', 'korkunç', 'en kötü',
-        'nefret', 'kabul edilemez', 'saçma', 'iptal', 'iade', 'şikayet',
-        'müdür', 'yönetici', 'avukat', 'dava', 'dolandırıcılık', 'gereksiz',
-        'zaman kaybı', 'bıktım', 'yoruldum', 'rezalet', 'bir daha asla', 'bozuk',
-        'yavaş', 'kötü hizmet', 'kaba', 'çalışmıyor', 'rakip', 'gidiyorum',
-        'kapatmak', 'lanet', 'rezil',
-    ],
-    'pl': [
-        'zły', 'wściekły', 'sfrustrowany', 'rozczarowany', 'okropny', 'straszny',
-        'najgorszy', 'nienawidzę', 'nieakceptowalne', 'śmieszne', 'anulować', 'zwrot',
-        'skarga', 'kierownik', 'prawnik', 'oszustwo', 'bezużyteczne', 'strata czasu',
-        'mam dość', 'zmęczony', 'wstyd', 'nigdy więcej', 'zepsute', 'wolne',
-        'zła obsługa', 'niegrzeczny', 'nie działa', 'konkurencja', 'odchodzę',
-        'zamknąć', 'beznadziejny', 'tragedia',
-    ],
-    'nl': [
-        'boos', 'woedend', 'gefrustreerd', 'teleurgesteld', 'verschrikkelijk', 'vreselijk',
-        'slechtste', 'haat', 'onacceptabel', 'belachelijk', 'annuleren', 'terugbetaling',
-        'klacht', 'manager', 'advocaat', 'oplichting', 'nutteloos', 'tijdverspilling',
-        'zat', 'moe', 'schande', 'nooit meer', 'kapot', 'traag', 'slechte service',
-        'onbeleefd', 'werkt niet', 'concurrent', 'ik ga weg', 'opzeggen', 'waardeloos',
-    ],
-    'ko': [
-        '화난', '분노', '좌절', '실망', '끔찍한', '최악', '싫어', '용납할 수 없는',
-        '어이없는', '취소', '환불', '불만', '매니저', '변호사', '사기', '쓸모없는',
-        '시간 낭비', '지겨운', '지친', '수치', '절대 다시는', '고장', '느린',
-        '나쁜 서비스', '무례한', '작동 안함', '경쟁사', '떠날 거야', '해지', '엉망',
-    ],
-    'hi': [
-        'gussa', 'naraz', 'niraash', 'bekaar', 'sabse bura', 'nafrat',
-        'namumkin', 'radd', 'wapas', 'shikayat', 'manager', 'vakeel',
-        'dhokha', 'scam', 'faltu', 'samay ki barbadi', 'thak gaya',
-        'sharm', 'kabhi nahi', 'kharab', 'dheema', 'gandi service',
-        'kaam nahi kar raha', 'chhod raha hu', 'band karo',
-        # Devanagari
-        'गुस्सा', 'नाराज़', 'निराश', 'बेकार', 'सबसे बुरा', 'नफरत',
-        'रद्द', 'वापस', 'शिकायत', 'मैनेजर', 'वकील', 'धोखा', 'घोटाला',
-        'फालतू', 'समय की बर्बादी', 'थक गया', 'शर्म', 'कभी नहीं',
-        'खराब', 'धीमा', 'गंदी सर्विस', 'काम नहीं कर रहा', 'छोड़ रहा हूं', 'बंद करो'
-    ]
+'en': ['cancel subscription', 'close account', 'switch to', 'moving to', 'looking elsewhere', 'had enough', 'last chance', 'final warning', 'cancel my plan', 'stop service', 'end my contract', 'unsubscribe', 'delete my account', 'remove me', 'too expensive', 'found better', 'cheaper elsewhere', 'not worth it', 'waste of money', 'goodbye forever'],
+'he': ['לבטל מנוי', 'לסגור חשבון', 'לעבור ל', 'מחפש מקום אחר', 'נמאס לי', 'הזדמנות אחרונה', 'לבטל את התוכנית', 'להפסיק שירות', 'לסיים חוזה', 'להסיר אותי', 'יקר מדי', 'מצאתי יותר טוב', 'יותר זול', 'לא שווה', 'בזבוז כסף', 'שלום ולא להתראות', 'רוצה להתנתק', 'תנתקו אותי', 'עובר למתחרים'],
+'es': ['cancelar suscripción', 'cerrar cuenta', 'cambiar a', 'buscar otro', 'harto', 'última oportunidad', 'advertencia final', 'cancelar mi plan', 'detener servicio', 'terminar contrato', 'darse de baja', 'borrar cuenta', 'eliminarme', 'muy caro', 'encontré mejor', 'más barato', 'no vale la pena', 'pérdida de dinero', 'adiós para siempre'],
+'fr': ['annuler abonnement', 'fermer compte', 'changer pour', 'chercher ailleurs', "j'en ai assez", 'dernière chance', 'dernier avertissement', 'arrêter service', 'résilier contrat', 'supprimer compte', 'trop cher', 'trouvé mieux', 'adieu pour toujours', 'finir contrat', 'se désabonner', 'moins cher', 'ça ne vaut pas la peine', "perte d'argent", 'adieu'],
+'de': ['Abonnement kündigen', 'Konto schließen', 'wechseln zu', 'woanders suchen', 'genug davon', 'letzte Chance', 'letzte Warnung', 'Vertrag kündigen', 'zu teuer', 'Besseres gefunden', 'nie wieder', 'auf Wiedersehen', 'abo kündigen', 'konto schließen', 'habe genug', 'letzte chance', 'letzte warnung', 'plan kündigen', 'dienst stoppen', 'vertrag beenden', 'abmelden', 'konto löschen', 'besser gefunden', 'billiger woanders', 'nicht wert', 'geldverschwendung'],
+'ja': ['サブスクリプションをキャンセル', 'アカウントを閉じる', '乗り換える', '他を探す', 'もう十分', '最後のチャンス', '解約', '高すぎる', 'もっと良いものを見つけた', 'アカウントを閉鎖', 'に切り替える', '最後の警告', 'プランをキャンセル', 'サービスを停止', '契約を終了', '退会', 'アカウントを削除', '安い', '価値がない', '金の無駄'],
+'it': ['arrabbiato', 'furioso', 'frustrato', 'deluso', 'terribile', 'orribile', 'odio', 'inaccettabile', 'ridicolo', 'cancellare', 'rimborso', 'reclamo', 'avvocato', 'denuncia', 'responsabile', 'truffa', 'inutile', 'spreco di tempo', 'stufo', 'stanco', 'vergogna', 'mai più', 'rotto', 'lento', 'pessimo servizio', 'maleducato', 'non funziona', 'concorrenza', 'vado via', 'disdire', 'cancellare abbonamento', 'chiudere account', 'passare a', 'cercare altrove', 'ne ho abbastanza', 'ultima possibilità', 'ultimo avviso', 'fermare servizio', 'terminare contratto', 'disiscriversi', 'eliminare account', 'troppo costoso', 'trovato meglio', 'più economico', 'non ne vale la pena', 'spreco di denaro'],
+'pt': ['bravo', 'furioso', 'frustrado', 'decepcionado', 'terrível', 'horrível', 'odeio', 'inaceitável', 'ridículo', 'cancelar', 'reembolso', 'reclamação', 'gerente', 'supervisor', 'advogado', 'processo', 'golpe', 'fraude', 'inútil', 'perda de tempo', 'farto', 'cansado', 'vergonha', 'nunca mais', 'quebrado', 'lento', 'péssimo serviço', 'grosseiro', 'não funciona', 'concorrente', 'vou sair', 'encerrar', 'lixo', 'porcaria', 'cancelar assinatura', 'fechar conta', 'mudar para', 'procurar outro', 'já chega', 'última chance', 'aviso final', 'parar serviço', 'encerrar contrato', 'cancelar inscrição', 'excluir conta', 'muito caro', 'encontrei melhor', 'mais barato', 'não vale a pena', 'perda de dinheiro', 'adeus'],
+'tr': ['kızgın', 'öfkeli', 'hayal kırıklığı', 'berbat', 'korkunç', 'en kötü', 'nefret', 'kabul edilemez', 'saçma', 'iptal', 'iade', 'şikayet', 'müdür', 'yönetici', 'avukat', 'dava', 'dolandırıcılık', 'gereksiz', 'zaman kaybı', 'bıktım', 'yoruldum', 'rezalet', 'bir daha asla', 'bozuk', 'yavaş', 'kötü hizmet', 'kaba', 'çalışmıyor', 'rakip', 'gidiyorum', 'kapatmak', 'lanet', 'rezil', 'aboneliği iptal et', 'hesabı kapat', 'başka yere geç', 'başka yer ara', 'yeter artık', 'son şans', 'son uyarı', 'hizmeti durdur', 'sözleşmeyi bitir', 'üyelikten çık', 'hesabımı sil', 'çok pahalı', 'daha iyisini buldum', 'daha ucuz', 'değmez', 'para kaybı'],
+'pl': ['zły', 'wściekły', 'sfrustrowany', 'rozczarowany', 'okropny', 'straszny', 'najgorszy', 'nienawidzę', 'nieakceptowalne', 'śmieszne', 'anulować', 'zwrot', 'skarga', 'kierownik', 'prawnik', 'oszustwo', 'bezużyteczne', 'strata czasu', 'mam dość', 'zmęczony', 'wstyd', 'nigdy więcej', 'zepsute', 'wolne', 'zła obsługa', 'niegrzeczny', 'nie działa', 'konkurencja', 'odchodzę', 'zamknąć', 'beznadziejny', 'tragedia', 'anuluj subskrypcję', 'zamknij konto', 'zmień na', 'szukam gdzie indziej', 'ostatnia szansa', 'ostatnie ostrzeżenie', 'zatrzymaj usługę', 'zakończ umowę', 'wypisz się', 'usuń konto', 'za drogo', 'znalazłem lepsze', 'taniej', 'nie warto', 'strata pieniędzy'],
+'nl': ['boos', 'woedend', 'gefrustreerd', 'teleurgesteld', 'verschrikkelijk', 'vreselijk', 'slechtste', 'haat', 'onacceptabel', 'belachelijk', 'annuleren', 'terugbetaling', 'klacht', 'manager', 'advocaat', 'oplichting', 'nutteloos', 'tijdverspilling', 'zat', 'moe', 'schande', 'nooit meer', 'kapot', 'traag', 'slechte service', 'onbeleefd', 'werkt niet', 'concurrent', 'ik ga weg', 'opzeggen', 'waardeloos', 'abonnement annuleren', 'account sluiten', 'overstappen naar', 'ergens anders zoeken', 'genoeg gehad', 'laatste kans', 'laatste waarschuwing', 'service stoppen', 'contract beëindigen', 'uitschrijven', 'account verwijderen', 'te duur', 'beter gevonden', 'goedkoper', 'niet waard', 'geldverspilling'],
+'ko': ['화난', '분노', '좌절', '실망', '끔찍한', '최악', '싫어', '용납할 수 없는', '어이없는', '취소', '환불', '불만', '매니저', '변호사', '사기', '쓸모없는', '시간 낭비', '지겨운', '지친', '수치', '절대 다시는', '고장', '느린', '나쁜 서비스', '무례한', '작동 안함', '경쟁사', '떠날 거야', '해지', '엉망', '구독 취소', '계정 폐쇄', '로 전환', '다른 곳을 찾다', '충분해', '마지막 기회', '마지막 경고', '플랜 취소', '서비스 중단', '계약 종료', '구독 해지', '계정 삭제', '너무 비싸다', '더 좋은 것을 찾았다', '더 싼', '가치가 없다', '돈 낭비'],
+'hi': ['gussa', 'naraz', 'niraash', 'bekaar', 'sabse bura', 'nafrat', 'namumkin', 'radd', 'wapas', 'shikayat', 'manager', 'vakeel', 'dhokha', 'scam', 'faltu', 'samay ki barbadi', 'thak gaya', 'sharm', 'kabhi nahi', 'kharab', 'dheema', 'gandi service', 'kaam nahi kar raha', 'chhod raha hu', 'band karo', 'गुस्सा', 'नाराज़', 'निराश', 'बेकार', 'सबसे बुरा', 'नफरत', 'रद्द', 'वापस', 'शिकायत', 'मैनेजर', 'वकील', 'धोखा', 'घोटाला', 'फालतू', 'समय की बर्बादी', 'थक गया', 'शर्म', 'कभी नहीं', 'खराब', 'धीमा', 'गंदी सर्विस', 'काम नहीं कर रहा', 'छोड़ रहा हूं', 'बंद करो', 'sadasyata radd', 'khata band', 'switch', 'khatam', 'mehenga', 'barbaad', 'सदस्यता रद्द', 'खाता बंद', 'स्विच', 'खत्म', 'महंगा', 'बरबाद'],
+'ru': ['отменить подписку', 'закрыть счет', 'перейти к', 'ищу другое', 'хватит', 'последний шанс', 'последнее предупреждение', 'отменить план', 'остановить сервис', 'расторгнуть договор', 'отписаться', 'удалить аккаунт', 'слишком дорого', 'нашел лучше', 'дешевле', 'не стоит того', 'трата денег'],
+'ar': ['إلغاء الاشتراك', 'إغلاق الحساب', 'التبديل إلى', 'البحث في مكان آخر', 'طفح الكيل', 'فرصة أخيرة', 'تحذير أخير', 'إيقاف الخدمة', 'إنهاء العقد', 'حذف حسابي', 'مكلف للغاية', 'وجدت أفضل', 'أرخص', 'لا يستحق', 'مضيعة للمال'],
+'zh': ['取消订阅', '关闭账户', '切换到', '寻找其他', '受够了', '最后机会', '最后警告', '取消计划', '停止服务', '终止合同', '退订', '删除账户', '太贵', '找到更好的', '更便宜', '不值得', '浪费钱'],
+'hu': ['előfizetés lemondása','fiók bezárása','átváltok','átköltözök','másfelé nézek','elég volt','utolsó lehetőség','végleges figyelmeztetés','lemondom a tervemet','szüntesd meg a szolgáltatást','bontsd a szerződést','iratkozz fel le','töröld a fiókomat','távolíts el','túl drága','jobbat találtam','olcsóbban máshol','nem éri meg','pazarlás','viszlát örökre'],
+'cs': ['zrušení předplatného','zavření účtu','přejdu na','přecházím na','hledám jinde','už to nevydržím','poslední šance','poslední varování','zruším svůj plán','zastavte službu','ukončete můj smlouvu','odhlásit se','smazat můj účet','odeberte mě','příliš drahé','našel jsem lepší','levnější jinde','nevyplatí se','zbytečné peníze','na shledanou navždy']
 }
 
-# Churn risk indicators - phrases that suggest customer might leave
-# Expanded with more variations and languages
-CHURN_INDICATORS = {
-    'en': [
-        'cancel subscription', 'close account', 'switch to', 'moving to', 'looking elsewhere', 
-        'had enough', 'last chance', 'final warning', 'cancel my plan', 'stop service',
-        'end my contract', 'unsubscribe', 'delete my account', 'remove me', 'too expensive',
-        'found better', 'cheaper elsewhere', 'not worth it', 'waste of money', 'goodbye forever'
-    ],
-    'he': [
-        'לבטל מנוי', 'לסגור חשבון', 'לעבור ל', 'מחפש מקום אחר', 'נמאס לי', 'הזדמנות אחרונה',
-        'לבטל את התוכנית', 'להפסיק שירות', 'לסיים חוזה', 'להסיר אותי', 'יקר מדי',
-        'מצאתי יותר טוב', 'יותר זול', 'לא שווה', 'בזבוז כסף', 'שלום ולא להתראות',
-        'רוצה להתנתק', 'תנתקו אותי', 'עובר למתחרים'
-    ],
-    'es': [
-        'cancelar suscripción', 'cerrar cuenta', 'cambiar a', 'buscar otro', 'harto',
-        'última oportunidad', 'advertencia final', 'cancelar mi plan', 'detener servicio',
-        'terminar contrato', 'darse de baja', 'borrar cuenta', 'eliminarme', 'muy caro',
-        'encontré mejor', 'más barato', 'no vale la pena', 'pérdida de dinero', 'adiós para siempre'
-    ],
-    'fr': [
-        'annuler abonnement', 'fermer compte', 'changer pour', 'chercher ailleurs',
-        'j\'en ai assez', 'dernière chance', 'dernier avertissement', 'arrêter service',
-        'finir contrat', 'se désabonner', 'supprimer compte', 'trop cher',
-        'trouvé mieux', 'moins cher', 'ça ne vaut pas la peine', 'perte d\'argent', 'adieu'
-    ],
-    'de': [
-        'abo kündigen', 'konto schließen', 'wechseln zu', 'woanders suchen',
-        'habe genug', 'letzte chance', 'letzte warnung', 'plan kündigen', 'dienst stoppen',
-        'vertrag beenden', 'abmelden', 'konto löschen', 'zu teuer',
-        'besser gefunden', 'billiger woanders', 'nicht wert', 'geldverschwendung'
-    ],
-    'ru': [
-        'отменить подписку', 'закрыть счет', 'перейти к', 'ищу другое',
-        'хватит', 'последний шанс', 'последнее предупреждение', 'отменить план',
-        'остановить сервис', 'расторгнуть договор', 'отписаться', 'удалить аккаунт',
-        'слишком дорого', 'нашел лучше', 'дешевле', 'не стоит того', 'трата денег'
-    ],
-    'ar': [
-        'إلغاء الاشتراك', 'إغلاق الحساب', 'التبديل إلى', 'البحث في مكان آخر',
-        'طفح الكيل', 'فرصة أخيرة', 'تحذير أخير', 'إيقاف الخدمة', 'إنهاء العقد',
-        'حذف حسابي', 'مكلف للغاية', 'وجدت أفضل', 'أرخص', 'لا يستحق', 'مضيعة للمال'
-    ],
-    'pt': [
-        'cancelar assinatura', 'fechar conta', 'mudar para', 'procurar outro',
-        'já chega', 'última chance', 'aviso final', 'parar serviço', 'encerrar contrato',
-        'cancelar inscrição', 'excluir conta', 'muito caro', 'encontrei melhor',
-        'mais barato', 'não vale a pena', 'perda de dinheiro', 'adeus'
-    ],
-    'it': [
-        'cancellare abbonamento', 'chiudere account', 'passare a', 'cercare altrove',
-        'ne ho abbastanza', 'ultima possibilità', 'ultimo avviso', 'fermare servizio',
-        'terminare contratto', 'disiscriversi', 'eliminare account', 'troppo costoso',
-        'trovato meglio', 'più economico', 'non ne vale la pena', 'spreco di denaro'
-    ],
-    'tr': [
-        'aboneliği iptal et', 'hesabı kapat', 'başka yere geç', 'başka yer ara',
-        'yeter artık', 'son şans', 'son uyarı', 'hizmeti durdur', 'sözleşmeyi bitir',
-        'üyelikten çık', 'hesabımı sil', 'çok pahalı', 'daha iyisini buldum',
-        'daha ucuz', 'değmez', 'para kaybı'
-    ],
-    'pl': [
-        'anuluj subskrypcję', 'zamknij konto', 'zmień na', 'szukam gdzie indziej',
-        'mam dość', 'ostatnia szansa', 'ostatnie ostrzeżenie', 'zatrzymaj usługę',
-        'zakończ umowę', 'wypisz się', 'usuń konto', 'za drogo', 'znalazłem lepsze',
-        'taniej', 'nie warto', 'strata pieniędzy'
-    ],
-    'nl': [
-        'abonnement annuleren', 'account sluiten', 'overstappen naar', 'ergens anders zoeken',
-        'genoeg gehad', 'laatste kans', 'laatste waarschuwing', 'service stoppen',
-        'contract beëindigen', 'uitschrijven', 'account verwijderen', 'te duur',
-        'beter gevonden', 'goedkoper', 'niet waard', 'geldverspilling'
-    ],
-    'zh': [
-        '取消订阅', '关闭账户', '切换到', '寻找其他', '受够了',
-        '最后机会', '最后警告', '取消计划', '停止服务', '终止合同',
-        '退订', '删除账户', '太贵', '找到更好的', '更便宜', '不值得', '浪费钱'
-    ],
-    'ja': [
-        'サブスクリプションをキャンセル', 'アカウントを閉鎖', 'に切り替える', '他を探す',
-        'もう十分', '最後のチャンス', '最後の警告', 'プランをキャンセル', 'サービスを停止',
-        '契約を終了', '退会', 'アカウントを削除', '高すぎる', 'もっと良いものを見つけた',
-        '安い', '価値がない', '金の無駄'
-    ],
-    'ko': [
-        '구독 취소', '계정 폐쇄', '로 전환', '다른 곳을 찾다',
-        '충분해', '마지막 기회', '마지막 경고', '플랜 취소', '서비스 중단',
-        '계약 종료', '구독 해지', '계정 삭제', '너무 비싸다', '더 좋은 것을 찾았다',
-        '더 싼', '가치가 없다', '돈 낭비'
-    ],
-    'hi': [
-        'sadasyata radd', 'khata band', 'switch', 'khatam',
-        'mehenga', 'bekaar', 'barbaad', 'band karo',
-        # Devanagari
-        'सदस्यता रद्द', 'खाता बंद', 'स्विच', 'खत्म',
-        'महंगा', 'बेकार', 'बरबाद', 'बंद करो'
-    ],
-}
+
 
 # =============================================================================
 # TTS CACHE - Cache common phrases to reduce TTS calls
@@ -1792,6 +1646,120 @@ NATURAL_RESPONSES = {
         "ticket_none": ["لا توجد تذاكر دعم."],
         "cust_info": ["البريد: {email}، الهاتف: {phone}."],
         "general_found": ["هذا ما وجدته."],
+    },
+    "zh": {
+        "greeting_new": ["你好！欢迎回来。请告诉我你的四位数字PIN码，以便验证您的账户。", "您好！感谢致电。我只需要您的四位数字PIN码来调取您的账户信息。"],
+        "greeting_returning": ["嘿，{name}！很高兴再次见到你。今天有什么我可以帮你的吗？", "嗨，{name}！最近怎么样？今天有什么事找我吗？"],
+        "pin_invalid": ["嗯，那个PIN码不匹配。你还剩下{remaining}次尝试机会。", "那个不对。还剩{remaining}次尝试机会。请再试一次？"],
+        "pin_unclear": ["抱歉，我没听清楚。您能再报一次四位数字的PIN码吗？", "我没听清——您能重复一下您的PIN码吗？"],
+        "pin_locked": ["很抱歉，您已达到PIN码尝试次数上限。请联络客服支持。"],
+        "upgrade_ask_plan": ["没问题！您是在考虑标准版还是高级版？", "当然可以！在考虑标准版还是高级版吗？"],
+        "upgrade_confirm": ["太好了，升级到{plan}。需要我提交这个请求吗？", "明白了——{plan}。确认升级吗？"],
+        "upgrade_submitted": ["完成！我已经为您提交了{plan}的升级请求。", "很好，您的{plan}升级请求已提交。"],
+        "upgrade_cancelled": ["没问题！如果您改变主意，请随时告诉我。", "明白了——暂时不做任何更改。"],
+        "info_not_found": ["我无法在您的账户中找到任何{type}信息。", "未找到{type}信息。"],
+        "query_error": ["查找时遇到了一点问题。我们再试一次好吗？", "系统出现小故障。请再试一次？"],
+        "goodbye": ["保重！如有需要，请随时来电。", "感谢来电！祝您今天愉快！"],
+        "ticket_ask_details": ["当然可以，我可以为您开一个工单。请描述一下问题。", "我可以帮您处理。请问开这个工单的原因是什么？"],
+        "ticket_created": ["我已经为您创建了工单编号{id}。", "已完成。工单#{id}已创建。"],
+        "ticket_close_success": ["已完成。我已经关闭了关于'{subject}'的工单{id}。", "我已经关闭了您的工单，编号{id}。"],
+        "ticket_close_latest": ["您有{count}个未关闭的工单。我已关闭最近的一个，工单{id}，主题是'{subject}'。"],
+        "ticket_close_fail": ["我尝试关闭该工单，但遇到了问题。", "更新您的工单时出现了问题。"],
+        "ticket_close_not_found": ["我找不到编号为{id}的未关闭工单。需要我列出您所有的未关闭工单吗？", "未找到编号为{id}的未关闭工单。"],
+        "ticket_create_fail": ["我创建工单时遇到一些问题。建议您稍后再试。"],
+        "ticket_create_cancel": ["好的，我不会为您创建工单。"],
+        "upgrade_not_found": ["我找不到与'{plan}'匹配的套餐。我们有标准版和高级版——您更倾向于哪个？"],
+        "upgrade_unclear": ["抱歉，我没听清楚。您是想升级到{plan}，对吗？请回答是或否。"],
+        "upgrade_error": ["我遇到了一点小问题。您能再确认一下升级请求吗？"],
+        "sub_active": ["您目前使用的是{plan}套餐，{name}。每月费用为{price}美元。"],
+        "sub_status": ["您的{plan}订阅目前状态为{status}。"],
+        "bal_overdue": ["看起来您有{amount}美元的欠款，{name}。需要我帮您处理吗？"],
+        "bal_pending": ["您有{amount}美元待付款，{name}。目前没有逾期款项。"],
+        "bal_clear": ["好消息，{name}！您的账单余额已清零。"],
+        "invoice_one": ["您有一张金额为{amount}美元的发票，状态为{status}。"],
+        "invoice_many": ["我看到您有{count}张发票。最近的一张金额为{amount}美元，目前状态为{status}。"],
+        "plan_details": ["您目前使用的是{name}套餐，每月{price}美元。您拥有{data}GB的数据流量。"],
+        "ticket_open": ["您有{count}个未关闭的工单。最近的一张是关于{subject}的。"],
+        "ticket_resolved": ["您所有的{count}个支持工单均已解决！"],
+        "ticket_none": ["您目前没有支持工单。"],
+        "cust_info": ["您的账户邮箱是{email}，电话是{phone}。"],
+        "general_found": ["这是为您找到的信息。"],
+    },
+    "ja": {
+        "greeting_new": ["こんにちは！ようこそ。アカウントの確認のために、4桁のPINコードを教えていただけますか？", "こんにちは！お電話ありがとうございます。アカウントを確認するために、4桁のPINコードが必要です。"],
+        "greeting_returning": ["こんにちは、{name}さん！またお会いできて嬉しいです。今日は何をご希望ですか？", "こんにちは、{name}さん！お元気ですか？今日は何かご用件がありますか？"],
+        "pin_invalid": ["あの、そのPINコードは一致しませんでした。残り{remaining}回の試行機会があります。", "そのPINコードは正しくありません。残り{remaining}回の試行があります。もう一度お試しください。"],
+        "pin_unclear": ["すみません、よく聞き取れませんでした。4桁のPINコードをもう一度教えていただけますか？", "聞き逃しました。PINコードをもう一度お言葉ください。"],
+        "pin_locked": ["申し訳ありませんが、PINコードの試行回数の上限に達しました。サポートまでお問い合わせください。"],
+        "upgrade_ask_plan": ["承知しました！スタンダードかプレミアムのどちらをご希望ですか？", "もちろん！スタンダードかプレミアムのどちらにアップグレードされますか？"],
+        "upgrade_confirm": ["了解しました。{plan}へのアップグレードを承ります。リクエストを送信しますか？", "わかりました。{plan}へのアップグレードを確認しますか？"],
+        "upgrade_submitted": ["完了しました！{plan}へのアップグレードリクエストを送信しました。", "完了しました。{plan}のアップグレードリクエストは受理されました。"],
+        "upgrade_cancelled": ["かまいません。ご希望が変わったら、いつでもお知らせください。", "わかりました。今のところ変更はありません。"],
+        "info_not_found": ["申し訳ありませんが、お客様のアカウントに{type}の情報は見つかりませんでした。", "{type}の情報が見つかりません。"],
+        "query_error": ["その情報の照合中に問題が発生しました。もう一度試していただけますか？", "システムに一時的な不具合が発生しました。もう一度お試しください。"],
+        "goodbye": ["どうぞお大事に！何かご不明点があれば、いつでもお電話ください。", "お電話ありがとうございます！良い一日を！"],
+        "ticket_ask_details": ["かまいません。チケットを開設できます。問題の内容を教えてください。", "お手伝いできます。チケットの理由を教えていただけますか？"],
+        "ticket_created": ["チケット番号{id}を発行しました。", "完了しました。チケット#{id}が作成されました。"],
+        "ticket_close_success": ["完了しました。'{subject}'に関するチケット{id}を閉じました。", "開いていたチケット{id}を閉じました。"],
+        "ticket_close_latest": ["開いているチケットが{count}件あります。最新のチケット{id}（'{subject}'）を閉じました。"],
+        "ticket_close_fail": ["そのチケットを閉じようとしたのですが、問題が発生しました。", "チケットの更新中に問題が発生しました。"],
+        "ticket_close_not_found": ["番号{id}の開いているチケットは見つかりませんでした。開いているチケットの一覧を表示しますか？", "その番号の開いているチケットは見つかりませんでした。"],
+        "ticket_create_fail": ["チケットの作成中に少々問題が発生しました。後ほどもう一度お試しください。"],
+        "ticket_create_cancel": ["わかりました。チケットは作成しません。"],
+        "upgrade_not_found": ["'{plan}'というプランは見つかりませんでした。スタンダード版とプレミアム版があります。どちらをご希望ですか？"],
+        "upgrade_unclear": ["すみません、よく聞き取れませんでした。{plan}にアップグレードされる、でよろしいですか？はいかいいえで教えてください。"],
+        "upgrade_error": ["少し問題が発生しました。アップグレードの確認をもう一度お願いできますか？"],
+        "sub_active": ["{name}さん、現在{plan}プランをご利用中です。月額{price}ドルです。", "{name}さん、{plan}プランをご利用中です。月額{price}ドルです。"],
+        "sub_status": ["{plan}のサブスクリプションは現在{status}です。"],
+        "bal_overdue": ["{name}さん、{amount}ドルの未払いがあります。お手伝いしましょうか？", "{name}さん、{amount}ドルの未払いがあります。"],
+        "bal_pending": ["{name}さん、{amount}ドルの支払いが保留中です。未払いはありません。", "{name}さん、{amount}ドルの支払いが保留中です。"],
+        "bal_clear": ["お喜びください、{name}さん！お支払い残高はゼロです。"],
+        "invoice_one": ["{amount}ドルの請求書が1枚あり、ステータスは{status}です。", "{amount}ドルの請求書が1枚あり、現在{status}です。"],
+        "invoice_many": ["{count}枚の請求書が確認されました。最新の請求書は{amount}ドルで、現在{status}です。"],
+        "plan_details": ["{name}プランで、月額{price}ドルです。データ容量は{data}GBです。"],
+        "ticket_open": ["開いているチケットが{count}件あります。最新のチケットは'{subject}'に関するものです。"],
+        "ticket_resolved": ["お客様の{count}件のサポートチケットすべてが解決されました！"],
+        "ticket_none": ["サポートチケットは現在ありません。"],
+        "cust_info": ["アカウントのメールアドレスは{email}、電話番号は{phone}です。"],
+        "general_found": ["こちらがご希望の情報です。"],
+    },
+    "ko": {
+        "greeting_new": ["안녕하세요! 환영합니다. 계정을 확인하기 위해 4자리 PIN 번호를 알려주실 수 있나요?", "안녕하세요! 전화 주셔서 감사합니다. 계정을 불러오기 위해 4자리 PIN 번호가 필요합니다."],
+        "greeting_returning": ["안녕하세요, {name}님! 다시 만나서 반갑습니다. 오늘 도와드릴 일이 있으신가요?", "안녕하세요, {name}님! 어떻게 지내세요? 오늘은 무슨 일로 찾아오셨나요?"],
+        "pin_invalid": ["음, 그 PIN 번호가 일치하지 않네요. 남은 시도 기회는 {remaining}번입니다.", "그건 작동하지 않았어요. {remaining}번의 시도 기회가 남아 있습니다. 다시 시도해보시겠어요?"],
+        "pin_unclear": ["죄송합니다, 잘 못 들었습니다. 4자리 PIN 번호를 다시 말씀해 주실 수 있나요?", "그 부분을 놓쳤어요. PIN 번호를 다시 한번 말해 주실 수 있나요?"],
+        "pin_locked": ["죄송합니다. PIN 번호 시도 횟수를 초과하셨습니다. 지원팀에 문의해 주세요."],
+        "upgrade_ask_plan": ["물론입니다! 표준 또는 프리미엄 중 어떤 걸 고려 중이신가요?", "물론입니다! 표준 또는 프리미엄 중 어떤 걸 생각 중이신가요?"],
+        "upgrade_confirm": ["좋습니다. {plan}으로 업그레이드하겠습니다. 요청을 제출할까요?", "알겠습니다. {plan}으로 업그레이드 확인하시겠어요?"],
+        "upgrade_submitted": ["완료되었습니다! {plan} 업그레이드 요청을 제출했습니다.", "완료되었습니다. {plan} 업그레이드 요청이 접수되었습니다."],
+        "upgrade_cancelled": ["괜찮습니다! 마음이 바뀌셨을 때 알려주세요.", "알겠습니다. 지금은 변경하지 않겠습니다."],
+        "info_not_found": ["죄송합니다. 귀하의 계정에 {type} 정보를 찾을 수 없습니다.", "{type} 정보가 없습니다."],
+        "query_error": ["그 정보를 조회하는 도중 문제가 발생했습니다. 다시 시도해도 괜찮으신가요?", "시스템 오류가 발생했습니다. 다시 시도해 주세요."],
+        "goodbye": ["안녕히 가세요! 필요하시면 언제든지 전화 주세요.", "전화 주셔서 감사합니다! 좋은 하루 되세요!"],
+        "ticket_ask_details": ["물론입니다. 티켓을 열 수 있습니다. 문제 내용을 설명해 주세요.", "도와드릴 수 있습니다. 티켓을 만드는 이유를 말씀해 주실 수 있나요?"],
+        "ticket_created": ["귀하를 위해 티켓 번호 {id}를 생성했습니다.", "완료되었습니다. 티켓 #{id}가 생성되었습니다."],
+        "ticket_close_success": ["완료되었습니다. '{subject}'에 관한 티켓 번호 {id}를 닫았습니다.", "열려 있던 티켓 번호 {id}를 닫았습니다."],
+        "ticket_close_latest": ["열려 있는 티켓이 {count}건 있습니다. 가장 최근의 티켓 {id}({subject})를 닫았습니다."],
+        "ticket_close_fail": ["해당 티켓을 닫으려 했지만 문제가 발생했습니다.", "티켓을 업데이트하는 도중 문제가 발생했습니다."],
+        "ticket_close_not_found": ["번호 {id}의 열린 티켓을 찾을 수 없습니다. 열린 티켓 목록을 보여드릴까요?", "해당 번호의 열린 티켓이 없습니다."],
+        "ticket_create_fail": ["티켓을 열 때 약간의 문제가 발생했습니다. 나중에 다시 시도해 주세요.", "티켓 생성 중 문제가 발생했습니다. 나중에 다시 시도해 주세요."],
+        "ticket_create_cancel": ["알겠습니다. 티켓은 열지 않겠습니다."],
+        "upgrade_not_found": ["'{plan}'에 해당하는 플랜을 찾을 수 없습니다. 표준 및 프리미엄 중에서 선택해 주세요.", "'{plan}' 플랜을 찾을 수 없습니다. 표준 또는 프리미엄 중 선택해 주세요."],
+        "upgrade_unclear": ["죄송합니다, 잘 못 들었습니다. {plan}으로 업그레이드하시려는 건 맞죠? 네 또는 아니오로 말씀해 주세요.", "죄송합니다, 잘 못 들었습니다. {plan}으로 업그레이드하시려는 건 맞으신가요? 네 또는 아니오로 알려주세요."],
+        "upgrade_error": ["작은 문제가 발생했습니다. 다시 업그레이드 요청을 확인해 주시겠어요?", "업그레이드 중에 문제가 발생했습니다. 다시 확인해 주세요."],
+        "sub_active": ["{name}님, 현재 {plan} 플랜을 사용 중입니다. 월정액은 {price}달러입니다.", "{name}님, {plan} 플랜을 사용 중이며, 월정액은 {price}달러입니다."],
+        "sub_status": ["귀하의 {plan} 구독 상태는 현재 {status}입니다."],
+        "bal_overdue": ["{name}님, {amount}달러의 미납금이 있습니다. 도와드릴까요?", "{name}님, {amount}달러의 미납금이 있습니다."],
+        "bal_pending": ["{name}님, {amount}달러의 지급 대기 중입니다. 현재 미납은 없습니다.", "{name}님, {amount}달러의 지급이 보류 중입니다."],
+        "bal_clear": ["좋은 소식입니다, {name}님! 귀하의 잔액은 정리되었습니다."],
+        "invoice_one": ["{amount}달러의 청구서가 1건 있으며, 상태는 {status}입니다.", "{amount}달러의 청구서가 1건 있으며, 현재 상태는 {status}입니다."],
+        "invoice_many": ["{count}건의 청구서를 확인했습니다. 최신 청구서는 {amount}달러이며, 현재 상태는 {status}입니다.", "{count}건의 청구서가 있습니다. 최신 청구서는 {amount}달러이며, 현재 상태는 {status}입니다."],
+        "plan_details": ["{name} 플랜을 월 {price}달러에 이용 중이며, 데이터는 {data}GB까지 사용 가능합니다.", "{name} 플랜을 월 {price}달러에 이용 중이며, 데이터 용량은 {data}GB입니다."],
+        "ticket_open": ["열린 티켓이 {count}건 있습니다. 최신 티켓은 '{subject}' 관련입니다.", "열린 티켓이 {count}건 있습니다. 최근 티켓은 '{subject}'에 관한 것입니다."],
+        "ticket_resolved": ["귀하의 {count}건의 지원 티켓 모두 해결되었습니다!", "귀하의 {count}건의 지원 티켓이 모두 해결되었습니다!"],
+        "ticket_none": ["지원 티켓이 없습니다."],
+        "cust_info": ["귀하의 계정 이메일은 {email}이며, 전화번호는 {phone}입니다.", "귀하의 계정 정보: 이메일 {email}, 전화번호 {phone}."],
+        "general_found": ["찾은 정보를 알려드립니다."],
     },
 }
 
@@ -2841,7 +2809,52 @@ NEGATIVE_INDICATORS = {
     # Italian
     'cancellare': 0.9, 'terminare': 0.9, 'lasciare': 0.8, 'cambiare': 0.75,
     'terribile': 0.7, 'orribile': 0.75, 'peggiore': 0.8, 'arrabbiato': 0.7,
-    'non funziona': 0.5, 'rotto': 0.55, 'problema': 0.4, 'deluso': 0.55
+    'non funziona': 0.5, 'rotto': 0.55, 'problema': 0.4, 'deluso': 0.55,
+
+    # Japanese (ja)
+    'キャンセル': 0.9, '解約': 0.9, '終了': 0.9, 'やめる': 0.8, '乗り換える': 0.75,
+    '最悪': 0.7, 'ひどい': 0.7, '嫌い': 0.7, '怒っている': 0.7, '激怒': 0.8,
+    '動かない': 0.5, '壊れている': 0.55, '問題': 0.4, '不具合': 0.4, 'がっかり': 0.55,
+
+    # Korean (ko)
+    '취소': 0.9, '해지': 0.9, '종료': 0.9, '그만두다': 0.8, '바꾸다': 0.75,
+    '최악': 0.7, '끔찍한': 0.7, '나쁜': 0.7, '화남': 0.7, '분노': 0.8,
+    '안 되는': 0.5, '고장': 0.55, '문제': 0.4, '이슈': 0.35, '실망': 0.55,
+
+    # Chinese (zh)
+    '取消': 0.9, '解约': 0.9, '终止': 0.9, '离开': 0.8, '换到': 0.75,
+    '糟糕': 0.7, '极差': 0.7, '恶心': 0.7, '生气': 0.7, '愤怒': 0.8,
+    '无法使用': 0.5, '坏了': 0.55, '问题': 0.4, '故障': 0.4, '失望': 0.55,
+
+    # Czech (cs)
+    'zrušit': 0.9, 'ukončit': 0.9, 'odejít': 0.8, 'přejít na': 0.75,
+    'horší': 0.8, 'strašný': 0.7, 'horší': 0.7, 'zlobený': 0.7, 'vzteklý': 0.8,
+    'nefunguje': 0.5, 'porouchaný': 0.55, 'problém': 0.4, 'zklamání': 0.55,
+
+    # Hungarian (hu)
+    'megszüntet': 0.9, 'lemond': 0.9, 'befejez': 0.9, 'elhagy': 0.8, 'átvált': 0.75,
+    'szörnyű': 0.7, 'horribilis': 0.75, 'rossz': 0.7, 'dühös': 0.7, 'mérges': 0.8,
+    'nem működik': 0.5, 'törött': 0.55, 'probléma': 0.4, 'csalódott': 0.55,
+
+    # Polish (pl)
+    'anulować': 0.9, 'zakończyć': 0.9, 'opuścić': 0.8, 'przejść na': 0.75,
+    'okropny': 0.7, 'straszny': 0.7, 'najgorszy': 0.8, 'zły': 0.7, 'wściekły': 0.8,
+    'nie działa': 0.5, 'zepsuty': 0.55, 'problem': 0.4, 'rozczarowany': 0.55,
+
+    # Dutch (nl)
+    'annuleren': 0.9, 'beëindigen': 0.9, 'verlaten': 0.8, 'veranderen naar': 0.75,
+    'slecht': 0.7, 'horror': 0.75, 'erg': 0.7, 'boos': 0.7, 'woedend': 0.8,
+    'werkt niet': 0.5, 'stuk': 0.55, 'probleem': 0.4, 'teleurgesteld': 0.55,
+
+    # Turkish (tr)
+    'iptal et': 0.9, 'sonlandır': 0.9, 'ayrıl': 0.8, 'geçiş yap': 0.75,
+    'korkunç': 0.7, 'kötü': 0.7, 'en kötü': 0.8, 'öfkelendi': 0.7, 'kızgın': 0.8,
+    'çalışmıyor': 0.5, 'bozuk': 0.55, 'problem': 0.4, 'hayal kırıklığı': 0.55,
+
+    # Hindi (hi)
+    'रद्द करें': 0.9, 'खत्म करें': 0.9, 'छोड़ें': 0.8, 'बदलें': 0.75,
+    'बहुत खराब': 0.7, 'बेहद खराब': 0.75, 'सबसे खराब': 0.8, 'गुस्सा': 0.7, 'क्रोधित': 0.8,
+    'काम नहीं कर रहा': 0.5, 'खराब': 0.55, 'समस्या': 0.4, 'निराश': 0.55,
 }
 
 POSITIVE_INDICATORS = {
@@ -3104,15 +3117,86 @@ def detect_query_type(text):
         'מה יש לי', 'מה הסטטוס', 'מה המצב', 'איזה כרטיסים', 'אילו כרטיסים',
         'כרטיסים פתוחים', 'קריאות פתוחות', 'טיקטים פתוחים',  # "open tickets" in Hebrew
         'לראות', 'לבדוק', 'לספור', 'להציג',  # Infinitive verbs for viewing
+        
         # Spanish
-        'cuántos', 'cuántas', 'listar', 'mostrar', 'ver mis', 'tengo',
-        'tickets abiertos', 'incidencias abiertas',
+        'cuántos', 'cuántas', 'listar', 'mostrar', 'ver mis', 'tengo', 'tickets abiertos',
+        'incidencias abiertas', 'mis tickets', 'ver mis incidencias', 'tengo tickets abiertos',
+        'mostrar mis tickets', 'cuántos tengo', 'mis incidencias pendientes',
+
         # French
-        'combien', 'montrer', 'voir mes', 'afficher', 'ai-je',
-        'tickets ouverts',
+        'combien', 'montrer', 'voir mes', 'afficher', 'ai-je', 'tickets ouverts',
+        'mes tickets ouverts', 'combien j’ai', 'afficher mes tickets', 'voir mes demandes',
+        'mes demandes ouvertes', 'tickets ouverts que j’ai',
+
         # German
-        'wie viele', 'zeigen', 'anzeigen', 'liste', 'habe ich',
-        'offene tickets',
+        'wie viele', 'zeigen', 'anzeigen', 'liste', 'habe ich', 'offene tickets',
+        'meine offenen Tickets', 'meine Tickets anzeigen', 'wie viele habe ich',
+        'Tickets anzeigen', 'offene Anfragen', 'meine offenen Anfragen',
+
+        # Italian
+        'quanti', 'mostrami', 'visualizza', 'elenco', 'ho', 'i miei', 'ticket aperti',
+        'richieste aperte', 'mostra i miei ticket', 'quanti ne ho', 'i miei ticket aperti',
+        'visualizza i miei ticket', 'richieste in sospeso',
+
+        # Portuguese
+        'quantos', 'mostrar', 'exibir', 'listar', 'meus', 'tenho', 'tickets abertos',
+        'incidentes abertos', 'meus tickets abertos', 'mostrar meus tickets', 'quantos tenho',
+        'minhas solicitações abertas', 'ver minhas requisições',
+
+        # Polish
+        'ile', 'pokaż', 'wyświetl', 'lista', 'mam', 'moje', 'otwarte bilet', 'zgłoszenia otwarte',
+        'moje otwarte zgłoszenia', 'pokaż moje bilety', 'ile mam', 'zgłoszenia w trakcie',
+        'moje otwarte zgłoszenia', 'pokaż moje zgłoszenia',
+
+        # Turkish
+        'kaç tane', 'göster', 'göster benim', 'listele', 'sahip miyim', 'açık bilet',
+        'açık talepler', 'benim açık taleplerim', 'kaç tane var', 'göster biletlerimi',
+        'açık taleplerimi göster', 'sahip olduğum açık talepler',
+
+        # Russian
+        'сколько', 'покажи', 'покажи мои', 'покажи', 'у меня', 'открытые билеты',
+        'мои открытые заявки', 'сколько у меня', 'покажи мои заявки', 'открытые заявки',
+        'мои открытые заявки', 'покажи мои билеты', 'у меня есть',
+
+        # Dutch
+        'hoeveel', 'toon', 'toon mijn', 'toon mijn tickets', 'laat zien', 'heb ik',
+        'openstaande tickets', 'mijn openstaande tickets', 'hoeveel heb ik', 'toon mijn verzoeken',
+        'openstaande verzoeken', 'mijn openstaande verzoeken',
+
+        # Czech
+        'kolik', 'zobraz', 'zobraz mi', 'seznam', 'mám', 'moje', 'otevřené lístky',
+        'otevřené případy', 'moje otevřené případy', 'zobraz mé lístky', 'kolik mám',
+        'moje otevřené případy', 'zobraz mé případy', 'otevřené případy',
+
+        # Arabic
+        'كم', 'اعرض', 'أظهر', 'أظهر لي', 'لدي', 'الطلبات المفتوحة', 'الباقات المفتوحة',
+        'عندى', 'أظهر طلباتي', 'كم لدي', 'الطلبات المفتوحة التي لدي', 'أظهر طلباتي المفتوحة',
+        'أظهر بطاقي', 'الطلبات التي أملكها', 'أظهر الطلبات المفتوحة',
+
+        # Chinese (Simplified)
+        '多少', '显示', '显示我的', '列出', '我有', '我的', '打开的工单', '未关闭的工单',
+        '我的打开工单', '显示我的工单', '我有多少', '我的未关闭工单', '列出我的工单',
+        '打开的请求', '我有哪些工单', '显示我的请求',
+
+        # Japanese
+        '何個', '表示', '私の', '表示して', '持っている', '開いているチケット', '未解決のチケット',
+        '私の開いているチケット', '何個持っている', '私のチケットを表示', '開いているチケットを表示',
+        '未解決の依頼', '私の未解決依頼', 'チケットを表示',
+
+        # Hungarian
+        'hány', 'mutasd', 'mutasd meg', 'listázd', 'van', 'a tied', 'nyitott jegyek',
+        'nyitott kérelmek', 'a nyitott kérelmeim', 'mutasd a jegyeimet', 'hány van nálam',
+        'nyitott kérelmeket', 'mutasd a nyitott kérelmeimet', 'a kérelmeim közül',
+
+        # Korean
+        '몇 개', '보여줘', '내', '보여줘 내', '있어', '열린 티켓', '열린 요청',
+        '내 열린 티켓', '몇 개 가지고 있어', '내 티켓 보여줘', '열린 요청 보여줘',
+        '내 열린 요청', '보여줘 내 요청', '열린 티켓 목록',
+
+        # Hindi
+        'कितने', 'दिखाओ', 'मेरे', 'दिखाओ मेरे', 'मेरे पास है', 'खुले टिकट', 'खुले आवेदन',
+        'मेरे खुले टिकट', 'मेरे खुले आवेदन', 'कितने हैं', 'मेरे टिकट दिखाओ', 'खुले आवेदन दिखाओ',
+        'मेरे खुले आवेदन दिखाओ', 'कितने मेरे पास हैं', 'खुले आवेदन दिखाओ',
     ]
     
     # =========================================================================
@@ -3131,6 +3215,118 @@ def detect_query_type(text):
         'אני צריך לפתוח', 'תפתח לי קריאה', 'תפתח לי כרטיס', 'תפתח לי טיקט',
         'בבקשה תפתח', 'יש לי בעיה', 'משהו לא עובד', 'לדווח על תקלה',
         'צריך עזרה עם', 'משהו התקלקל', 'יש תקלה',
+
+        # Spanish (es) - explicit create commands
+        'abrir una nueva', 'crear una nueva', 'iniciar una nueva', 'presentar una nueva', 'enviar una nueva',
+        'quiero abrir una', 'necesito abrir una', 'por favor abre una', 'puedes abrir una',
+        'quiero crear una', 'necesito crear una', 'por favor crea una',
+        'tengo un problema', 'algo está mal', 'reportar problema', 'informar un problema',
+        'necesito ayuda con', 'tengo dificultades', 'algo se rompió', 'no funciona',
+
+        # French (fr) - explicit create commands
+        'ouvrir une nouvelle', 'créer une nouvelle', 'commencer une nouvelle', 'déposer une nouvelle', 'soumettre une nouvelle',
+        'je veux ouvrir une', 'j’ai besoin d’ouvrir une', 's’il te plaît ouvre une', 'peux-tu ouvrir une',
+        'je veux créer une', 'j’ai besoin de créer une', 's’il te plaît crée une',
+        'j’ai un problème', 'quelque chose ne va pas', 'signaler un problème', 'déclarer un problème',
+        'j’ai besoin d’aide avec', 'j’ai des difficultés', 'quelque chose est cassé', 'ne fonctionne pas',
+
+        # German (de) - explicit create commands
+        'eine neue öffnen', 'eine neue erstellen', 'eine neue starten', 'eine neue einreichen', 'eine neue senden',
+        'ich möchte eine neue öffnen', 'ich brauche eine neue öffnen', 'bitte öffne eine neue', 'kannst du eine neue öffnen',
+        'ich möchte eine neue erstellen', 'ich muss eine neue erstellen', 'bitte erstelle eine neue',
+        'ich habe ein Problem', 'etwas stimmt nicht', 'Problem melden', 'ein Problem melden',
+        'ich brauche Hilfe bei', 'ich habe Schwierigkeiten', 'etwas ist kaputt', 'funktioniert nicht',
+
+        # Italian (it) - explicit create commands
+        'aprire una nuova', 'creare una nuova', 'avviare una nuova', 'presentare una nuova', 'inviare una nuova',
+        'voglio aprire una', 'ho bisogno di aprire una', 'per favore apri una', 'puoi aprire una',
+        'voglio creare una', 'ho bisogno di creare una', 'per favore crea una',
+        'ho un problema', 'qualcosa non va', 'segna un problema', 'segui un problema',
+        'ho bisogno di aiuto con', 'ho difficoltà', 'qualcosa si è rotto', 'non funziona',
+
+        # Portuguese (pt) - explicit create commands
+        'abrir uma nova', 'criar uma nova', 'iniciar uma nova', 'submeter uma nova', 'enviar uma nova',
+        'quero abrir uma', 'preciso abrir uma', 'por favor abre uma', 'pode abrir uma',
+        'quero criar uma', 'preciso criar uma', 'por favor cria uma',
+        'tenho um problema', 'algo está errado', 'reportar problema', 'relatar um problema',
+        'preciso de ajuda com', 'estou com dificuldades', 'algo quebrou', 'não está funcionando',
+
+        # Polish (pl) - explicit create commands
+        'otworzyć nową', 'utworzyć nową', 'zacząć nową', 'złożyć nową', 'przesłać nową',
+        'chcę otworzyć nową', 'muszę otworzyć nową', 'proszę otworzyć nową', 'możesz otworzyć nową',
+        'chcę utworzyć nową', 'muszę utworzyć nową', 'proszę utworzyć nową',
+        'mam problem', 'coś nie działa', 'zgłoś problem', 'zgłoś usterkę',
+        'potrzebuję pomocy z', 'mam trudności', 'coś się zepsuło', 'nie działa',
+
+        # Turkish (tr) - explicit create commands
+        'yeni bir aç', 'yeni bir oluştur', 'yeni bir başlat', 'yeni bir gönder', 'yeni bir bildir',
+        'yeni bir açmak istiyorum', 'yeni bir açmam gerekiyor', 'lütfen yeni bir aç', 'yeni bir açabilir misin',
+        'yeni bir oluşturmak istiyorum', 'yeni bir oluşturmak zorundayım', 'lütfen yeni bir oluştur',
+        'bir sorunum var', 'bir şey yanlış', 'bir sorun bildir', 'bir hata bildir',
+        'yardıma ihtiyacım var', 'zorluk yaşıyorum', 'bir şey bozuldu', 'çalışmıyor',
+
+        # Russian (ru) - explicit create commands
+        'открыть новую', 'создать новую', 'начать новую', 'подать новую', 'отправить новую',
+        'я хочу открыть новую', 'мне нужно открыть новую', 'пожалуйста, откройте новую', 'можете открыть новую',
+        'я хочу создать новую', 'мне нужно создать новую', 'пожалуйста, создайте новую',
+        'у меня проблема', 'что-то не так', 'сообщить об ошибке', 'сообщить о проблеме',
+        'нужна помощь с', 'возникли трудности', 'что-то сломалось', 'не работает',
+
+        # Dutch (nl) - explicit create commands
+        'een nieuwe openen', 'een nieuwe maken', 'een nieuwe starten', 'een nieuwe indienen', 'een nieuwe versturen',
+        'ik wil een nieuwe openen', 'ik heb een nieuwe nodig', 'alsjeblieft open een nieuwe', 'kun je een nieuwe openen',
+        'ik wil een nieuwe maken', 'ik moet een nieuwe maken', 'alsjeblieft maak een nieuwe',
+        'ik heb een probleem', 'iets is fout', 'probleem melden', 'een probleem melden',
+        'ik heb hulp nodig met', 'ik heb moeite met', 'iets is kapot', 'werkt niet',
+
+        # Czech (cs) - explicit create commands
+        'otevřít novou', 'vytvořit novou', 'spustit novou', 'nahlásit novou', 'odeslat novou',
+        'chci otevřít novou', 'potřebuji otevřít novou', 'prosím otevři novou', 'můžeš otevřít novou',
+        'chci vytvořit novou', 'potřebuji vytvořit novou', 'prosím vytvoř novou',
+        'mám problém', 'něco je špatně', 'nahlásit problém', 'oznámit problém',
+        'potřebuji pomoc s', 'mám potíže', 'něco se pokazilo', 'nefunguje',
+
+        # Arabic (ar) - explicit create commands (Modern Standard Arabic)
+        'افتح واحدة جديدة', 'أنشئ واحدة جديدة', 'ابدأ واحدة جديدة', 'قدّم واحدة جديدة', 'أرسل واحدة جديدة',
+        'أريد فتح واحدة جديدة', 'أحتاج إلى فتح واحدة جديدة', 'من فضلك افتح واحدة جديدة', 'هل يمكنك فتح واحدة جديدة',
+        'أريد إنشاء واحدة جديدة', 'أحتاج إلى إنشاء واحدة جديدة', 'من فضلك أنشئ واحدة جديدة',
+        'لدي مشكلة', 'شيء ما غير صحيح', 'أبلغ عن مشكلة', 'أبلغ عن عطل',
+        'أحتاج مساعدة في', 'أعاني من مشكلة', 'شيء ما تلف', 'لا يعمل',
+
+        # Chinese (zh) - explicit create commands (Simplified Chinese)
+        '打开一个新', '创建一个新', '开始一个新', '提交一个新', '申请一个新',
+        '我想打开一个新', '我需要打开一个新', '请打开一个新', '你能打开一个新吗',
+        '我想创建一个新', '我需要创建一个新', '请创建一个新',
+        '我有问题', '有些不对劲', '报告问题', '报告一个故障',
+        '需要帮助于', '遇到困难', '出问题了', '无法工作',
+
+        # Japanese (ja) - explicit create commands
+        '新しいものを開く', '新しいものを作成する', '新しいものを開始する', '新しいものを提出する', '新しいものを送信する',
+        '新しいものを開きたい', '新しいものを開く必要がある', '新しいものを開いてください', '新しいものを開いてもらえますか',
+        '新しいものを作成したい', '新しいものを作成しなければならない', '新しいものを作成してください',
+        '問題があります', '何かがおかしい', '問題を報告する', '障害を報告する',
+        '助けが必要です', '困っています', '壊れた', '動作しない',
+
+        # Hungarian (hu) - explicit create commands
+        'egy újat nyiss', 'egy újat hozz létre', 'egy újat indíts', 'egy újat küldj be', 'egy újat küldj el',
+        'egy újat szeretnék megnyitni', 'egy újat kell megnyitnom', 'kérem nyiss egy újat', 'meg tudsz nyitni egy újat',
+        'egy újat szeretnék létrehozni', 'egy újat kell létrehoznom', 'kérem hozz létre egy újat',
+        'van egy problémám', 'valami nem stimmel', 'jelentse a problémát', 'jelentse a hibát',
+        'segítségre van szükségem', 'problémáim vannak', 'valami elromlott', 'nem működik',
+
+        # Korean (ko) - explicit create commands
+        '새로운 것을 열기', '새로운 것을 만들기', '새로운 것을 시작하기', '새로운 것을 제출하기', '새로운 것을 보내기',
+        '새로운 것을 열고 싶어요', '새로운 것을 열어야 해요', '새로운 것을 열어 주세요', '새로운 것을 열 수 있나요',
+        '새로운 것을 만들고 싶어요', '새로운 것을 만들어야 해요', '새로운 것을 만들어 주세요',
+        '문제가 있어요', '뭔가 잘못됐어요', '문제 보고하기', '고장 보고하기',
+        '도움이 필요해요', '어려움이 있어요', '뭔가 고장 났어요', '작동하지 않아요',
+
+        # Hindi (hi) - explicit create commands
+        'एक नई खोलें', 'एक नई बनाएं', 'एक नई शुरू करें', 'एक नई जमा करें', 'एक नई भेजें',
+        'मैं एक नई खोलना चाहता हूँ', 'मुझे एक नई खोलने की जरूरत है', 'कृपया एक नई खोलें', 'क्या आप एक नई खोल सकते हैं',
+        'मैं एक नई बनाना चाहता हूँ', 'मुझे एक नई बनाने की जरूरत है', 'कृपया एक नई बनाएं',
+        'मुझे समस्या है', 'कुछ गलत है', 'समस्या रिपोर्ट करें', 'एक समस्या रिपोर्ट करें',
+        'मुझे मदद की जरूरत है', 'मुझे परेशानी है', 'कुछ टूट गया है', 'काम नहीं कर रहा है',
     ]
     
     close_action_indicators = [
@@ -3140,6 +3336,70 @@ def detect_query_type(text):
         # Hebrew
         'לסגור את', 'תסגור את', 'בבקשה תסגור', 'אני רוצה לסגור',
         'לסגור קריאה', 'לסגור כרטיס', 'לסגור טיקט',
+
+        # Spanish (es) - explicit close commands
+        'cerrar mi', 'cerrar el', 'cerrar un', 'resolver mi', 'marcar como resuelto',
+        'quiero cerrar', 'por favor cierra', 'puedes cerrar',
+
+        # French (fr) - explicit close commands
+        'fermer mon', 'fermer le', 'fermer un', 'résoudre mon', 'marquer comme résolu',
+        'je veux fermer', 's’il te plaît ferme', 'peux-tu fermer',
+
+        # German (de) - explicit close commands
+        'meine schließen', 'die schließen', 'eine schließen', 'mein Problem lösen', 'als gelöst markieren',
+        'ich möchte schließen', 'bitte schließe', 'kannst du schließen',
+
+        # Italian (it) - explicit close commands
+        'chiudi il mio', 'chiudi il', 'chiudi una', 'risolvi il mio', 'contrassegna come risolto',
+        'voglio chiudere', 'per favore chiudi', 'puoi chiudere',
+
+        # Portuguese (pt) - explicit close commands
+        'fechar o meu', 'fechar o', 'fechar uma', 'resolver o meu', 'marcar como resolvido',
+        'quero fechar', 'por favor fecha', 'pode fechar',
+
+        # Polish (pl) - explicit close commands
+        'zamknij moją', 'zamknij tę', 'zamknij jedną', 'rozwiąż moją', 'oznacz jako rozwiązane',
+        'chcę zamknąć', 'proszę zamknij', 'możesz zamknąć',
+
+        # Turkish (tr) - explicit close commands
+        'benimkini kapat', 'bunun kapat', 'birini kapat', 'benim sorunumu çöz', 'çözüldü olarak işaretle',
+        'kapatmak istiyorum', 'lütfen kapat', 'kapatabilir misin',
+
+        # Russian (ru) - explicit close commands
+        'закрыть мою', 'закрыть эту', 'закрыть одну', 'решить мою', 'отметить как решённую',
+        'я хочу закрыть', 'пожалуйста, закрой', 'ты можешь закрыть',
+
+        # Dutch (nl) - explicit close commands
+        'sluit mijn', 'sluit de', 'sluit een', 'los mijn op', 'markeer als opgelost',
+        'ik wil sluiten', 'sluit alsjeblieft', 'kan je sluiten',
+
+        # Czech (cs) - explicit close commands
+        'zavřít mou', 'zavřít tu', 'zavřít jednu', 'vyřešit mou', 'označit jako vyřešenou',
+        'chci zavřít', 'zavři prosím', 'můžeš zavřít',
+
+        # Arabic (ar) - explicit close commands (Modern Standard Arabic)
+        'أغلق لي', 'أغلق هذا', 'أغلق واحدة', 'حل مشكلتي', 'علّم كمُحلّ',
+        'أريد إغلاق', 'من فضلك أغلق', 'هل يمكنك إغلاق',
+
+        # Chinese (zh) - explicit close commands (Simplified Chinese)
+        '关闭我的', '关闭这个', '关闭一个', '解决我的', '标记为已解决',
+        '我想关闭', '请关闭', '你能关闭吗',
+
+        # Japanese (ja) - explicit close commands
+        '私のを閉じる', 'そのを閉じる', '一つを閉じる', '私のを解決する', '解決済みとしてマークする',
+        '閉じたい', '閉じてください', '閉じてもらえますか',
+
+        # Hungarian (hu) - explicit close commands
+        'zárja be a sajátomat', 'zárja be ezt', 'zárjon egyet', 'oldja meg a sajátomat', 'jelölje meg megoldottnak',
+        'be szeretném zárni', 'kérem zárja be', 'be tudod zárni',
+
+        # Korean (ko) - explicit close commands
+        '내 것을 닫기', '그것을 닫기', '하나 닫기', '내 문제 해결하기', '해결됨으로 표시하기',
+        '닫고 싶어요', '닫아 주세요', '닫을 수 있나요',
+
+        # Hindi (hi) - explicit close commands
+        'मेरा बंद करें', 'इसे बंद करें', 'एक बंद करें', 'मेरी समस्या हल करें', 'हल किया गया चिह्नित करें',
+        'मैं बंद करना चाहता हूँ', 'कृपया बंद करें', 'क्या आप बंद कर सकते हैं',
     ]
     
     # =========================================================================
@@ -3152,6 +3412,70 @@ def detect_query_type(text):
         'טיקט פתוח', 'טיקטים פתוחים',
         # Just "ticket" or "tickets" alone
         'ticket', 'tickets', 'כרטיס', 'כרטיסים', 'קריאה', 'קריאות',
+
+        # Spanish (es) - ambiguous ticket-related phrases
+        'ticket abierto', 'tickets abiertos', 'abrir ticket', 'abrir tickets',
+        'ticket', 'tickets', 'abrir un ticket', 'abrir tickets',
+
+        # French (fr) - ambiguous ticket-related phrases
+        'ticket ouvert', 'tickets ouverts', 'ouvrir un ticket', 'ouvrir des tickets',
+        'ticket', 'tickets', 'ouvrir un ticket', 'ouvrir des tickets',
+
+        # German (de) - ambiguous ticket-related phrases
+        'offener Ticket', 'offene Tickets', 'Ticket öffnen', 'Tickets öffnen',
+        'Ticket', 'Tickets', 'Ticket öffnen', 'Tickets öffnen',
+
+        # Italian (it) - ambiguous ticket-related phrases
+        'ticket aperto', 'ticket aperti', 'apri un ticket', 'apri dei ticket',
+        'ticket', 'tickets', 'apri un ticket', 'apri dei ticket',
+
+        # Portuguese (pt) - ambiguous ticket-related phrases
+        'ticket aberto', 'tickets abertos', 'abrir ticket', 'abrir tickets',
+        'ticket', 'tickets', 'abrir um ticket', 'abrir tickets',
+
+        # Polish (pl) - ambiguous ticket-related phrases
+        'otwarty bilet', 'otwarte bilety', 'otwórz bilet', 'otwórz bilety',
+        'bilet', 'bilety', 'otwórz bilet', 'otwórz bilety',
+
+        # Turkish (tr) - ambiguous ticket-related phrases
+        'açık bilet', 'açık biletler', 'bilet aç', 'biletler aç',
+        'bilet', 'biletler', 'bilet aç', 'biletler aç',
+
+        # Russian (ru) - ambiguous ticket-related phrases
+        'открытый тикет', 'открытые тикеты', 'открыть тикет', 'открыть тикеты',
+        'тикет', 'тикеты', 'открыть тикет', 'открыть тикеты',
+
+        # Dutch (nl) - ambiguous ticket-related phrases
+        'open ticket', 'open tickets', 'ticket open', 'tickets open',
+        'ticket', 'tickets', 'open ticket', 'open tickets',
+
+        # Czech (cs) - ambiguous ticket-related phrases
+        'otevřený tiket', 'otevřené tikety', 'otevřít tiket', 'otevřít tikety',
+        'tiket', 'tikety', 'otevřít tiket', 'otevřít tikety',
+
+        # Arabic (ar) - ambiguous ticket-related phrases (Modern Standard Arabic)
+        'تذكرة مفتوحة', 'تذاكر مفتوحة', 'افتح تذكرة', 'افتح تذاكر',
+        'تذكرة', 'تذاكر', 'افتح تذكرة', 'افتح تذاكر',
+
+        # Chinese (zh) - ambiguous ticket-related phrases (Simplified Chinese)
+        '打开的工单', '打开的工单们', '打开工单', '打开工单',
+        '工单', '工单们', '打开工单', '打开工单',
+
+        # Japanese (ja) - ambiguous ticket-related phrases
+        '開かれたチケット', '開かれたチケットたち', 'チケットを開く', 'チケットを開く',
+        'チケット', 'チケットたち', 'チケットを開く', 'チケットを開く',
+
+        # Hungarian (hu) - ambiguous ticket-related phrases
+        'nyitott jegy', 'nyitott jegyek', 'jegy megnyitása', 'jegyek megnyitása',
+        'jegy', 'jegyek', 'jegy megnyitása', 'jegyek megnyitása',
+
+        # Korean (ko) - ambiguous ticket-related phrases
+        '열린 티켓', '열린 티켓들', '티켓 열기', '티켓 열기',
+        '티켓', '티켓들', '티켓 열기', '티켓 열기',
+
+        # Hindi (hi) - ambiguous ticket-related phrases
+        'खुला टिकट', 'खुले टिकट', 'टिकट खोलें', 'टिकट खोलें',
+        'टिकट', 'टिकट', 'टिकट खोलें', 'टिकट खोलें',
     ]
     
     # =========================================================================
@@ -3226,10 +3550,86 @@ def detect_query_type(text):
         # Hebrew - explicit upgrade commands
         'אני רוצה לשדרג', 'תשדרג לי', 'לשדרג לפרמיום', 'לשדרג לסטנדרט',
         'לעבור לפרמיום', 'לעבור לסטנדרט', 'להחליף תוכנית', 'רוצה חבילה יותר טובה',
-        # Spanish
-        'quiero actualizar', 'actualizar a premium', 'cambiar a premium',
-        # French
-        'je veux upgrader', 'passer à premium', 'changer de forfait',
+
+        # Spanish (es) - explicit upgrade commands
+        'quiero actualizar', 'actualizar a premium', 'cambiar a premium', 'pasar a premium',
+        'me gustaría actualizar', 'puedes actualizar', 'cambiar a plan premium', 'pasar al plan premium',
+        'actualizar mi plan', 'mejorar mi suscripción', 'subir de plan',
+
+        # French (fr) - explicit upgrade commands
+        'je veux upgrader', 'passer à premium', 'changer de forfait', 'mettre à jour mon abonnement',
+        'je voudrais passer à premium', 'pouvez-vous passer à premium', 'changer pour premium',
+        'passer au forfait premium', 'obtenir le forfait premium',
+
+        # German (de) - explicit upgrade commands
+        'ich möchte upgraden', 'bitte upgraden', 'upgraden Sie mich', 'mein Plan upgraden',
+        'ich möchte meinen Plan upgraden', 'können Sie upgraden', 'auf Premium wechseln',
+        'auf Standard wechseln', 'zu Premium wechseln', 'Premium erhalten',
+
+        # Italian (it) - explicit upgrade commands
+        'voglio aggiornare', 'aggiorna a premium', 'passare a premium', 'cambiare a premium',
+        'vorrei aggiornare', 'puoi aggiornare', 'passare al piano premium', 'cambiare piano',
+        'aggiorna il mio piano', 'passare al piano avanzato', 'ottenere il piano premium',
+
+        # Portuguese (pt) - explicit upgrade commands
+        'quero atualizar', 'atualizar para premium', 'mudar para premium', 'passar para premium',
+        'gostaria de atualizar', 'pode atualizar', 'mudar para plano premium', 'passar para o plano premium',
+        'atualizar meu plano', 'obter o plano premium', 'subir de plano',
+
+        # Polish (pl) - explicit upgrade commands
+        'chcę uaktualnić', 'uaktualnij na premium', 'przejdź na premium', 'zmień na premium',
+        'chciałbym uaktualnić', 'możesz uaktualnić', 'przejdź na plan premium', 'zaktualizować moje konto',
+        'zmień na płatny', 'uzyskaj premium', 'zaktualizować subskrypcję',
+
+        # Turkish (tr) - explicit upgrade commands
+        'yeni plana geçmek istiyorum', 'premiuma geçmek istiyorum', 'güncelleme yap', 'premiuma yükselt',
+        'beni yükselt', 'premium plana geç', 'standart plana geç', 'ücretli plana geç',
+        'planı yükselt', 'premiuma geçiş yap', 'yüksek plana geç',
+
+        # Russian (ru) - explicit upgrade commands
+        'я хочу обновить', 'обновить до премиум', 'перейти на премиум', 'сменить на премиум',
+        'я бы хотел обновить', 'вы можете обновить', 'перейти на платный план', 'обновить подписку',
+        'перейти на премиум-план', 'получить премиум', 'обновить мой план',
+
+        # Dutch (nl) - explicit upgrade commands
+        'ik wil upgraden', 'upgrade me', 'upgrade mijn plan', 'switch naar premium',
+        'ik wil mijn abonnement upgraden', 'kun je upgraden', 'naar premium overstappen',
+        'plan upgraden', 'premium krijgen', 'verhoog mijn plan',
+
+        # Czech (cs) - explicit upgrade commands
+        'chci aktualizovat', 'aktualizovat na premium', 'přejít na premium', 'změnit na premium',
+        'chtěl bych aktualizovat', 'můžeš aktualizovat', 'přejít na předplatné premium',
+        'změnit na plnou verzi', 'získat premium', 'aktualizovat můj plán',
+
+        # Arabic (ar) - explicit upgrade commands (Modern Standard Arabic)
+        'أريد الترقية', 'ترقية إلى البريميوم', 'الانتقال إلى البريميوم', 'تغيير إلى باقة مميزة',
+        'أرغب في الترقية', 'هل يمكنك الترقية', 'الانتقال إلى النسخة المتميزة', 'تحديث الحساب',
+        'تحديث إلى باقة مميزة', 'الحصول على النسخة المتميزة', 'ترقية حسابي',
+
+        # Chinese (zh) - explicit upgrade commands (Simplified Chinese)
+        '我想升级', '请升级', '升级我的计划', '切换到高级版',
+        '我想升级到高级版', '你能升级吗', '切换到专业版', '升级到会员',
+        '更新我的套餐', '获取高级功能', '提升我的等级',
+
+        # Japanese (ja) - explicit upgrade commands
+        'アップグレードしたい', 'アップグレードしてください', '私のプランをアップグレード', 'プレミアムに変更',
+        'プレミアムに切り替えたい', 'プランを変更', '高級版にアップグレード', 'アップグレードして',
+        'プレミアムプランを取得', 'プランを上位に変更', 'アップグレードお願いします',
+
+        # Hungarian (hu) - explicit upgrade commands
+        'frissíteni szeretnék', 'frissítsd a szintemet', 'premiumra váltani', 'áttérni premiumra',
+        'szeretnék frissíteni', 'kérem frissíts', 'váltás premiumra', 'frissítés a prémiumra',
+        'áttérés prémiumra', 'prémium szintre váltás', 'frissíteni a csomagomat',
+
+        # Korean (ko) - explicit upgrade commands
+        '업그레이드하고 싶어요', '업그레이드 해주세요', '내 계획 업그레이드', '프리미엄으로 전환',
+        '프리미엄으로 옮기고 싶어요', '업그레이드 가능해요?', '프리미엄으로 변경', '고급 플랜으로 전환',
+        '업그레이드 요청', '프리미엄 구독', '플랜 업그레이드',
+
+        # Hindi (hi) - explicit upgrade commands
+        'मैं अपग्रेड करना चाहता हूँ', 'कृपया अपग्रेड करें', 'मेरा प्लान अपग्रेड करें', 'प्रीमियम में बदलें',
+        'मैं प्रीमियम में बदलना चाहता हूँ', 'क्या आप अपग्रेड कर सकते हैं', 'प्रीमियम प्लान में जाएं',
+        'अपने प्लान को अपग्रेड करें', 'प्रीमियम प्राप्त करें', 'अपग्रेड करने के लिए कहें',
     ]
     
     plan_query_indicators = [
@@ -3239,10 +3639,86 @@ def detect_query_type(text):
         # Hebrew - asking about current plan
         'מה התוכנית', 'איזו תוכנית', 'איזו חבילה', 'התוכנית שלי', 'מה החבילה',
         'פרטי תוכנית', 'מה יש לי',
-        # Spanish
-        'qué plan', 'cuál es mi plan', 'mi plan actual',
-        # French
-        'quel forfait', 'mon forfait actuel',
+        
+        # Spanish (es) - asking about current plan
+        'qué plan', 'cuál es mi plan', 'mi plan actual', 'qué plan tengo',
+        'qué plan estoy usando', 'detalles del plan', 'qué plan tengo contratado',
+        'mi plan actual', 'qué plan estoy en', 'qué plan tengo activo',
+
+        # French (fr) - asking about current plan
+        'quel forfait', 'mon forfait actuel', 'quel est mon forfait', 'quel forfait j’ai',
+        'détails du forfait', 'quel forfait suis-je sur', 'mon abonnement actuel',
+        'quel forfait j’utilise', 'mon forfait en cours',
+
+        # German (de) - asking about current plan
+        'welcher Plan', 'mein Plan', 'aktueller Plan', 'welchen Plan habe ich',
+        'Plandetails', 'auf welchem Plan bin ich', 'mein aktueller Plan',
+        'welchen Plan nutze ich', 'mein aktuelles Abonnement',
+
+        # Italian (it) - asking about current plan
+        'quale piano', 'il mio piano', 'piano attuale', 'quale piano ho',
+        'dettagli del piano', 'su quale piano sono', 'il mio piano attuale',
+        'quale piano sono iscritto', 'il mio abbonamento attuale',
+
+        # Portuguese (pt) - asking about current plan
+        'qual plano', 'meu plano', 'plano atual', 'qual plano estou usando',
+        'detalhes do plano', 'em qual plano estou', 'meu plano atual',
+        'qual plano tenho', 'qual é o meu plano atual',
+
+        # Polish (pl) - asking about current plan
+        'jaki plan', 'mój plan', 'aktualny plan', 'jaki plan mam',
+        'szczegóły planu', 'na jakim planie jestem', 'mój obecny plan',
+        'jaki plan korzystam', 'moje aktualne zamówienie',
+
+        # Turkish (tr) - asking about current plan
+        'hangi plan', 'benim planım', 'mevcut plan', 'hangi paketim var',
+        'plan detayları', 'hangi paketteyim', 'benim aboneliğim nedir',
+        'hangi paket kullanıyorum', 'mevcut aboneliğim',
+
+        # Russian (ru) - asking about current plan
+        'какой план', 'мой план', 'текущий план', 'какой план у меня',
+        'детали плана', 'на каком плане я', 'мой текущий план',
+        'какой тариф у меня', 'подробности по плану',
+
+        # Dutch (nl) - asking about current plan
+        'welk plan', 'mijn plan', 'huidig plan', 'welk plan zit ik op',
+        'plan details', 'op welk plan zit ik', 'mijn huidige abonnement',
+        'welk plan heb ik', 'welk abonnement heb ik',
+
+        # Czech (cs) - asking about current plan
+        'jaký plán', 'můj plán', 'aktuální plán', 'jaký plán mám',
+        'podrobnosti o plánu', 'na jakém plánu jsem', 'můj aktuální plán',
+        'jaký plán používám', 'moje aktuální předplatné',
+
+        # Arabic (ar) - asking about current plan (Modern Standard Arabic)
+        'ما هو الخطة', 'ما هو خطتي', 'الخطة الحالية', 'ما هي خطتي',
+        'تفاصيل الخطة', 'على أي خطة أنا', 'ما هو اشتراكي',
+        'ما هو الباقه التي أستخدمها', 'تفاصيل اشتراكي',
+
+        # Chinese (zh) - asking about current plan (Simplified Chinese)
+        '什么计划', '我的计划', '当前计划', '我用的是什么计划',
+        '计划详情', '我在哪个计划', '我的当前套餐',
+        '我现在的订阅', '我用的套餐是什么',
+
+        # Japanese (ja) - asking about current plan
+        'どのプラン', '私のプラン', '現在のプラン', 'どのプランを使っていますか',
+        'プランの詳細', 'どのプランに登録していますか', '現在の契約内容',
+        '私の契約プラン', 'どのプランに加入していますか',
+
+        # Hungarian (hu) - asking about current plan
+        'milyen csomag', 'a csomagom', 'jelenlegi csomag', 'milyen csomagom van',
+        'csomag részletei', 'milyen csomagon vagyok', 'jelenlegi előfizetésem',
+        'milyen csomagot használok', 'előfizetésem részletei',
+
+        # Korean (ko) - asking about current plan
+        '어떤 플랜', '내 플랜', '현재 플랜', '내가 어떤 플랜인지',
+        '플랜 상세 정보', '어떤 플랜에 가입했는지', '현재 내 구독',
+        '내 현재 요금제', '내 계정의 플랜 확인',
+
+        # Hindi (hi) - asking about current plan
+        'कौन सा प्लान', 'मेरा प्लान', 'वर्तमान प्लान', 'मैं किस प्लान में हूँ',
+        'प्लान के विवरण', 'मैं किस प्लान पर हूँ', 'मेरा वर्तमान प्लान',
+        'मेरा सब्सक्रिप्शन क्या है', 'मेरी वर्तमान सदस्यता',
     ]
     
     has_upgrade_action = any(ind in text_lower for ind in upgrade_action_indicators)
@@ -3278,16 +3754,18 @@ def extract_plan_choice(text):
     premium_words = [
         'premium', 'פרימיום', 'הכי טוב', 'best', 'top', 'highest', 'מקסימום',
         'premium plan', 'el premium', 'le premium', 'das premium',
+        'премиум', 'بريميوم', '高级', '奢华', 'プレミアム', '프리미엄', 'प्रीमियम'
     ]
     
     # Standard patterns (multiple languages)
     standard_words = [
         'standard', 'סטנדרט', 'רגיל', 'regular', 'basic', 'normal', 'בסיסי',
         'standard plan', 'el estándar', 'le standard', 'das standard',
+        'standard', 'normální', 'normalny', 'standart', 'normaal', '표준', '보통', '기본', 'normale', 'base', 'basic', 'padrão', 'معيار', '標準', 'базовый', 'basis', '正常', 'standaard', 'मूलभूत', '通常', 'podstawowy', 'нормальный', 'normál', 'grundlegend', 'básico', 'estándar', 'सामान्य', 'normal', 'basique', 'Standard', 'temel', 'základní', '基本', '标准', 'मानक', 'أساسي', '基础', 'alap', 'стандарт', 'طبيعي'
     ]
     
     # Pro patterns
-    pro_words = ['pro', 'professional', 'business', 'עסקי', 'מקצועי']
+    pro_words = ['pro', 'professional', 'business', 'עסקי', 'מקצועי', 'プロフェッショナル', '비즈니스', 'affaires', 'biznes', 'professionale', 'professioneel', 'podnikání', 'व्यापार', 'برو', 'professzionális', 'profesjonalny', '商业', 'professionell', 'profesyonel', 'iş', 'profesional', 'бизнес', '专业', 'negocio', 'üzlet', 'professionnel', 'प्रो', 'प्रोफेशनल', 'Geschäft', 'محترف', 'pro', 'عمل', 'bedrijf', 'ビジネス', 'про', 'business', 'profesionální', 'professional', 'プロ', '프로', '전문가', 'Pro', 'profissional', 'negócio', 'профессиональный']
     
     if any(word in text_lower for word in premium_words):
         return 'premium'
@@ -3309,9 +3787,37 @@ def is_confirmation(text):
         # Hebrew
         'כן', 'בטח', 'אישור', 'נכון', 'קדימה', 'בסדר', 'אוקיי', 'מאשר', 'בהחלט',
         # Spanish
-        'sí', 'si', 'claro', 'por supuesto', 'adelante', 'confirmo',
+        'sí', 'si', 'claro', 'por supuesto', 'adelante', 'confirmo', 'vale', 'perfecto', 'clarísimo', 'así es',
         # French
-        'oui', 'bien sûr', 'certainement', 'je confirme', 'd\'accord',
+        'oui', 'bien sûr', 'certainement', 'je confirme', 'd\'accord', 'ok', 'alors', 'parfait', 'évidemment', 'exactement',
+        # German
+        'ja', 'ja klar', 'natürlich', 'bestätigen', 'bestätigt', 'gut', 'okay', 'klar', 'machen wir', 'sofern', 'sicher',
+        # Italian
+        'sì', 'certo', 'ovviamente', 'confermo', 'ok', 'va bene', 'perfetto', 'sicuro', 'giusto', 'assolutamente', 'procedi',
+        # Portuguese
+        'sim', 'claro', 'certamente', 'confirmo', 'ok', 'vamos lá', 'perfeito', 'tudo bem', 'óbvio', 'com certeza', 'vai',
+        # Polish
+        'tak', 'tak, oczywiście', 'potwierdzam', 'ok', 'jasne', 'dobrze', 'w porządku', 'zgadza się', 'dokładnie', 'bez problemu', 'idziemy',
+        # Turkish
+        'evet', 'tabii ki', 'kesinlikle', 'onaylıyorum', 'tamam', 'tamam o zaman', 'iyi', 'devam', 'doğru', 'elbette', 'hemen',
+        # Russian
+        'да', 'конечно', 'подтверждаю', 'хорошо', 'ладно', 'окей', 'точно', 'согласен', 'безусловно', 'всё верно', 'давай',
+        # Dutch
+        'ja', 'natuurlijk', 'zeker', 'goed', 'oké', 'bevestig', 'daar ga ik mee', 'zeker weten', 'touw', 'zoals je wil', 'doe maar',
+        # Czech
+        'ano', 'jistě', 'potvrzuji', 'dobře', 'v pořádku', 'jasně', 'samozřejmě', 'určitě', 'dobře, pokračuj', 'tak, dělej', 'to je správně',
+        # Arabic
+        'نعم', 'بالطبع', 'أؤكد', 'موافق', 'أجل', 'أكيد', 'تمام', 'حسناً', 'بالتأكيد', 'بالفعل', 'أكيد، ابدأ',
+        # Chinese (Simplified)
+        '是', '当然', '确认', '好', '没问题', '可以', '没问题的', '好的', '对', '没错', '开始吧',
+        # Japanese
+        'はい', 'もちろん', '確認しました', 'よし', '了解', 'いいですよ', 'いいです', 'どうぞ', '承知しました', '進んでください', '大丈夫',
+        # Hungarian
+        'igen', 'természetesen', 'igaz', 'igazán', 'meg tudom erősíteni', 'oké', 'persze', 'természetesen', 'tudom', 'jó', 'csak haladj',
+        # Korean
+        '네', '물론', '확인', '좋아요', '좋습니다', '좋습니다', '그래요', '확실히', '그렇습니다', '진행해 주세요', '좋아요, 시작해요',
+        # Hindi
+        'हाँ', 'ज़रूर', 'पुष्टि करता हूँ', 'ठीक है', 'ठीक है', 'बिल्कुल', 'बिल्कुल सही', 'जी हाँ', 'जी तो जी', 'चलिए', 'शुरू करें',
     ]
     return any(word in text_lower for word in confirmations)
 
@@ -3326,9 +3832,68 @@ def is_cancellation(text):
         # Hebrew
         'לא', 'ביטול', 'עזוב', 'תשכח', 'בטל', 'לא עכשיו', 'רגע',
         # Spanish
-        'no', 'cancelar', 'detener', 'olvídalo', 'espera',
+        'no', 'nope', 'cancelar', 'detener', 'olvídalo', 'espera', 'para', 'basta',
+        'no gracias', 'no quiero', 'no lo hagas', 'cambia de opinión', 'deja estar', 'espera un momento',
+
         # French
-        'non', 'annuler', 'arrêter', 'oublie', 'attends',
+        'non', 'annuler', 'arrêter', 'oublie', 'attends', 'pas maintenant', 'stop',
+        'non merci', 'pas du tout', 'j’annule', 'c’est bon', 'arrête', 'pas encore', 'trop tard',
+
+        # German
+        'nein', 'nein danke', 'abbrechen', 'stop', 'warte', 'nicht jetzt', 'nicht mehr',
+        'nicht mehr', 'aufhören', 'verwerfen', 'nicht gut', 'nicht interessiert', 'nicht möglich', 'nicht weiter',
+
+        # Italian
+        'no', 'no grazie', 'annulla', 'ferma', 'dimentica', 'aspetta', 'non ora',
+        'non voglio', 'basta', 'non fare', 'non importa', 'non importa', 'non è necessario', 'fermo',
+
+        # Portuguese
+        'não', 'não, obrigado', 'cancelar', 'parar', 'esquece', 'espera', 'não agora',
+        'não quero', 'pare', 'não interessa', 'deixa pra lá', 'não vale a pena', 'não mesmo', 'não, obrigado',
+
+        # Polish
+        'nie', 'nie teraz', 'anuluj', 'zatrzymaj', 'zapomnij', 'poczekaj', 'niech to zostanie',
+        'nie chce', 'nie interesuje', 'zaniechaj', 'nie teraz', 'nie, dziękuję', 'nie ma sensu', 'zamknij',
+
+        # Turkish
+        'hayır', 'hayır teşekkür', 'iptal et', 'dur', 'unut', 'bekle', 'şimdi değil',
+        'yapma', 'bırak', 'kabul etmedim', 'durdur', 'yok', 'şimdilik', 'çok değil',
+
+        # Russian
+        'нет', 'нет, спасибо', 'отменить', 'остановить', 'забудь', 'подожди', 'не сейчас',
+        'не хочу', 'не надо', 'не нужно', 'прекратить', 'забудь об этом', 'не сейчас', 'хватит',
+
+        # Dutch
+        'nee', 'nee dank je', 'annuleren', 'stop', 'wacht even', 'vergeet het', 'niet nu',
+        'niet geïnteresseerd', 'laat maar', 'niet doen', 'houd op', 'stoppen', 'niet mogelijk', 'neem terug',
+
+        # Czech
+        'ne', 'ne, děkuji', 'zrušit', 'zastavit', 'zapomeň', 'počkej', 'ne teď',
+        'nechci', 'nechci to', 'ne, děkuji', 'neboj se', 'zastav', 'ne, ne', 'ne teď prosím',
+
+        # Arabic
+        'لا', 'لا شكراً', 'إلغاء', 'توقف', 'اسمح لي', 'انتظر', 'ليس الآن',
+        'لا أريد', 'أوقفه', 'لا بأس', 'تُرك الأمر', 'لا، توقف', 'لا، لا أريد', 'لا الآن',
+
+        # Chinese (Simplified)
+        '不', '不，谢谢', '取消', '停止', '算了', '等一下', '现在不要',
+        '不要', '不感兴趣', '别做了', '放弃', '停一停', '不行', '别管了', '别再说了',
+
+        # Japanese
+        'いいえ', 'いいえ、ありがとう', 'キャンセル', '止めて', '忘れて', '待って', '今じゃない',
+        'やめよう', 'しないで', 'いいえ、いいえ', 'やめて', '今は無理', 'やめようよ', 'やめよう、やめよう',
+
+        # Hungarian
+        'nem', 'nem köszönöm', 'megszüntetem', 'állj', 'felejtsd el', 'várj', 'nem most',
+        'nem akarom', 'hagyjuk', 'nem érdekel', 'nem kell', 'csak várj', 'állj meg', 'nem érdekel',
+
+        # Korean
+        '아니요', '아니요, 감사합니다', '취소', '멈추세요', '잊어버리세요', '잠깐만', '지금은 아니에요',
+        '안 해요', '그만해요', '아니요, 안 됩니다', '그만', '지금은 안 돼요', '아니요, 안 됩니다', '다시 생각해요',
+
+        # Hindi
+        'नहीं', 'नहीं, धन्यवाद', 'रद्द करें', 'रोकें', 'भूल जाओ', 'रुको', 'अभी नहीं',
+        'मैं नहीं चाहता', 'बंद करो', 'नहीं चाहता', 'बस', 'अब नहीं', 'अब नहीं', 'कोई बात नहीं'
     ]
     return any(word in text_lower for word in cancellations)
 
@@ -3792,6 +4357,11 @@ def get_retention_response(sentiment_result: dict, language: str = 'en') -> str:
             'medium': "불편을 드려 죄송합니다. 고객님의 만족은 저희에게 매우 중요합니다.",
             'cancellation': "떠나실 생각을 하고 계신다고 들었습니다. 담당자가 곧 연락드려 무엇을 할 수 있는지 상의하겠습니다.",
         },
+        'hi': {
+            'high': "मैं आपकी निराशा को पूरी तरह समझता हूँ और मुझे इस बात का बहुत खेद है कि आपको यह सब झेलना पड़ा। कृपया अभी मत जाइए - मैं वास्तव में इस समस्या को सुलझाने में आपकी मदद करना चाहता हूँ। एक वरिष्ठ प्रतिनिधि जल्द ही आपको कॉल करके आपकी चिंताओं को व्यक्तिगत रूप से सुनेंगे और आपके लिए उपयुक्त समाधान निकालेंगे। हम आपको एक ग्राहक के रूप में महत्व देते हैं और आपका विश्वास फिर से जीतना चाहते हैं।",
+            'medium': "आपको हुई असुविधा के लिए मैं क्षमा चाहता हूँ। आपकी संतुष्टि हमारे लिए अत्यंत महत्वपूर्ण है। मैं आपकी सहायता के लिए जो भी कर सकता हूँ, वह करने का प्रयास करूंगा, और यदि आवश्यक हुआ, तो हमारे विशेषज्ञों में से एक शीघ्र ही आपसे संपर्क करके यह सुनिश्चित करेगा कि आपकी समस्या का समाधान हो गया है।",
+            'cancellation': "मुझे पता चला है कि आप कंपनी छोड़ने का विचार कर रहे हैं, और मैं सचमुच जानना चाहता हूँ कि क्या हुआ। अंतिम निर्णय लेने से पहले, कृपया मुझे आपकी मदद करने का मौका दें। हमारा एक प्रतिनिधि जल्द ही आपसे संपर्क करेगा ताकि हम इस बारे में बात कर सकें कि हम स्थिति को सुधारने और आपको एक महत्वपूर्ण ग्राहक बनाए रखने के लिए क्या कर सकते हैं।",
+        }
     }
     
     lang_code = language.split('-')[0].lower() if '-' in language else language.lower()
@@ -3949,6 +4519,7 @@ async def transcribe_with_whisper(audio_input, settings: dict, max_retries: int 
         return ""
     
     asr_server = settings.get('asr_server_address', '').strip()
+    asr_api_key = settings.get('asr_api_key', '')
     language = settings.get('asr_language_code', 'en')
     
     if not asr_server:
@@ -3972,19 +4543,27 @@ async def transcribe_with_whisper(audio_input, settings: dict, max_retries: int 
     asr_url = asr_url.replace('http:// ', 'http://').replace('https:// ', 'https://')
     
     # Use global LOCALE_MAP (defined at top of file for performance)
-    is_auto = not language or language == "auto" or "auto" in str(language).lower()
+    #is_auto = not language or language == "auto" or "auto" in str(language).lower()
     
-    if is_auto:
-        full_language = 'en-US'
-    elif '-' in language:
-        full_language = language
+    #if is_auto:
+    #    full_language = 'en-US'
+    #elif '-' in language:
+    #    full_language = language
+    #else:
+    #    short_code = language.lower().strip()
+    #    full_language = LOCALE_MAP.get(short_code, f"{short_code}-{short_code.upper()}")
+    
+    #logging.info(f"[ASR] Sending to Whisper: {asr_url} (lang={full_language})")
+    logging.info(f"[ASR] Sending to Whisper: {asr_url} (lang={language})")
+
+    #data = {'language': full_language}
+    data = {'language': language}
+
+    if len(asr_api_key) > 0: # if a key has been passed
+        asr_headers = {"Authorization": f"Bearer {asr_api_key}"}
     else:
-        short_code = language.lower().strip()
-        full_language = LOCALE_MAP.get(short_code, f"{short_code}-{short_code.upper()}")
-    
-    logging.info(f"[ASR] Sending to Whisper: {asr_url} (lang={full_language})")
-    
-    data = {'language': full_language}
+        asr_headers = None
+
     client = await get_http_client()
     
     for attempt in range(max_retries + 1):
@@ -4000,7 +4579,11 @@ async def transcribe_with_whisper(audio_input, settings: dict, max_retries: int 
             
             for endpoint in endpoints:
                 try:
-                    response = await client.post(f"{asr_url}{endpoint}", files=files, data=data)
+
+                    if asr_headers:
+                        response = await client.post(f"{asr_url}{endpoint}", files=files, data=data, headers=asr_headers)
+                    else:
+                        response = await client.post(f"{asr_url}{endpoint}", files=files, data=data)
                     
                     if response.status_code == 200:
                         result = response.json()
@@ -4142,6 +4725,7 @@ async def synthesize_with_xtts(text: str, settings: dict, max_retries: int = 5) 
         return b''
     
     tts_server = settings.get('tts_server_address', 'localhost:8000')
+    tts_api_key = settings.get('tts_api_key', '')
     language = settings.get('tts_language_code', 'en')
     
     # Get speaker setting
@@ -4169,6 +4753,11 @@ async def synthesize_with_xtts(text: str, settings: dict, max_retries: int = 5) 
     else:
         tts_url = tts_server
     
+
+    if len(tts_api_key) > 0: # if a key has been passed
+        tts_headers = {"Authorization": f"Bearer {tts_api_key}"}
+    else:
+        tts_headers = None
     client = await get_http_client()
     
     # === Try XTTS Server ===
@@ -4195,7 +4784,7 @@ async def synthesize_with_xtts(text: str, settings: dict, max_retries: int = 5) 
             audio_buffer = bytearray()
             start_time = time.time()
             
-            async with client.stream("POST", f"{tts_url}/tts/wav", json=payload, timeout=20.0) as response:
+            async with client.stream("POST", f"{tts_url}/tts/wav", json=payload, timeout=20.0, headers=tts_headers) as response:
                 if response.status_code == 200:
                     try:
                         async for chunk in response.aiter_bytes():
@@ -4324,6 +4913,7 @@ LANGUAGE_INSTRUCTIONS = {
     "ja": "言語ルール：日本語のみで回答してください。ユーザーが他の言語を話しても、理解した上で必ず日本語で回答してください。英語は使わないでください。",
     "hu": "NYELV: CSAK magyarul válaszolj. Még ha a felhasználó más nyelven beszél is, értsd meg de MINDIG magyarul válaszolj. Ne használj angol szavakat.",
     "ko": "언어 규칙: 한국어로만 답변해야 합니다. 사용자가 다른 언어로 말해도 이해하되 항상 한국어로 답변하세요. 영어를 사용하지 마세요.",
+    "hi": "भाषा: आपको केवल हिंदी में ही उत्तर देना है। भले ही उपयोगकर्ता हिब्रू, अरबी या कोई अन्य भाषा बोलता हो - उनकी बात समझने का प्रयास करें, लेकिन हमेशा सहज, बोलचाल की हिंदी में ही उत्तर दें। हिंदी के अलावा अन्य संख्याएँ या शब्द प्रयोग न करें।"
 }
 
 # =============================================================================
@@ -4389,8 +4979,12 @@ def build_general_llm_prompt(transcript, history_context="", custom_template=Non
     
     if custom_template and '{transcript}' in custom_template:
         # Add language instruction to custom template
-        return f"{lang_instruction}\n\n{custom_template.format(transcript=transcript)}"
+        #return f"{lang_instruction}\n\n{custom_template.format(transcript=transcript)}"
+        # Add conversation history
+        return f"{lang_instruction}\n\n{custom_template.format(transcript=transcript)} History of the conversation so far:\n{history_context}\n"
+
     
+    # custom_template is always passed to this function, so the following doesn't matter
     prompt = f'''You're having a friendly voice conversation. Keep it natural and brief.
 
 {lang_instruction}

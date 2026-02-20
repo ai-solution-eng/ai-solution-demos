@@ -18,6 +18,8 @@ spec:
         {{- end }}
         {{- end }}
       labels:
+        hpe-ezua/type: "vendor-service"
+        hpe-ezua/app: "voice-agent"
         {{- include "voice-agent.selectorLabels" . | nindent 8 }}
     spec:
       {{- with .Values.podSecurityContext }}
