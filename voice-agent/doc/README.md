@@ -32,7 +32,7 @@ Optional features, if connection to DB enabled from the Gradio UI:
 * **Agent to leverage data from a Postgres DB**, containing fake customer information: impersonate a customer making requests to the agent that has information regarding you, your subscription plan, tickets, analyzing your sentiment...
 * **Data visualization**: either from the Gradio app, from PCAI data catalog, or even **build your own superset dashboard**
 
-Supported languages* (see note):
+Supported languages:
 * English (en)
 * Spanish (es)
 * French (fr)
@@ -50,6 +50,7 @@ Supported languages* (see note):
 * Hungarian (hu)
 * Korean (ko)
 * Hindi (hi)
+
 
 **Note**
 
@@ -156,109 +157,91 @@ It is otherwise identical to chatting without access to SQL data.
 	* Environment variables:
 	  * AIOLI_SERVICE_PORT to 8000 (mandatory)
 
+To use those models, an API token will have to be generated for each of those three deployments. You can do this from the Gen AI -> Model Endpoints page of AIE:
+![generate_token](images/generate_token.PNG)
+
 
 **3. Connect models to Gradio application**:
-  * Adding connection to Qwen3-30B-A3B-Instruct-2507-FP8:
-    * As an Admin user on Open WebUI, go to Admin Panel -> Settings -> Connections
-	* Add an OpenAI API connection to your Qwen MLIS deployment using its MLIS endpoints and API Token
+  * After importing the Gradio application, go to Tools & Frameworks, and click on "Open" to reach the Gradio application
+  * Once there, to connect the application with the **chat model**, and click on the  **Agents Settings** tab:
+    * Fill the **API Base URL** with the endpoint of the chat model you deployed with MLIS
+    * Fill the **API key** field with the API token that you have generated after deploying the chat model with MLIS
+    * Fill the **Model Name** field with the id of the model you deployed: Qwen/Qwen3-30B-A3B-Instruct-2507-FP8 if you decided to deploy that model. Depending on which model you deployed, the corresponding model id may slightly differ from the way it's displayed on HuggingFace, so be mindful of that (a GET request on the /v1/models endpoint will give you the exact model id).
     ![qwen_connection](images/qwen_connection.PNG)
-  * Adding connection to Whisper and Chatterbox:
-    * Still as an Admin user, go to Admin Panel -> Settings -> Audio
-	* For both Speech-to-Text and Text-to-Speech sections, select "OpenAI" as Engine, then fill in:
-	  * For the STT section: Your Whisper MLIS deployment endpoint, its API token, and set the STT Model to openai/whisper-large-v3-turbo
-	  * For the TTS section: Your Chatterbox MLIS deployment endpoints and its API token. You can leave tts-1 or tts-1-hd as TTS model, and leave alloy as TTS Voice
-    ![STT_TTS_connection](images/stt-tts_connection.PNG)
-	* Take note of the "Response Splitting" value: either "Punctuation" and "Paragraph" values are OK 
+  * Adding connection to Whisper and XTTS-v2:
+    * Repeat the same process for Whisper by clicking on the **Voice Input** tab and filling the **ASR Server** and **ASR API Key** fields (model name not needed).
+    ![ASR_connection](images/asr_connection.PNG)
+	* And again for XTTS, by clicking on the **Voice Output** tab and filling the **TTS Server** and **TTS API Key** fields (model name not needed).
+    ![TTS_connection](images/tts_connection.PNG)
+  * The **Status** tab should give you a precise state of the connection to all three models
+    ![check_status](images/check_status.PNG)
 
 **4. (Optional) Enable connection with Postgres Database**
-  * Follow this step only if you are interested in chatting with a SQL DB
-  * **This steps requires EzPrestoMCP** to be imported to your PCAI instance
-  * You can use the custom Saudi Real Estate dataset CSV file, **Saudi_Arabia_houses.csv**, made available in the [**deploy/data**](../deploy/data) folder
-  * Make the CSV available in the right place:
-    * In a notebook, go the shared folder, and, under that shared folder, create a new folder, a subfolder inside it, and upload your CSV file inside that subfolder.
-    * Run chmod -R 777 on your folder. See example:
-    ![folder_structure](images/folder_structure.PNG)
-  * Add the CSV as a Data Source:
-    * On AIE, go to Data Engineering -> Data Sources -> Structured Data -> Add New Data Source
-    * Select Hive, and fill the following information:
-      * Name: Any name you want (e.g. realestate)
-      * Hive Metastore: Discovery
-      * Data Dir: file:/data/shared/YOUR FOLDER NAME
-      * File Type: CSV
-    ![hive_connection](images/hive_connection.PNG)
-    * Make the newly created Data Source public by clicking on the three dots, then "Change to public access:"
-    ![public_access](images/public_access.PNG)
-  * Check that the CSV data has been successfully imported:
-    * Click on "Data Catalog" -> Select your Data Source, default, then your table name should appear under the "All Datasets" section
-    ![data_catalog](images/data_catalog.PNG)
-    * Click on you table name, and you should have access to your dataset preview
-    ![data_preview](images/data_preview.PNG)
-    * Alternatively, you could go to Data Engineering -> Query Editor and add your dataset there in a similar fashion to run SQL queries on your data
-  * Connect Open WebUI to the EzPrestoMCP server:
-    * As an Open WebUI admin user, go to Admin Panel -> Settings -> External Tools -> Add Connection
-    * Select Type as "MCP Streamable HTTP"
-    * Copy-paste your MCP server URL in the URL field
-    * Get a JWT token to paste in the Auth API Key field. You can get a JWT Token from a notebook instance with the command **cat /etc/secrets/ezua/.auth_token**. Note that, by default, **this token is valid only for 30 minutes, so you will need to refresh it**, unless its lifetime has been increased.
-    * Fill ID, Name and Description fields however you like
-  ![mcp](images/mcp.PNG)
-  * Allow your chat model to use tools from that MCP server:
-    * If you created a new model to customize its prompt, you can go back to edit this model (Workspace -> Models -> click on the logo next to your model name) and tick your newly added tools, under the Tools section, towards the bottom of that page:
-    ![selected_tools](images/selected_tools.PNG)
-      * Adding a tool this way will ensure the custom model will always have access to that tool, and you won't have to confirm connection to that toolset when using this model
-    * If you have not created a new model with a custom prompt to bypass Chatterbox limitations to pronounce numbers written in digits, **you may still want a create a custom prompt to help the chat model generate better SQL queries**, to make a better use of tools available to it. In particular, describing at high level the database it has access to, and providing one or two examples of SQL queries will make it much more efficient at getting information from the provided CSV.
-      * Check the example provided in [**deploy/data/sa-houses-prompt.txt**](../deploy/data/sa-houses-prompt.txt) for guidance.
-      * If you use that example, double-check that its first few lines exactly corresponds to your database configuration: "realestate" is the source database, "default" the schema and "real_estate" the table. If you did not name your data source exactly "realestate" and/or the subfolder you created on the shared storage is not named exactly "real_estate", you will have to edit that part of the prompt, as the model will generate wrongly formatted SQL queries.
-    * If you are not using a custom model, you will have to click on the "Integrations" button, at the right of the "+" sign below the place where you usually type your query, then Tools -> tick your tool. A wrench icon appears once the chat model is given access to the tool: 
-    ![integration](images/integration.PNG)
-      * You will have to do this every time you start a new chat
+  * The next steps are only needed if you plan to show database interaction during your demo
+  * Deploy Postgres using a [helm chart from our frameworks repo](https://github.com/ai-solution-eng/frameworks/tree/main/postgresql), no need to change any values
+  * On the Gradio app, click on **Database**:
+    * **Database Host** should be set to the cluster IP of your postgresql service
+    * **Database Port** should be set to 5432
+    * **Database Name** should be to customer_service
+    * **Database User** should be set to postgres
+    * **Database Password** should be to postgres
+    * **Admin User** should be set to postgres
+    * **Admin Password** should be to postgres
+    ![DB_connection](images/db_connection.PNG)
+  * Once done, scroll down to Database Management, click on **Create Database** and then, **Initialize Tables**: this will create a new database with tables containing the required mock data to run that part of the demo
+	![tables_initialized](images/tables_initialized.PNG)
+  * The **Data Viewer** tab will allow you to visualize data from the different tables
+    ![data_viewer](images/data_viewer.PNG)
 
 **5. Run the demo**  
 
 	  
 **Notes**:
   1. [Qwen/Qwen3-30B-A3B-Instruct-2507-FP8](https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507-FP8) is just a suggestion that proved to work well for most, if not all languages supported by XTTS, but any OpenAI API compatible chat model could be used instead, as long as they supports the languages you plan to use the demo with.
-  2. [STT transcription API not being available in the official vLLM images](https://docs.vllm.ai/en/latest/serving/openai_compatible_server/#transcriptions-api), a custom image is needed. tpomas/vllm-audio:0.15.1 has been created from vllm/vllm-openai:v0.15.1 with the addition of running pip install vllm[audio]. It is provided for convenience, you can build and use your own image instead.
-  3. XTTS-v2 is neither vLLM-compatible, nor provide an Open AI API compatibility by default. The custom "tpomas/xtts-server:5.2.0" image has been built using the code available in the [xtts-server folder](../source/docker/xtts-server) made available in this repo.
+  2. To deploy openai/whisper-large-v3-turbo with vLLM, a custom image is needed, as [STT transcription API is not available in the official vLLM images](https://docs.vllm.ai/en/latest/serving/openai_compatible_server/#transcriptions-api). "tpomas/vllm-audio:0.15.1" has been created from vllm/vllm-openai:v0.15.1 with the addition of running pip install vllm[audio]. It is provided for convenience, but you can build and use your own image instead.
+  3. Alternatively, you can also use a **NIM to deploy whisper-large-v3**, if you have set up an NGC registry in MLIS. 	
+  4. XTTS-v2 is neither vLLM-compatible, nor provide an Open AI API compatibility by default. The custom "tpomas/xtts-server:5.2.0" image has been built using the code available in the [xtts-server folder](../source/docker/xtts-server) made available in this repo.
 
 ## Running the demo
 
-1. **Go to Open WebUI and select your model with custom prompt** (or Qwen/Qwen3-30B-A3B-Instruct-2507-FP8 if you didn't customize the prompt)
-2. **Select the language for Whisper, and the voice for Chatterbox**:
-    * Go to your user settings -> Audio
-    * STT Settings -> Language dictates the Whisper language. Expected value is the language two-letter code, defaults to "en" for "English". Provided example is "ar" for "Arabic". See "Supported Languages" at the top of this page if you have a doubt.
-    * TTS Settings -> Set Voice refers to the Chatterbox voice to use. The list of available voices will NOT be displayed, but you can write down the name of the voice you want to use. If no voice is found with that name, Chatterbox will default to the Alloy English voice.
-3. **Note these relevant options**:
-    * Enabling "Instant Auto-Send After Voice Transcription" will automatically send your query to the chat model once it's transcribed by Whisper when using the "Dictate" button. It has no effect when using the "Voice mode" button.
-    * Enabling "Auto-playback response" will automatically send the chat response to Chatterbox and play the audio once it is ready. It has no effect when using the "Voice mode" button.
-![user_settings](images/user_settings.PNG)
-4. **Ask your question to the chat model**:
-    * Click on "New Chat", and then the second button on the right, "Dictate"
+1. **Open the Gradio app**
+2. **Select the language for Whisper, and the voice for XTTS**:
+    * Click on the Voice Input tab, and select the language you plan to speak with the agent in the Input Language (Your Speech) dropdown 
+    * Click on the Voice Output tab, and select the language you want the agent to respond in.
+    * **Notes:**
+      *  Input and output languages don't necessarily have to match
+      *  Optional: Scrolling down in the Voice Output tab, you can select the voice that XTTS will use when generating its response. Some voices are more recommended than other for a specific language, but clicking "All Voices" will allow to list and select any speaker voice from its entire list of voices. 
+      *  Optional, **voice cloning:** Still on the Voice Output tab, you can open the Voice Cloning tab that allows you to create additional custom voices for the XTTS, by cloning the voice from a reference audio. Just provide a high-quality audio sample of a voice you wish to use (10s~20s is enough), upload it, give it a name and click on "Upload & Clone Voice". The process shouldn't take more than a couple of seconds, and the cloned voice should be available for selection in the Settings tab, alongside the original voices that XTTS provides. 
+4. **Discuss with the chat model**:
+    * Go back to the Voice Chat tab, and click on Conversation Mode (more interactive and natural compared to Push-to-Talk option)
 ![dictate_button](images/dictate_button.PNG)
-    * Allow Open WebUI to access your mic if prompted
-    * Ask your question verbally
-    * Click on the right tick button when you are done. Your speech will be send to whisper for transcription.
-5. **Check the transcription**:
-    * If "Instant Auto-Send After Voice Transcription" has been left disabled, transcription will appear where you usually type your queries. You can review the transcription and decide to erase it, edit it, or send it. It is no different than if you had typed this transcription yourself.
-    * If "Instant Auto-Send After Voice Transcription" has been enabled, transcription will immediately be send to the chat model, as if you typed your question and pressed enter.
-6. **Listen to the answer**:
-    * Wait for the chat answer to appear.
-    * If "Auto-playback response" has been left disabled, you will have to press the little "Read aloud" button below the chat response to generate the audio using the specified Chatterbox voice
-    ![read_aloud](images/read_aloud.PNG)
-    * If "Auto-playback response" has been enabled, you won't have to do anything else, but audio will only start being generated once the entire chat response is generated.
-7. **(Optional) Check the SQL query and result**:
+    * Allow the Gradio app to access your mic if prompted
+    * Click on Start for the app to start listening to your mic, and ask anything you want to the agent (the chat model):
+      * Once you stop talking, Whisper will transcribe your audio input into text, the chat model will process it and generate text as a response, and XTTS will generate the audio response from that text. The whole process shouldn't take more than a couple of seconds, depending on multiple factors (for how long you've been talking, how long of a response the chat model has output that needs audio generation, which models are in use, served with what images...)
+      * Once the Agents starts responding to your question, you can:
+        * Interrupt its answer by asking something else. In that case, it will start processing and answering to the latest thing you've said.
+        * Stop its answer by clicking the stop icon on the agent response progress bar.
+      * In case the agent is too sensitive to your background noise and/or you want to stop discussing with it, you can:
+        * Increase the sensitivity using the yellow sensitivity bar, which will make the application less sensitive to noise
+        * Click on the red Stop button to stop your mic input being monitored
+      * Use the New Session button to refresh the whole conversation history
+5. **(Optional) Check the SQL query and result**:
+    * Clicking on the "1 Source" button and then on the MCP server + Tool name will give you access to the list of parameters used by the model with that tool (the SQL query) and its output
+  ![check_query](images/check_query.PNG)
+6. **(Optional) Visualize Data on Superset**:
     * Clicking on the "1 Source" button and then on the MCP server + Tool name will give you access to the list of parameters used by the model with that tool (the SQL query) and its output
   ![check_query](images/check_query.PNG) 
 
-**Note:**
-* **DO NOT USE VOICE MODE**: this demo will be updated to support voice mode, and make it the default way to run it over using "Dictate". Supporting it will make getting the audio response faster, especially for long answers (see limitations for more details).
+**Notes:**
+* cache
+* non-english languages for DB mode
 
 ## Limitations
-
-* It is possible to get no audio output for a response that is otherwise correctly generated on the backend. If that happens, try asking the same question again. You can also click on the "New Session" button or even refresh the page if the issue persists.
-* DB Connection mode only works in English. It may also work in German, Spanish and French, but hasn't been thoroughly tested and will . It is not expected to work 
+* A
 
 
 ## Advice
+
 
 
 * ABC
