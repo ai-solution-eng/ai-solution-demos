@@ -2,3 +2,4 @@
 *.DS_Store
 PCAI Use Case Demo - AI Support Assistant.mp4
 **/Tiltfile
+**/.agents/
