@@ -2425,14 +2425,14 @@ ASR_LANGUAGES = {
 
 DEFAULT_CONFIG = {
     "websocket_uri": os.getenv("WEBSOCKET_URI", "ws://localhost:8765"),
-    "llm_api_base": os.getenv("LLM_API_BASE", "https://your-llm-endpoint/v1"),
+    "llm_api_base": os.getenv("LLM_API_BASE", "COPY YOUR LLM ENDPOINT HERE"),
     "llm_api_key": os.getenv("LLM_API_KEY", ""),
-    "llm_model_name": os.getenv("LLM_MODEL_NAME", "meta-llama/Llama-3.2-1B-Instruct"),
+    "llm_model_name": os.getenv("LLM_MODEL_NAME", "COPY YOUR LLM MODEL ID HERE (Qwen/Qwen3-30B-A3B-Instruct-2507-FP8 for example)"),
     "llm_prompt_template": os.getenv("LLM_PROMPT_TEMPLATE", 'Answer the question: "{transcript}"\n\nAnswer concisely.'),
-    "asr_server_address": os.getenv("ASR_SERVER_ADDRESS", "whisper-large-v3-predictor-00002-deployment.liav-hpe-com-ba9ce2f9.svc.cluster.local:9000"),
+    "asr_server_address": os.getenv("ASR_SERVER_ADDRESS", "COPY YOUR WHISPER ENDPOINT HERE"),
     "asr_api_key": os.getenv("ASR_API_KEY", ""),
-    "asr_language_code": "en" # set short language code instead of "en-US",  # Input is always English (Whisper)
-    "tts_server_address": os.getenv("TTS_SERVER_ADDRESS", "localhost:8000"),
+    "asr_language_code": "en", # set short language code instead of "en-US",  # Input is always English (Whisper)
+    "tts_server_address": os.getenv("TTS_SERVER_ADDRESS", "COPY YOUR XTTS ENDPOINT HERE (set localhost:8000 instead if deploying xtts with the helm chart)"),
     "tts_api_key": os.getenv("TTS_API_KEY", ""),
     "tts_language_code": os.getenv("TTS_LANGUAGE_CODE", "en"),  # XTTS language code
     "tts_voice": os.getenv("TTS_VOICE", "default"),  # XTTS uses default speaker
@@ -2454,7 +2454,7 @@ TTS_SAMPLE_WIDTH_BYTES = 2
 # =============================================================================
 # SERVICE STATUS MONITORING
 # =============================================================================
-def check_service_status(url: str, service_type: str = "generic", timeout: float = 10.0) -> dict:
+def check_service_status(url: str, service_type: str = "generic", timeout: float = 10.0, api_token=None) -> dict:
     """Check if a service is available - improved for LLM/ingress endpoints"""
     try:
         if not url:
@@ -2480,7 +2480,7 @@ def check_service_status(url: str, service_type: str = "generic", timeout: float
             return {"status": "🔒 Internal (OK)", "latency": "N/A"}
         
         # Helper function to try a request and handle SSL/connection variations
-        def try_request(test_url, method="GET", json_data=None, headers=None, headers=None):
+        def try_request(test_url, method="GET", json_data=None, headers=None):
             try:
                 req_headers = headers or {}
                 if method == "GET":
@@ -2521,10 +2521,17 @@ def check_service_status(url: str, service_type: str = "generic", timeout: float
         
         # Different endpoints for different services
         if service_type == "whisper":
+            
+            base_url = original_url
+            if base_url.endswith("/"):
+                base_url = base_url[:-1]
+            elif base_url.endswith("/v1"):
+                base_url = base_url[:-3]
+            
             #endpoints = ['/v1/models', '/health', '/docs', '/']
             endpoints = ['/v1/models', '/v1/health/ready'] # /v1/models for vLLM deployment, /v1/health/ready for NIM
             for endpoint in endpoints:
-                result = try_request(f"{original_url}{endpoint}")
+                result = try_request(f"{base_url}{endpoint}", headers=headers)
                 if result:
                     return result
                     
@@ -2556,38 +2563,42 @@ def check_service_status(url: str, service_type: str = "generic", timeout: float
                     unique_urls.append(u)
             
             for test_url in unique_urls:
-                result = try_request(test_url)
+                result = try_request(test_url, headers=headers)
                 if result:
                     return result
             
             # Try POST to chat completions with proper headers (most LLMs respond to this)
             chat_url = f"{base_url}/v1/chat/completions"
+            chat_headers = {"Content-Type": "application/json"}
+            if api_token:
+                chat_headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_token}"}
+            
             result = try_request(
                 chat_url, 
                 method="POST", 
                 json_data={"model": "test", "messages": [{"role": "user", "content": "test"}]},
-                headers={"Content-Type": "application/json"}
+                headers=chat_headers
             )
             if result:
                 return result
             
             # Final attempt: just try the base with a trailing slash
-            result = try_request(f"{base_url}/")
+            result = try_request(f"{base_url}/", headers=headers)
             if result:
                 return result
             
             return {"status": "❌ Offline", "latency": "-"}
             
         elif service_type == "xtts":
-            endpoints = ['/health', '/info', '/']
+            endpoints = ['/info'] # only check /info as it requires api token, so can help troubleshooting tokens issues
             for endpoint in endpoints:
-                result = try_request(f"{original_url}{endpoint}")
+                result = try_request(f"{original_url}{endpoint}", headers=headers)
                 if result:
                     return result
         else:
             endpoints = ['/health', '/v1/models', '/']
             for endpoint in endpoints:
-                result = try_request(f"{original_url}{endpoint}")
+                result = try_request(f"{original_url}{endpoint}", headers=headers)
                 if result:
                     return result
         
@@ -2902,6 +2913,17 @@ async def process_audio(
             llm_api_base = 'https://' + llm_api_base
         llm_api_base = llm_api_base.rstrip('/')
         
+        if not llm_api_base.endswith("/v1"):
+            if llm_api_base.endswith("/"):
+                llm_api_base += "v1"
+            else:
+                llm_api_base += "/v1" 
+    
+    if asr_server_address.endswith("/v1"):
+        asr_server_address = asr_server_address[:-3]
+    elif asr_server_address.endswith("/"):
+        asr_server_address = asr_server_address[:-1]
+    
     # Ensure all settings are strings (except booleans) to prevent JSON errors
     settings = {
         'websocket_uri': str(DEFAULT_CONFIG['websocket_uri']),
@@ -3801,7 +3823,7 @@ def create_ui():
                         )
                         
                         # Update voice choices when language changes
-                        def update_voice_choices(lang, gender):
+                        def update_voice_choices(lang, voice_filter, tts_server_address, tts_api_key):
 
                             if voice_filter == "Recommended Female Voices Only":
                                 choices = ["default"] + VOICES_BY_LANG[lang].get("female", [])
