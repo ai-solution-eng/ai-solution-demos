@@ -303,16 +303,16 @@ def get_bool_env(var_name: str, default: bool = False) -> bool:
     return os.getenv(var_name, str(default)).lower() in ('true', '1', 't', 'yes', 'y')
 
 DEFAULT_SETTINGS = {
-    "llm_api_base": os.getenv("LLM_API_BASE"),
+    "llm_api_base": os.getenv("LLM_API_BASE", "COPY YOUR LLM ENDPOINT HERE"),
     "llm_api_key": os.getenv("LLM_API_KEY"),
     "llm_prompt_template": os.getenv("LLM_PROMPT_TEMPLATE", 'Answer the question: "{transcript}"\n\nAnswer concisely.'),
-    "llm_model_name": os.getenv("LLM_MODEL_NAME", "meta-llama/Llama-3.2-1B-Instruct"),
+    "llm_model_name": os.getenv("LLM_MODEL_NAME", "COPY YOUR LLM MODEL ID HERE (Qwen/Qwen3-30B-A3B-Instruct-2507-FP8 for example)"),
     # ASR - Whisper
-    "asr_server_address": os.getenv("ASR_SERVER_ADDRESS", "whisper-large-v3-predictor-00002-deployment.liav-hpe-com-ba9ce2f9.svc.cluster.local:9000"),
+    "asr_server_address": os.getenv("ASR_SERVER_ADDRESS", "COPY YOUR WHISPER ENDPOINT HERE"),
     "asr_api_key": os.getenv("ASR_API_KEY"),
     "asr_language_code": os.getenv("ASR_LANGUAGE_CODE", "en"),
     # TTS - XTTS v2
-    "tts_server_address": os.getenv("TTS_SERVER_ADDRESS", "localhost:8000"),
+    "tts_server_address": os.getenv("TTS_SERVER_ADDRESS", "COPY YOUR XTTS ENDPOINT HERE (set localhost:8000 instead if deploying xtts with the helm chart)"),
     "tts_api_key": os.getenv("TTS_API_KEY"),
     "tts_language_code": os.getenv("TTS_LANGUAGE_CODE", "en"),
     "tts_speaker": os.getenv("TTS_SPEAKER", ""),
@@ -6012,79 +6012,80 @@ async def periodic_session_cleanup(interval_seconds: int = 300):
 # =============================================================================
 # PRE-WARMING & HEALTH PROBES - v5.1.0
 # =============================================================================
-PREWARM_PHRASES = {
-    "en": [
-        "Hello, how can I help you today?",
-        "Please wait a moment.",
-        "Thank you for contacting us.",
-        "Is there anything else I can help you with?",
-        "I understand. Let me help you with that.",
-    ],
-    "he": [
-        "שלום, איך אני יכול לעזור לך?",
-        "אנא המתן רגע.",
-        "תודה שפנית אלינו.",
-        "האם יש עוד משהו שאני יכול לעזור בו?",
-        "אני מבין. בוא נטפל בזה.",
-    ],
-}
+#PREWARM_PHRASES = {
+#    "en": [
+#        "Hello, how can I help you today?",
+#        "Please wait a moment.",
+#        "Thank you for contacting us.",
+#        "Is there anything else I can help you with?",
+#        "I understand. Let me help you with that.",
+#    ],
+#    "he": [
+#        "שלום, איך אני יכול לעזור לך?",
+#        "אנא המתן רגע.",
+#        "תודה שפנית אלינו.",
+#        "האם יש עוד משהו שאני יכול לעזור בו?",
+#        "אני מבין. בוא נטפל בזה.",
+#    ],
+#}
 
 
-async def prewarm_tts_cache(settings: dict):
-    """Pre-generate common phrases on startup for faster first response"""
-    language = settings.get('tts_language_code', 'en')
-    lang_short = language.split('-')[0] if '-' in language else language
-    
-    phrases = PREWARM_PHRASES.get(lang_short, PREWARM_PHRASES.get('en', []))
-    
-    logging.info(f"[TTS] 🔥 Pre-warming cache with {len(phrases)} phrases ({lang_short})...")
-    
-    success = 0
-    for phrase in phrases:
-        try:
-            audio = await synthesize_with_xtts(phrase, settings, max_retries=1)
-            if audio:
-                success += 1
-                logging.debug(f"[TTS] Pre-warmed: {phrase[:30]}...")
-        except Exception as e:
-            logging.warning(f"[TTS] Pre-warm failed for: {phrase[:30]}... ({e})")
-        
-        # Small delay between requests
-        await asyncio.sleep(0.5)
-    
-    logging.info(f"[TTS] 🔥 Pre-warming complete: {success}/{len(phrases)} phrases cached")
+#async def prewarm_tts_cache(settings: dict):
+#    """Pre-generate common phrases on startup for faster first response"""
+#    language = settings.get('tts_language_code', 'en')
+#    lang_short = language.split('-')[0] if '-' in language else language
+#    
+#    phrases = PREWARM_PHRASES.get(lang_short, PREWARM_PHRASES.get('en', []))
+#    
+#    logging.info(f"[TTS] 🔥 Pre-warming cache with {len(phrases)} phrases ({lang_short})...")
+#    
+#    success = 0
+#    for phrase in phrases:
+#        try:
+#            audio = await synthesize_with_xtts(phrase, settings, max_retries=1)
+#            if audio:
+#                success += 1
+#                logging.debug(f"[TTS] Pre-warmed: {phrase[:30]}...")
+#        except Exception as e:
+#            logging.warning(f"[TTS] Pre-warm failed for: {phrase[:30]}... ({e})")
+#        
+#        # Small delay between requests
+#        await asyncio.sleep(0.5)
+#    
+#    logging.info(f"[TTS] 🔥 Pre-warming complete: {success}/{len(phrases)} phrases cached")
+#    logging.info(f"[TTS] 🔥 Pre-warming complete: {success}/{len(phrases)} phrases cached")
 
 
-async def periodic_health_probe(interval_seconds: int = 30):
-    """Periodically check service health"""
-    while True:
-        await asyncio.sleep(interval_seconds)
-        try:
-            # Check TTS server
-            tts_url = DEFAULT_SETTINGS.get('tts_server_address', '')
-            if tts_url:
-                if not tts_url.startswith('http'):
-                    tts_url = f"http://{tts_url}"
-                try:
-                    client = await get_http_client()
-                    start = time.time()
-                    response = await client.get(f"{tts_url}/health", timeout=5.0)
-                    latency = time.time() - start
-                    if response.status_code == 200:
-                        await _service_health.update("tts", "ok", latency, tts_url)
-                    else:
-                        await _service_health.update("tts", "degraded", latency, tts_url)
-                except Exception as e:
-                    await _service_health.update("tts", "down", 0, tts_url)
-                    logging.warning(f"[Health] TTS probe failed: {e}")
-            
-            # Log cache stats periodically
-            tts_stats = _tts_cache.stats()
-            if tts_stats['size'] > 0:
-                logging.debug(f"[Cache] TTS: {tts_stats['size']} items, {tts_stats['hit_rate']} hit rate")
-                
-        except Exception as e:
-            logging.error(f"Health probe error: {e}")
+#async def periodic_health_probe(interval_seconds: int = 30):
+#    """Periodically check service health"""
+#    while True:
+#        await asyncio.sleep(interval_seconds)
+#        try:
+#            # Check TTS server
+#            tts_url = DEFAULT_SETTINGS.get('tts_server_address', '')
+#            if tts_url:
+#                if not tts_url.startswith('http'):
+#                    tts_url = f"http://{tts_url}"
+#                try:
+#                    client = await get_http_client()
+#                    start = time.time()
+#                    response = await client.get(f"{tts_url}/health", timeout=5.0)
+#                    latency = time.time() - start
+#                    if response.status_code == 200:
+#                        await _service_health.update("tts", "ok", latency, tts_url)
+#                    else:
+#                        await _service_health.update("tts", "degraded", latency, tts_url)
+#                except Exception as e:
+#                    await _service_health.update("tts", "down", 0, tts_url)
+#                    logging.warning(f"[Health] TTS probe failed: {e}")
+#            
+#            # Log cache stats periodically
+#            tts_stats = _tts_cache.stats()
+#            if tts_stats['size'] > 0:
+#                logging.debug(f"[Cache] TTS: {tts_stats['size']} items, {tts_stats['hit_rate']} hit rate")
+#                
+#        except Exception as e:
+#            logging.error(f"Health probe error: {e}")
 
 
 async def graceful_shutdown():
@@ -6121,14 +6122,14 @@ async def main():
     asyncio.create_task(start_circuit_reset_server())
     asyncio.create_task(periodic_session_cleanup(300))
     asyncio.create_task(periodic_cache_cleanup(120))
-    asyncio.create_task(periodic_health_probe(30))  # Health check every 30s
+    #asyncio.create_task(periodic_health_probe(30))  # Health check every 30s
     
     # Pre-warm HTTP connection pool
     await get_http_client()
     logging.info("✅ HTTP client pool initialized")
     
     # Pre-warm TTS cache with common phrases (run in background)
-    asyncio.create_task(prewarm_tts_cache(DEFAULT_SETTINGS))
+    #asyncio.create_task(prewarm_tts_cache(DEFAULT_SETTINGS))
     
     try:
         async with websockets.serve(handler, host, port, max_size=50 * 1024 * 1024):
