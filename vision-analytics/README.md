@@ -6,16 +6,16 @@
 | PCAI Deployment Owner       | Andrew Mendez                     | andrew.mendez@hpe.com                     |
 | PCAI Deployment Owner v2     | Erdinc Kaya                     | kaya@hpe.com                     |
 
-This project demonstrates a powerful, interactive application to analyze images, videos, and real-time video streams using a Vision Language Model (VLM). The application is built with Gradio, containerized with Docker, and designed for seamless deployment on **HPE Private Cloud AI (PCAI)** using a reusable Helm chart.
+This project demonstrates a powerful, interactive application to analyse images, videos, and real-time video streams using a Vision Language Model (VLM). The application is built with Gradio, containerized with Docker, and designed for seamless deployment on **HPE Private Cloud AI (PCAI)** using a reusable Helm chart.
 
-Users can analyze an image, video clip, or connect a live rtsp stream with a  deployed VLM with a custom prompt to extract structured information.
+Users can analyse an image, video clip, or connect a live rtsp stream with a  deployed VLM with a custom prompt to extract structured information.
 
 
 ---
 
 ### Context on Customer and Use Case
 
-This demo is ideal for customers looking to analyze images, video, or live streams to automate manual visual inspection.
+This demo is ideal for customers looking to analyse images, video, or live streams to automate manual visual inspection.
 
 ### Solution Overview and Demo Video
 
@@ -28,9 +28,9 @@ This demo is ideal for customers looking to analyze images, video, or live strea
 ### Key Features
 *   **VLM Configuration:** Configure the VLM's API endpoint and key directly within the Gradio UI, allowing for easy switching between different models or environments.
 *   **Image Analysis Tab :** Upload an image and enter prompt to extract visual insights from image.
-*   **Video Understanding Tab :** Upload an video and enter prompt to extract visual insights from image. Vision understanding is configure to select number of frame, framerate, and the amount of duration to analyze
+*   **Video Understanding Tab :** Upload an video and enter prompt to extract visual insights from image. Vision understanding is configure to select number of frame, framerate, and the amount of duration to analyse
 *   **On-Demand Live RTSP Steam Analysis:** Capture a single frame from any live stream and send it to a Vision Language Model for analysis.
-*   **Structured Data Extraction:** The VLM prompt in RSTP Stream Tab, its configurable to return structured data (e.g., vehicle type, color, status), which the application parses into a clean JSON object.
+*   **Structured Data Extraction:** The VLM prompt in RSTP Stream Tab, its configurable to return structured data (e.g., vehicle type, colour, status), which the application parses into a clean JSON object.
 *   **Data Export:** Download the parsed JSON data for any analysis with a single click.
 *   **HPE PCAI Optimized:** Packaged as a Helm chart that integrates with PCAI's Istio gateway and "Tools & Frameworks" deployment model.
 
@@ -81,7 +81,7 @@ The application code is packaged into a Docker image which will be pulled by you
     docker login
     ```
 
-3.  Login to your dockerhub account to enable uploading docker images. Modify the `IMAGE_NAME="mendeza/vision_analytics_demo"` to your dockerhub username. Then you can execute the build script. This will build the image for the `linux/amd64` platform and push it to the registry. The default image name is `mendeza/vision_analytics_demo:0.0.1`.
+3.  Login to your dockerhub account to enable uploading docker images. Modify the `IMAGE_NAME="mendeza/vision_analytics_demo"` to your dockerhub username. Then you can execute the build script. This will build the image for the `linux/amd64` platform and push it to the registry. The default image name is `mendeza/vision_analytics_demo:1.0.0`.
     ```bash
     bash build.sh
     ```
@@ -100,7 +100,7 @@ The Helm chart contains all the Kubernetes manifests needed to run the applicati
     helm package .
     ```
 
-3.  This command will create a file named `vision-analytics-chart-0.1.0.tgz`. This is the file you will upload to PCAI.
+3.  This command will create a file named `vision-analytics-chart-0.1.3.tgz`. This is the file you will upload to PCAI.
 
 ### Step 3: Deploy via HPE Private Cloud AI
 
@@ -110,12 +110,12 @@ The Helm chart contains all the Kubernetes manifests needed to run the applicati
 
     *   **Step 1: Framework Details**
         *   **Framework Name:** `vision-analytics-chart`
-        *   **Description:** `An interactive UI to analyze frames from MJPEG streams with a Vision Language Model.`
+        *   **Description:** `An interactive UI to analyse frames from MJPEG streams with a Vision Language Model.`
         *   Optionally, upload a logo.
         *   Click **Next**.
 
     *   **Step 2: Upload Package**
-        *   Upload the `vision-analytics-chart-0.1.0.tgz` file you created in the previous step.
+        *   Upload the `vision-analytics-chart-0.1.3.tgz` file you created in the previous step.
         *   Choose a **Namespace** to deploy into (e.g., your project's namespace).
         *   Click **Next**.
 
@@ -135,21 +135,21 @@ The Helm chart contains all the Kubernetes manifests needed to run the applicati
 
 ### Initial Configuration
 
-Before you can analyze frames, you must configure the VLM endpoint:
+Before you can analyse frames, you must configure the VLM endpoint:
 
 1.  Expand the **Vision Model Configuration** accordion at the top.
 2.  Enter the **API Key** and **API Base URL** that you obtained from your MLIS model deployment in the prerequisites.
 3.  Click **Apply Configuration**. A status message will confirm if the connection was successful.
 
-### Analyze an Image
+### Analyse an Image
 
 1.  Select the **Image Understanding** tab.
 2.  Upload an image file, and  configure the prompt to specify what you want the vision language model to do
-    * default prompt: `Describe this image in detail. Include key objects, colors, text, and notable actions.`
+    * default prompt: `Describe this image in detail. Include key objects, colours, text, and notable actions.`
     * The best prompt to use for this [image](assets/wildfire2.png) is: `Describe the scene in the photo.`
 5.  When the model completes its analysis, it will send its response to the **LLM Response** field
 
-### Analyze an video
+### Analyse an video
 
 1.  Select the **Video Understanding** tab.
 2.  Upload a video file, and  configure the prompt to specify what you want the vision language model to do
@@ -161,6 +161,6 @@ Before you can analyze frames, you must configure the VLM endpoint:
 
 1.  Select the **RTSP Stream** tab.
 2.  Enter an MJPEG stream URL and click **Start Stream**.
-3.  Once the video is playing, you can click **Analyze Current Frame**.
+3.  Once the video is playing, you can click **Analyse Current Frame**.
 4.  The application will capture the latest frame, send it to the VLM, and display the raw text output and the parsed JSON object below.
 5.  Click **Save Parsed JSON** to download the results.

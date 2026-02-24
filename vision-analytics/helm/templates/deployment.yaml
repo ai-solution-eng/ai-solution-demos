@@ -15,6 +15,7 @@ spec:
       labels:
         {{- include "gradio-vlm-chart.selectorLabels" . | nindent 8 }}
     spec:
+      serviceAccountName: {{ include "gradio-vlm-chart.fullname" . }}-sa
       containers:
         - name: gradio-app
           image: "{{ .Values.app.image.repository }}:{{ .Values.app.image.tag | default .Chart.AppVersion }}"
@@ -31,18 +32,11 @@ spec:
           resources:
             {{- toYaml .Values.app.resources | nindent 12 }}
           volumeMounts:
-            - name: datasources
-              mountPath: /mnt/datasources
-              mountPropagation: HostToContainer
             - name: shared-data
               mountPath: /mnt/shared
               readOnly: true
 
       volumes:
-        - name: datasources
-          csi:
-            driver: csi.ezdata.io
-            readOnly: true
         - name: shared-data
           persistentVolumeClaim:
             claimName: {{ include "gradio-vlm-chart.name" . }}-shared-pvc

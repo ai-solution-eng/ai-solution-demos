@@ -5,6 +5,7 @@ import numpy as np
 from fastapi import FastAPI
 import uvicorn
 from openai import OpenAI
+import httpx
 import io
 import base64
 from PIL import Image
@@ -13,7 +14,11 @@ from datetime import datetime
 import json
 import os
 import pathlib
-from typing import Optional, Any, Dict
+from typing import Optional, Any, Dict, Tuple
+from kubernetes import client as k8s_client, config as k8s_config
+import shutil
+import tempfile
+import hashlib
 
 # ==================================
 # Logging
@@ -26,13 +31,15 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(
 CONFIG_FILE = "config.json"
 active_openai_api_key = os.getenv("OPENAI_API_KEY", "YOUR_API_KEY")
 active_openai_api_base = os.getenv("OPENAI_API_BASE", "YOUR_API_BASE_URL")
+active_ignore_tls = os.getenv("IGNORE_TLS", "false").lower() == "true"
+active_root_dir = os.getenv("ROOT_DIR", "/mnt").rstrip("/")
 client: Optional[OpenAI] = None
 model_id: Optional[str] = None
 current_config_status_message = "Config not yet initialized."
 
 def load_config_from_disk():
     """Load configuration from disk if available, overriding env vars."""
-    global active_openai_api_key, active_openai_api_base, model_id
+    global active_openai_api_key, active_openai_api_base, model_id, active_ignore_tls, active_root_dir
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r") as f:
@@ -40,6 +47,8 @@ def load_config_from_disk():
                 active_openai_api_key = config.get("api_key", active_openai_api_key)
                 active_openai_api_base = config.get("api_base", active_openai_api_base)
                 model_id = config.get("model_id", model_id)
+                active_ignore_tls = config.get("ignore_tls", active_ignore_tls)
+                active_root_dir = config.get("root_dir", active_root_dir).rstrip("/")
                 logging.info(f"Loaded config from {CONFIG_FILE}")
         except Exception as e:
             logging.error(f"Failed to load config file: {e}")
@@ -49,7 +58,9 @@ def save_config_to_disk():
     config = {
         "api_key": active_openai_api_key,
         "api_base": active_openai_api_base,
-        "model_id": model_id
+        "model_id": model_id,
+        "ignore_tls": active_ignore_tls,
+        "root_dir": active_root_dir
     }
     try:
         with open(CONFIG_FILE, "w") as f:
@@ -58,11 +69,22 @@ def save_config_to_disk():
     except Exception as e:
         logging.error(f"Failed to save config file: {e}")
 
-def initialize_or_update_openai_client(api_key_to_use: str, api_base_to_use: str, preferred_model_id: str = "") -> str:
-    """Initialize OpenAI-compatible client using provided base URL and API key.
-    If preferred_model_id is provided and exists, use it; else default to the first listed model.
+
+def initialize_or_update_openai_client(api_key_to_use: str, api_base_to_use: str, preferred_model_id: str = "", ignore_tls: bool = False, root_dir: str = "/mnt/") -> Tuple[str, str]:
     """
-    global client, model_id, active_openai_api_key, active_openai_api_base, current_config_status_message
+    Initialise OpenAI-compatible client using provided base URL and API key.
+    
+    Args:
+        api_key_to_use: The API key for authentication.
+        api_base_to_use: The base URL for the API.
+        preferred_model_id: Preferred model to use if available.
+        ignore_tls: Whether to ignore TLS certificate verification.
+        root_dir: The root directory for file browsing.
+        
+    Returns:
+        A tuple containing the status message and the active root directory.
+    """
+    global client, model_id, active_openai_api_key, active_openai_api_base, active_ignore_tls, active_root_dir, current_config_status_message
 
     _old_active_key, _old_active_base, _old_client, _old_model = (
         active_openai_api_key,
@@ -72,17 +94,24 @@ def initialize_or_update_openai_client(api_key_to_use: str, api_base_to_use: str
     )
 
     try:
-        if not api_base_to_use or not api_key_to_use:
-            current_config_status_message = "API Base URL and API Key must be provided."
-            logging.warning(current_config_status_message)
-            return current_config_status_message
+        # Check if URL/Key are configured or still using placeholders
+        if not api_base_to_use or not api_key_to_use or \
+           api_base_to_use == "YOUR_API_BASE_URL" or api_key_to_use == "YOUR_API_KEY":
+            current_config_status_message = "API configuration required. Please set the API Base URL and Key in the Settings tab."
+            logging.info(current_config_status_message)
+            return current_config_status_message, active_root_dir
 
-        temp_client = OpenAI(api_key=api_key_to_use, base_url=api_base_to_use)
+        # Adjust API Base URL if /v1 is missing
+        if api_base_to_use and not api_base_to_use.rstrip("/").endswith("/v1"):
+            api_base_to_use = api_base_to_use.rstrip("/") + "/v1"
+
+        http_client = httpx.Client(verify=not ignore_tls)
+        temp_client = OpenAI(api_key=api_key_to_use, base_url=api_base_to_use, http_client=http_client)
         models_list = temp_client.models.list()
         if not models_list.data:
             current_config_status_message = f"No models found at base {api_base_to_use}."
             logging.warning(current_config_status_message)
-            return current_config_status_message
+            return current_config_status_message, active_root_dir
 
         chosen = None
         if preferred_model_id:
@@ -95,39 +124,136 @@ def initialize_or_update_openai_client(api_key_to_use: str, api_base_to_use: str
 
         client = temp_client
         model_id = chosen
+        
+        # Enforce sandbox: ensure root_dir is within /mnt and normalised
+        root_dir = os.path.normpath(root_dir)
+        if not root_dir.startswith("/mnt"):
+            root_dir = os.path.join("/mnt", root_dir.lstrip("/"))
+        root_dir = os.path.normpath(root_dir)
+        
         active_openai_api_key = api_key_to_use
         active_openai_api_base = api_base_to_use
+        active_ignore_tls = ignore_tls
+        active_root_dir = root_dir
+        
+        logging.info(f"Configuration updated. Root directory set to: {active_root_dir}")
         
         # Save to disk on successful update
         save_config_to_disk()
         
         current_config_status_message = f"Configured. Using model: {model_id} (base: {active_openai_api_base})"
         logging.info(current_config_status_message)
-        return current_config_status_message
+        return current_config_status_message, active_root_dir
 
     except Exception as e:
         client, model_id = _old_client, _old_model
         active_openai_api_key, active_openai_api_base = _old_active_key, _old_active_base
         current_config_status_message = f"Error updating configuration (URL: {api_base_to_use}): {e}."
         logging.error(current_config_status_message)
-        return current_config_status_message
+        return current_config_status_message, active_root_dir
+
+def get_inference_services_urls():
+    """List InferenceServices from Kubernetes and return their API Base URLs."""
+    urls = []
+    try:
+        # Check if running inside Kubernetes
+        if os.path.exists("/var/run/secrets/kubernetes.io/serviceaccount/token"):
+            k8s_config.load_incluster_config()
+        else:
+            k8s_config.load_kube_config()
+            
+        api = k8s_client.CustomObjectsApi()
+        
+        # List InferenceServices across all namespaces
+        isvcs = api.list_custom_object_for_all_namespaces(
+            group="serving.kserve.io",
+            version="v1beta1",
+            resource_plural="inferenceservices"
+        )
+        
+        for item in isvcs.get("items", []):
+            try:
+                metadata = item.get("metadata", {})
+                name = metadata.get("name", "unknown")
+                namespace = metadata.get("namespace", "unknown")
+                
+                status = item.get("status", {})
+                # Try to get the URL from various possible locations in status
+                # prioritize 'url' (usually external) then 'address.url' (usually internal)
+                url = status.get("url") or status.get("address", {}).get("url")
+                
+                if url:
+                    # Add /v1 if missing
+                    full_url = url if url.endswith("/v1") else f"{url.rstrip('/')}/v1"
+                    urls.append(full_url)
+                    logging.info(f"Found InferenceService: {name}.{namespace} -> {full_url}")
+                else:
+                    logging.info(f"Skipping InferenceService {name}.{namespace}: No URL found in status.")
+            except Exception as item_err:
+                logging.warning(f"Error processing InferenceService item: {item_err}")
+            
+    except Exception as e:
+        logging.warning(f"Could not fetch InferenceServices from K8s: {e}")
+    
+    # Fallback to current active base and env var
+    if active_openai_api_base and active_openai_api_base != "YOUR_API_BASE_URL":
+        urls.append(active_openai_api_base)
+    
+    env_base = os.getenv("OPENAI_API_BASE")
+    if env_base and env_base not in urls:
+        urls.append(env_base)
+        
+    return sorted(list(set(urls)))
 
 
 # Initialize once at import
 load_config_from_disk()
-current_config_status_message = initialize_or_update_openai_client(active_openai_api_key, active_openai_api_base, model_id)
+current_config_status_message, active_root_dir = initialize_or_update_openai_client(active_openai_api_key, active_openai_api_base, model_id, active_ignore_tls, active_root_dir)
 
 # ... (helpers) ...
 
 def get_current_config_ui():
     """Helper to populate UI with current config."""
-    return active_openai_api_key, active_openai_api_base, model_id or "", current_config_status_message
+    urls = get_inference_services_urls()
+    is_valid = active_openai_api_base and active_openai_api_base != "YOUR_API_BASE_URL"
+    
+    alert_html = ""
+    if not is_valid:
+        alert_html = '<div id="config-alert" style="color: #b91c1c; font-weight: bold; background-color: #fef2f2; padding: 15px; border: 1px solid #f87171; border-radius: 8px; margin-bottom: 20px;">' \
+                     '⚠️ <strong>Configuration Required:</strong> The API Base URL is not set. Please go to the <strong>Settings</strong> tab and configure your PCAI endpoint.' \
+                     '</div>'
+    
+    settings_label = "Settings ❌" if not is_valid else "Settings"
+    
+    return (
+        active_openai_api_key, 
+        gr.update(value=active_openai_api_base, choices=urls), 
+        model_id or "", 
+        active_ignore_tls, 
+        active_root_dir, 
+        current_config_status_message,
+        gr.update(value=alert_html, visible=not is_valid),
+        gr.update(label=settings_label),
+        gr.update(label=f"Image files in {active_root_dir}"),
+        gr.update(label=f"Video files in {active_root_dir}"),
+        gr.update(root_dir="/mnt" if os.path.exists("/mnt") else os.getcwd())
+    )
+
+def get_ui_validation_updates():
+    """Helper for real-time UI validation updates."""
+    is_valid = active_openai_api_base and active_openai_api_base != "YOUR_API_BASE_URL"
+    alert_html = ""
+    if not is_valid:
+        alert_html = '<div id="config-alert" style="color: #b91c1c; font-weight: bold; background-color: #fef2f2; padding: 15px; border: 1px solid #f87171; border-radius: 8px; margin-bottom: 20px;">' \
+                     '⚠️ <strong>Configuration Required:</strong> The API Base URL is not set. Please go to the <strong>Settings</strong> tab and configure your PCAI endpoint.' \
+                     '</div>'
+    
+    settings_label = "Settings ❌" if not is_valid else "Settings"
+    return gr.update(value=alert_html, visible=not is_valid), gr.update(label=settings_label)
 
 #
 # Shared helpers
 #
-
-SHARED_FOLDER_ROOT_DIR = "/mnt/shared"
 
 def render_llm_response(response_text: str) -> str:
     """
@@ -139,9 +265,16 @@ def render_llm_response(response_text: str) -> str:
     except json.JSONDecodeError:
         return gr.JSON(value=None, visible=False), gr.Markdown(value=response_text, visible=True)
         
-def get_prompt_from_file(source_path, default_prompt):
+def get_prompt_from_file(source_path: str, default_prompt: str) -> str:
     """
-    Helper to get prompt from file, if it exists, otherwise return default prompt
+    Helper to get prompt from file, if it exists, otherwise return default prompt.
+    
+    Args:
+        source_path: Path to the source file.
+        default_prompt: The default prompt to use if no file exists.
+        
+    Returns:
+        The content of the prompt file or the default prompt.
     """
     prompt_path = os.path.splitext(source_path)[0] + ".prompt"
     if os.path.exists(prompt_path):
@@ -178,7 +311,7 @@ def call_vision_language_model(image_base64: str, prompt: str = "Describe this i
                         You are a scene-description engine for images.
                         Describe the visible content in 3-6 sentences.
                         Start with the overall setting and main subjects, then mention important objects, actions, and relationships.
-                        Include concrete visual details: colors, approximate counts, positions ("left", "center", "background"), and any visible text.
+                        Include concrete visual details: colours, approximate counts, positions ("left", "centre", "background"), and any visible text.
                         Do not infer backstory, emotions, or intentions unless they are visually obvious.
                         Avoid repeating the same detail with different wording.
                         Do not invent objects that are not clearly visible.
@@ -201,10 +334,10 @@ def call_vision_language_model(image_base64: str, prompt: str = "Describe this i
         return f"Error during API call: {e}"
 
 
-# ==================================
-# Tab 1: Image Understanding (UNCHANGED)
-# ==================================
-DEFAULT_IMAGE_PROMPT = "Describe this image in detail. Include key objects, colors, text, and notable actions."
+# -----------------------------------------------------------------------------
+# Tab 1: Image Understanding
+# -----------------------------------------------------------------------------
+DEFAULT_IMAGE_PROMPT = "Describe this image in detail. Include key objects, colours, text, and notable actions."
 
 def load_image_from_explorer(file_list):
     """Load an image from a file path selected in FileExplorer."""
@@ -221,23 +354,30 @@ def load_image_from_explorer(file_list):
         return None, DEFAULT_IMAGE_PROMPT
 
 
-def analyze_uploaded_image(image_np: Optional[np.ndarray], prompt: str) -> str:
+def analyse_uploaded_image(image_np: Optional[np.ndarray], prompt: str) -> str:
+    """
+    Analyse an uploaded image using the Vision Language Model.
+    
+    Args:
+        image_np: The image as a numpy array.
+        prompt: The user prompt for analysis.
+        
+    Returns:
+        The text response from the model.
+    """
     if image_np is None:
         return "Please upload an image first."
     try:
         image_base64 = encode_image_array_to_base64(image_np)
         return call_vision_language_model(image_base64, prompt)
     except Exception as e:
-        logging.error(f"analyze_uploaded_image error: {e}")
-        return f"Error analyzing image: {e}"
+        logging.error(f"analyse_uploaded_image error: {e}")
+        return f"Error analysing image: {e}"
 
 
-# ==================================
-# Tab 2: Video Understanding (UPDATED per request)
-# ==================================
-# Implements the provided snippet semantics: send a data: URL for the uploaded video to chat.completions
-# and expose num_frames, fps, max_duration controls via extra_body.media_io_kwargs.
-
+# -----------------------------------------------------------------------------
+# Tab 2: Video Understanding
+# -----------------------------------------------------------------------------
 DEFAULT_VIDEO_PROMPT = "Did a car run a redlight in this video?"
 
 def load_video_from_explorer(file_list):
@@ -246,6 +386,25 @@ def load_video_from_explorer(file_list):
         return None, DEFAULT_VIDEO_PROMPT
     # Gradio FileExplorer returns a list of paths
     path = file_list[0] if isinstance(file_list, list) else file_list
+    
+    # If the file is in a read-only directory (like /mnt/shared), and it might need conversion,
+    # copy it to a writable temp directory so Gradio's automatic conversion works.
+    # Gradio tries to write the converted .mp4 in the same directory as the source path.
+    ext = pathlib.Path(path).suffix.lower()
+    # We check if the directory is writable. If not, and it's a format Gradio might want to convert, 
+    # we copy to /tmp to ensure conversion succeeds.
+    if not os.access(os.path.dirname(path), os.W_OK) and ext not in [".mp4", ".webm"]:
+        try:
+            # Create a unique but stable filename to avoid collisions and redundant copies
+            path_hash = hashlib.md5(path.encode()).hexdigest()[:8]
+            temp_path = os.path.join(tempfile.gettempdir(), f"{path_hash}_{os.path.basename(path)}")
+            if not os.path.exists(temp_path):
+                logging.info(f"Copying {path} to {temp_path} for writable conversion path")
+                shutil.copy2(path, temp_path)
+            path = temp_path
+        except Exception as e:
+            logging.warning(f"Could not copy video to temp: {e}")
+
     return path, get_prompt_from_file(path, DEFAULT_VIDEO_PROMPT)
 
 
@@ -268,7 +427,7 @@ def video_to_data_url(path: str) -> str:
     return f"data:{mime};base64,{b64}"
 
 
-def analyze_video_with_vllm(
+def analyse_video_with_vllm(
     video_input: Any,
     prompt: str,
     model_override: str,
@@ -276,6 +435,20 @@ def analyze_video_with_vllm(
     fps: int,
     max_duration: int,
 ) -> str:
+    """
+    Analyse a video using the Vision Language Model via vLLM's media interface.
+    
+    Args:
+        video_input: The video source (path or Gradio input).
+        prompt: The user prompt for analysis.
+        model_override: Optional model ID to override the default.
+        num_frames: Maximum number of frames to extract.
+        fps: Target frames per second for extraction.
+        max_duration: Maximum duration in seconds to consider.
+        
+    Returns:
+        The text response from the model.
+    """
     global client, model_id
     if not client:
         return "Client not configured. Set API Base and Key in the configuration panel."
@@ -312,7 +485,7 @@ def analyze_video_with_vllm(
         )
         return resp.choices[0].message.content
     except Exception as e:
-        logging.exception("analyze_video_with_vllm failed")
+        logging.exception("analyse_video_with_vllm failed")
         return f"Error during video analysis: {e}"
 
 
@@ -321,7 +494,7 @@ def analyze_video_with_vllm(
 # ==================================
 streaming_active: Dict[str, bool] = {}
 DEFAULT_FRAME_PROMPT = (
-    "You are a helpful assistant. Answer what is the vehicle type, color, and is the hood opened or closed. The type of vehicle you can select is: car, van, bus, minibus, tractor-trailer, dump truck, motorcycle. Answer in this format:\n<Type>car</Type>\n<Color>red</Color>\n<hoodOpen>yes</hoodOpen>"
+    "You are a helpful assistant. Answer what is the vehicle type, colour, and is the hood opened or closed. The type of vehicle you can select is: car, van, bus, minibus, tractor-trailer, dump truck, motorcycle. Answer in this format:\n<Type>car</Type>\n<Colour>red</Colour>\n<hoodOpen>yes</hoodOpen>"
 )
 
 def stop_streaming_generator_rtsp(url_key: str) -> str:
@@ -385,7 +558,17 @@ def rtsp_stream_generator(rtsp_url: str):
         yield tail
 
 
-def analyze_current_rtsp_frame(rtsp_url: str, prompt: str) -> str:
+def analyse_current_rtsp_frame(rtsp_url: str, prompt: str) -> str:
+    """
+    Capture the current frame from an RTSP stream and analyse it.
+    
+    Args:
+        rtsp_url: The URL of the RTSP stream.
+        prompt: The user prompt for analysis.
+        
+    Returns:
+        The text response from the model.
+    """
     if not rtsp_url:
         return "Please enter an RTSP URL."
     cap = cv2.VideoCapture(rtsp_url)
@@ -411,15 +594,36 @@ DEFAULT_SUMMARY_PROMPT = (
 
 def build_ui():
     with gr.Blocks(title="Visual Analytics Studio • Powered by HPE Private Cloud AI (PCAI)", analytics_enabled=False) as demo:
+        # Define FileExplorers up front so they can be referenced by the Settings tab
+        file_explorer = gr.FileExplorer(
+            glob="**/*.[jJ][pP][gG]",
+            root_dir=active_root_dir,
+            file_count="single",
+            height=200,
+            label=f"Image files in {active_root_dir}",
+            ignore_glob="**/.*",
+            render=False
+        )
+        file_explorer_video = gr.FileExplorer(
+            glob="**/*.[mM]*",
+            root_dir=active_root_dir,
+            file_count="single",
+            label=f"Video files in {active_root_dir}",
+            ignore_glob="**/.*",
+            render=False
+        )
+
+        config_alert = gr.HTML(visible=False)
+
         gr.Markdown(
             """
             # Visual Analytics Studio • Powered by HPE Private Cloud AI (PCAI)
 
             Deliver rich, real-time visual understanding across **Images**, **Videos**, and **RTSP live streams**—all running on your enterprise‑grade **[HPE Private Cloud AI](https://www.hpe.com/us/en/private-cloud-ai.html)** platform.
             **What you can do here**
-            - **Image Understanding:** Select/Upload an image, preview it, and analyze with your prompt.
+            - **Image Understanding:** Select/Upload an image, preview it, and analyse with your prompt.
             - **Video Understanding:** Select/Upload a video and control extraction knobs (**num_frames**, **fps**, **max_duration**). The app passes your video to PCAI's served endpoint using a secure data URL and vLLM media I/O hints.
-            - **RTSP Stream:** View and analyze live network streams; capture a frame and ask questions in natural language.
+            - **RTSP Stream:** View and analyse live network streams; capture a frame and ask questions in natural language.
             """
         )
 
@@ -441,18 +645,58 @@ def build_ui():
         gr.Markdown("---")
 
         with gr.Tabs(selected="imageUnderstanding"):
-            # ---------------- Tab 1: Settings (UNCHANGED)
-            with gr.TabItem("Settings"):
-                api_base_input = gr.Textbox(label="API Base URL (end with /v1)", value=active_openai_api_base, interactive=True)
+            # ---------------- Tab 1: Settings (UPDATED)
+            with gr.TabItem("Settings") as settings_tab:
+                api_base_choices = get_inference_services_urls()
+                api_base_input = gr.Dropdown(
+                    label="API Base URL (internal cluster endpoints detected)", 
+                    choices=api_base_choices,
+                    value=active_openai_api_base, 
+                    allow_custom_value=True,
+                    interactive=True
+                )
                 api_key_input = gr.Textbox(label="API Key", value=active_openai_api_key, type="password", interactive=True)
                 preferred_model_input = gr.Textbox(label="Preferred Model ID (optional)")
+                ignore_tls_checkbox = gr.Checkbox(label="Ignore TLS Certificates", value=active_ignore_tls)
+                root_dir_input = gr.Textbox(label="Root Directory for File Browsers", value=active_root_dir, interactive=True)
+                
+                with gr.Accordion("Browse Root Directory", open=False):
+                    root_explorer = gr.FileExplorer(
+                        root_dir="/mnt" if os.path.exists("/mnt") else os.getcwd(),
+                        file_count="single",
+                        label="Select Root Directory (Sandboxed to /mnt)",
+                        ignore_glob="**/.*"
+                    )
+                    
+                    def update_root_dir_from_explorer(file_list):
+                        if not file_list: return active_root_dir
+                        path = file_list[0] if isinstance(file_list, list) else file_list
+                        # If it's a file, get its parent directory
+                        if os.path.isfile(path):
+                            return os.path.dirname(path)
+                        return path
+
+                    root_explorer.change(
+                        fn=update_root_dir_from_explorer,
+                        inputs=[root_explorer],
+                        outputs=[root_dir_input]
+                    )
+
                 config_status_out = gr.Textbox(label="Config Status", value=current_config_status_message, interactive=False, lines=2)
                 apply_config_btn = gr.Button("Apply Configuration")
 
                 apply_config_btn.click(
                     fn=initialize_or_update_openai_client,
-                    inputs=[api_key_input, api_base_input, preferred_model_input],
-                    outputs=[config_status_out],
+                    inputs=[api_key_input, api_base_input, preferred_model_input, ignore_tls_checkbox, root_dir_input],
+                    outputs=[config_status_out, root_dir_input],
+                ).then(
+                    fn=lambda r: (gr.update(label=f"Image files in {r}"), gr.update(label=f"Video files in {r}")),
+                    inputs=[root_dir_input],
+                    outputs=[file_explorer, file_explorer_video]
+                ).then(
+                    fn=get_ui_validation_updates,
+                    inputs=None,
+                    outputs=[config_alert, settings_tab]
                 )
             # ---------------- Tab 2: Image Understanding (UPDATED)
             with gr.TabItem("Image Understanding", id="imageUnderstanding"):
@@ -479,34 +723,26 @@ def build_ui():
                             label="Samples"
                         )
 
-                # If mounts exists, add it as an option
-                if os.path.exists(SHARED_FOLDER_ROOT_DIR):
-                    file_explorer = gr.FileExplorer(
-                        glob="**/*.[jJpP][PpNn]*[Gg]",  # matches .png, .jpg, .jpeg
-                        root_dir=SHARED_FOLDER_ROOT_DIR,
-                        file_count="single",
-                        height=200,
-                        label=f"Image files in {SHARED_FOLDER_ROOT_DIR} (png/jpg/jpeg)"
-                    )
-                    # Event wiring for File Explorer
-                    file_explorer.change(
-                        fn=load_image_from_explorer,
-                        inputs=[file_explorer],
-                        outputs=[image_in, image_prompt]
-                    )
+                file_explorer.render()
+                # Event wiring for File Explorer
+                file_explorer.change(
+                    fn=load_image_from_explorer,
+                    inputs=[file_explorer],
+                    outputs=[image_in, image_prompt]
+                )
                 image_in.render()
                     
                 image_prompt.render()
 
-                analyze_image_btn = gr.Button("Analyze Image", variant="primary")
+                analyse_image_btn = gr.Button("Analyse Image", variant="primary")
                 image_llm_output = gr.Textbox(label="LLM Response", lines=10)
                 gr.Markdown("---")
                 image_json_output = gr.JSON(visible=False)
                 image_markdown_output = gr.Markdown(visible=False)
                 
                 # Event Wiring
-                analyze_image_btn.click(
-                    fn=analyze_uploaded_image,
+                analyse_image_btn.click(
+                    fn=analyse_uploaded_image,
                     inputs=[image_in, image_prompt],
                     outputs=[image_llm_output],
                 ).then(
@@ -536,20 +772,13 @@ def build_ui():
                             label="Samples"
                         )
 
-                # If /shared exists, add it as an option
-                if os.path.exists(SHARED_FOLDER_ROOT_DIR):
-                    file_explorer_video = gr.FileExplorer(
-                        glob="**/*.[MmWw][PpEeOoKk]*[4MmVv]", # matches mp4, webm, mov, mkv
-                        root_dir=SHARED_FOLDER_ROOT_DIR,
-                        file_count="single",
-                        label=f"Video files in {SHARED_FOLDER_ROOT_DIR} (mp4/webm/mov/mkv)"
-                    )
-                    # Event wiring for File Explorer
-                    file_explorer_video.change(
-                        fn=load_video_from_explorer,
-                        inputs=[file_explorer_video],
-                        outputs=[video_in, video_prompt]
-                    )
+                file_explorer_video.render()
+                # Event wiring for File Explorer
+                file_explorer_video.change(
+                    fn=load_video_from_explorer,
+                    inputs=[file_explorer_video],
+                    outputs=[video_in, video_prompt]
+                )
 
                 gr.Markdown("Upload a video, tweak *num_frames / fps / max_duration*, and run analysis. The video will be passed to the model as a data: URL.")
                 video_in.render()                
@@ -563,14 +792,14 @@ def build_ui():
                     fps = gr.Slider(1, 60, value=1, step=1, label="fps (target extraction FPS)")
                     max_duration = gr.Slider(1, 100000, value=10000, step=1, label="max_duration (seconds cap)")
 
-                run_video_btn = gr.Button("Analyze Video")
+                run_video_btn = gr.Button("Analyse Video")
                 video_llm_output = gr.Textbox(label="LLM Response", lines=12)
                 gr.Markdown("---")
                 video_json_output = gr.JSON(visible=False)
                 video_markdown_output = gr.Markdown(visible=False)
 
                 run_video_btn.click(
-                    fn=analyze_video_with_vllm,
+                    fn=analyse_video_with_vllm,
                     inputs=[video_in, video_prompt, model_override, num_frames, fps, max_duration],
                     outputs=[video_llm_output],
                 ).then(
@@ -588,7 +817,7 @@ def build_ui():
                 rtsp_image = gr.Image(label="Live RTSP Stream", interactive=False, type="numpy", height=400)
                 rtsp_status = gr.Textbox(label="Status", value="Stream not started.", interactive=False)
                 rtsp_prompt = gr.Textbox(label="Prompt for Frame Analysis", value=DEFAULT_FRAME_PROMPT, lines=4)
-                analyze_rtsp_btn = gr.Button("Analyze Current Frame")
+                analyse_rtsp_btn = gr.Button("Analyse Current Frame")
                 rtsp_llm_out = gr.Textbox(label="LLM Response", lines=8)
 
                 start_btn.click(
@@ -603,8 +832,8 @@ def build_ui():
                     outputs=[rtsp_status],
                 )
 
-                analyze_rtsp_btn.click(
-                    fn=analyze_current_rtsp_frame,
+                analyse_rtsp_btn.click(
+                    fn=analyse_current_rtsp_frame,
                     inputs=[rtsp_url_input, rtsp_prompt],
                     outputs=[rtsp_llm_out],
                 )
@@ -615,21 +844,21 @@ def build_ui():
         demo.load(
             fn=get_current_config_ui,
             inputs=None,
-            outputs=[api_key_input, api_base_input, preferred_model_input, config_status_out]
+            outputs=[api_key_input, api_base_input, preferred_model_input, ignore_tls_checkbox, root_dir_input, config_status_out, config_alert, settings_tab, file_explorer, file_explorer_video, root_explorer]
         )
         
     return demo
 
 
-# ==================================
+# -----------------------------------------------------------------------------
 # Main execution
-# ==================================
+# -----------------------------------------------------------------------------
 demo = build_ui()
 
 if __name__ == "__main__":
-    if active_openai_api_key == "YOUR_API_KEY" or active_openai_api_base == "YOUR_API_BASE_URL":
-        print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-        print("!!! IMPORTANT: Set OPENAI_API_KEY and OPENAI_API_BASE (or use UI config). !!!")
-        print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-    
-    demo.launch(server_name="0.0.0.0", server_port=7860, allowed_paths=[SHARED_FOLDER_ROOT_DIR])
+    demo.launch(
+        server_name="0.0.0.0", 
+        server_port=7860, 
+        allowed_paths=["/"],
+        favicon_path=os.path.expanduser("~/Applications/favicon.ico")
+    )

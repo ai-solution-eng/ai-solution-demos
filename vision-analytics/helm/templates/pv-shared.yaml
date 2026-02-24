@@ -8,10 +8,9 @@ spec:
   accessModes:
   - ReadOnlyMany
   persistentVolumeReclaimPolicy: Retain
-  storageClassName: nfs-csi
+  storageClassName: {{ .Values.storage.shared.storageClassName }}
   volumeMode: Filesystem
   {{- $sourcePV := lookup "v1" "PersistentVolume" "" "ezpresto-shared-pv" }}
-  {{- if $sourcePV }}
   # Dynamically copied from ezpresto-shared-pv
   capacity:
     {{- toYaml $sourcePV.spec.capacity | nindent 4 }}
@@ -19,4 +18,4 @@ spec:
     {{- toYaml $sourcePV.spec.csi | nindent 4 }}
   mountOptions:
     {{- toYaml $sourcePV.spec.mountOptions | nindent 4 }}
-  {{- end }}
+
