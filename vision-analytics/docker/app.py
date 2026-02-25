@@ -234,8 +234,8 @@ def get_current_config_ui():
         current_config_status_message,
         gr.update(value=alert_html, visible=not is_valid),
         gr.update(label=settings_label),
-        gr.update(label=f"Image files in {active_root_dir}"),
-        gr.update(label=f"Video files in {active_root_dir}"),
+        gr.update(label=f"Image files in {active_root_dir}", root_dir=active_root_dir),
+        gr.update(label=f"Video files in {active_root_dir}", root_dir=active_root_dir),
         gr.update(root_dir="/mnt" if os.path.exists("/mnt") else os.getcwd())
     )
 
@@ -596,7 +596,7 @@ def build_ui():
     with gr.Blocks(title="Visual Analytics Studio • Powered by HPE Private Cloud AI (PCAI)", analytics_enabled=False) as demo:
         # Define FileExplorers up front so they can be referenced by the Settings tab
         file_explorer = gr.FileExplorer(
-            glob="**/*.[jJ][pP][gG]",
+            glob="**/*.[jJpP][PpNn]*[Gg]",
             root_dir=active_root_dir,
             file_count="single",
             height=200,
@@ -690,7 +690,7 @@ def build_ui():
                     inputs=[api_key_input, api_base_input, preferred_model_input, ignore_tls_checkbox, root_dir_input],
                     outputs=[config_status_out, root_dir_input],
                 ).then(
-                    fn=lambda r: (gr.update(label=f"Image files in {r}"), gr.update(label=f"Video files in {r}")),
+                    fn=lambda r: (gr.update(label=f"Image files in {r}", root_dir=r), gr.update(label=f"Video files in {r}", root_dir=r)),
                     inputs=[root_dir_input],
                     outputs=[file_explorer, file_explorer_video]
                 ).then(
@@ -860,5 +860,4 @@ if __name__ == "__main__":
         server_name="0.0.0.0", 
         server_port=7860, 
         allowed_paths=["/"],
-        favicon_path=os.path.expanduser("~/Applications/favicon.ico")
     )

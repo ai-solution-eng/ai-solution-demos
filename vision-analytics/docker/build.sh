@@ -10,4 +10,4 @@ PLATFORM="linux/amd64"
 docker buildx create --use --name multiarch || docker buildx use multiarch
 
 # Build and push the image
-docker buildx build --platform $PLATFORM -t $IMAGE_NAME:$IMAGE_TAG . --push
+docker buildx build --platform $PLATFORM -t $IMAGE_NAME:$IMAGE_TAG -t $IMAGE_NAME:latest . --push
