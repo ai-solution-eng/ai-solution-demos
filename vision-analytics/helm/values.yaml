@@ -9,7 +9,7 @@ app:
     repository: erdincka/vision_analytics_demo
     pullPolicy: Always
     # The image tag to deploy. Defaults to the chart's appVersion.
-    tag: "0.0.2"
+    tag: "1.0.0"
 
   port: 7860
 
@@ -27,6 +27,12 @@ app:
     limits:
       cpu: "4"
       memory: "10Gi"
+
+# Storage configuration
+storage:
+  shared:
+    storageClassName: nfs-csi
+    capacity: 100Gi
 
 # Service configuration
 service:

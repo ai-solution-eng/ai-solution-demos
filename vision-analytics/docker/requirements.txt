@@ -20,3 +20,4 @@ tqdm==4.67.1
 python-dateutil==2.9.0.post0
 PyYAML==6.0.3
 watchfiles==1.1.1
+kubernetes

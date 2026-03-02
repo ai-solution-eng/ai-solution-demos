@@ -10,7 +10,7 @@ spec:
     - ReadOnlyMany
   resources:
     requests:
-      storage: 100Gi
-  storageClassName: nfs-csi
+      storage: {{ .Values.storage.shared.capacity }}
+  storageClassName: {{ .Values.storage.shared.storageClassName }}
   volumeName: {{ include "gradio-vlm-chart.name" . }}-shared-pv
   volumeMode: Filesystem
