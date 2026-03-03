@@ -35,9 +35,14 @@ spec:
             - name: shared-data
               mountPath: /mnt/shared
               readOnly: true
+            - name: config-data
+              mountPath: /app/config
 
       volumes:
         - name: shared-data
           persistentVolumeClaim:
-            claimName: {{ include "gradio-vlm-chart.name" . }}-shared-pvc
+            claimName: {{ include "gradio-vlm-chart.fullname" . }}-shared-pvc
             readOnly: true
+        - name: config-data
+          persistentVolumeClaim:
+            claimName: {{ include "gradio-vlm-chart.fullname" . }}-config-pvc
