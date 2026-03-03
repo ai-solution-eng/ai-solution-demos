@@ -12,6 +12,13 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# Install mediamtx (RTSP server)
+RUN curl -L -o mediamtx.tar.gz https://github.com/bluenviron/mediamtx/releases/download/v1.6.0/mediamtx_v1.6.0_linux_amd64.tar.gz && \
+    tar -xzf mediamtx.tar.gz && \
+    mv mediamtx /usr/local/bin/ && \
+    chmod +x /usr/local/bin/mediamtx && \
+    rm mediamtx.tar.gz
+
 # Set working directory
 WORKDIR /app
 

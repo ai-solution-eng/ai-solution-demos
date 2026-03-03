@@ -29,3 +29,10 @@ v0.0.3
 - Glob settings to file explorer components to filter jpg/png files (for images) and mp4/mov files (for videos)
 - Removed favicon.ico
 - Removed datasources mount
+
+v0.0.4
+- Added local RTSP server functionality for video analysis
+- Added video player to display the RTSP stream
+- Added error handling for video processing
+- Added configuration persistence
+- Moved container image to pcai-demos repository
