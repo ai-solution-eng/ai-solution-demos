@@ -833,6 +833,7 @@ def build_ui():
                 **Recommended model:** `Qwen/Qwen2.5-VL-32B-Instruct-AWQ` deployed via PCAI for the best experience.
                 """
             )
+            gr.Image("images/SolutionOverview.png", label="Solution Overview")
 
         gr.Markdown("---")
 
