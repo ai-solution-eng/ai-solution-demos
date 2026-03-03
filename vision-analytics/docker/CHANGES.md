@@ -35,4 +35,4 @@ v0.0.4
 - Added video player to display the RTSP stream
 - Added error handling for video processing
 - Added configuration persistence
-- Moved container image to pcai-demos repository
+- Moved container image to erdincka repository

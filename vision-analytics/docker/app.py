@@ -590,7 +590,7 @@ def start_local_rtsp_server(video_path: str):
         )
         
         # Give mediamtx and its internal pusher a few seconds to initialize
-        time.sleep(5.0)
+        time.sleep(1)
         
         # Check if mediamtx died immediately
         if rtsp_server_process.poll() is not None:
@@ -833,7 +833,7 @@ def build_ui():
                 **Recommended model:** `Qwen/Qwen2.5-VL-32B-Instruct-AWQ` deployed via PCAI for the best experience.
                 """
             )
-            gr.Image("images/SolutionOverview.png", label="Solution Overview")
+            gr.Image("assets/SolutionOverview.png", label="Solution Overview")
 
         gr.Markdown("---")
 

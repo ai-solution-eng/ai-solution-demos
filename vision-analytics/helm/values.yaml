@@ -6,7 +6,7 @@ replicaCount: 1
 # Configuration for the Gradio VLM container
 app:
   image:
-    repository: pcai-demos/vision_analytics_demo
+    repository: erdincka/vision_analytics_demo
     pullPolicy: Always
     # The image tag to deploy. Defaults to the chart's appVersion.
     tag: "1.0.0"

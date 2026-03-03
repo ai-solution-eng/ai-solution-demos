@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Define variables
-IMAGE_NAME="pcai-demos/vision_analytics_demo"
+IMAGE_NAME="erdincka/vision_analytics_demo"
 # IMAGE_TAG="1.0.0"
 IMAGE_TAG="${1:-1.0.0}"
 PLATFORM="linux/amd64"

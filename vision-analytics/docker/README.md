@@ -30,12 +30,12 @@ This application provides a visual analytics studio powered by HPE Private Cloud
 
 1.  **Build the Image**:
     ```bash
-    docker build -t vision-analytics-demo .
+    docker build -t erdincka/vision_analytics_demo:latest .
     ```
 
 2.  **Run the Container**:
     ```bash
-    docker run -p 7860:7860 vision-analytics-demo
+    docker run -p 7860:7860 erdincka/vision_analytics_demo:latest
     ```
 
 ## Configuration
