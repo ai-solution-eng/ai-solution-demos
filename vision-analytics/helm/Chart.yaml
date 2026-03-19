@@ -4,7 +4,7 @@ description: A Helm chart for Visual Analytics Studio on HPE PCAI.
 type: application
 
 # This is the chart version. This is incremented for chart changes.
-version: 0.1.4
+version: 0.1.5
 
 # This is the version number of the application being deployed.
-appVersion: "0.1.4"
+appVersion: "0.1.5"
