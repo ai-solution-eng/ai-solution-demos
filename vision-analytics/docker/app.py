@@ -27,7 +27,8 @@ import subprocess
 rtsp_server_process = None
 ffmpeg_stream_process = None
 LOCAL_RTSP_URL = "rtsp://127.0.0.1:8554/live"
-DEFAULT_RTSP_URL = "http://monumentcam.kdhnc.com/mjpg/video.mjpg?timestamp=1717171717"
+# DEFAULT_RTSP_URL = "http://monumentcam.kdhnc.com/mjpg/video.mjpg?timestamp=1717171717"
+DEFAULT_RTSP_URL = "rtsp://67CPisv26poz4VV36J4pvUtqVLA8KZZK:zWSFy_QAkeJKoce0V8ui-@test.rtsp.stream/movie"
 
 # ==================================
 # Logging
@@ -254,6 +255,7 @@ def get_current_config_ui():
         gr.update(label=settings_label),
         gr.update(label=f"Image files in {active_root_dir}", root_dir=active_root_dir),
         gr.update(label=f"Video files in {active_root_dir}", root_dir=active_root_dir),
+        gr.update(label=f"RTSP Sample files in {active_root_dir}", root_dir=active_root_dir),
         gr.update(root_dir="/mnt" if os.path.exists("/mnt") else os.getcwd())
     )
 
@@ -324,17 +326,7 @@ def call_vision_language_model(image_base64: str, prompt: str = "Describe this i
             messages=[
                 {
                     "role": "system",
-                    "content": [
-                        {"type": "text", "text": """
-                        You are a scene-description engine for images.
-                        Describe the visible content in 3-6 sentences.
-                        Start with the overall setting and main subjects, then mention important objects, actions, and relationships.
-                        Include concrete visual details: colours, approximate counts, positions ("left", "centre", "background"), and any visible text.
-                        Do not infer backstory, emotions, or intentions unless they are visually obvious.
-                        Avoid repeating the same detail with different wording.
-                        Do not invent objects that are not clearly visible.
-                        """}
-                    ]
+                    "content": "You are a specialized visual processing agent for analyzing images and videos. You will receive visual input and a user prompt. Please follow the user's instructions and describe or analyze the content accurately."
                 },
                 {
                     "role": "user",
@@ -372,7 +364,7 @@ def load_image_from_explorer(file_list):
         return None, DEFAULT_IMAGE_PROMPT
 
 
-def analyse_uploaded_image(image_np: Optional[np.ndarray], prompt: str) -> str:
+def analyse_uploaded_image(image_np: Optional[np.ndarray], prompt: str) -> Tuple[str, str]:
     """
     Analyse an uploaded image using the Vision Language Model.
     
@@ -381,16 +373,19 @@ def analyse_uploaded_image(image_np: Optional[np.ndarray], prompt: str) -> str:
         prompt: The user prompt for analysis.
         
     Returns:
-        The text response from the model.
+        A tuple of (text response from the model, duration string).
     """
+    start_time = time.time()
     if image_np is None:
-        return "Please upload an image first."
+        return "Please upload an image first.", ""
     try:
         image_base64 = encode_image_array_to_base64(image_np)
-        return call_vision_language_model(image_base64, prompt)
+        res = call_vision_language_model(image_base64, prompt)
+        duration = time.time() - start_time
+        return res, f"⏱️ {duration:.2f}s"
     except Exception as e:
         logging.error(f"analyse_uploaded_image error: {e}")
-        return f"Error analysing image: {e}"
+        return f"Error analysing image: {e}", ""
 
 
 # -----------------------------------------------------------------------------
@@ -445,6 +440,39 @@ def video_to_data_url(path: str) -> str:
     return f"data:{mime};base64,{b64}"
 
 
+def normalize_video_for_gpu(input_path: str) -> str:
+    """Normalize video to a standard format (H.264, yuv420p) for GPU compatibility."""
+    if not input_path or not os.path.exists(input_path):
+        return input_path
+        
+    temp_dir = tempfile.gettempdir()
+    # Create a stable output path based on file path hash to avoid redundant conversions
+    path_hash = hashlib.md5(input_path.encode()).hexdigest()[:8]
+    output_path = os.path.join(temp_dir, f"gpu_compat_{path_hash}.mp4")
+    
+    # If already normalized and exists, return it
+    if os.path.exists(output_path):
+        return output_path
+        
+    logging.info(f"Normalizing video for GPU compatibility (vLLM/PCAI): {input_path}")
+    try:
+        ffmpeg_path = shutil.which("ffmpeg") or "/usr/bin/ffmpeg"
+        # Command to ensure H.264, yuv420p (8-bit), remove audio to save bandwidth, ultrafast for low latency
+        cmd = [
+            ffmpeg_path, "-y", "-i", input_path,
+            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-an", "-preset", "ultrafast", "-crf", "25",
+            output_path
+        ]
+        # Run with timeout to prevent hangs
+        subprocess.run(cmd, check=True, capture_output=True, timeout=120)
+        logging.info(f"Normalization successful: {output_path}")
+        return output_path
+    except Exception as e:
+        logging.warning(f"Video normalization failed (will try original): {e}")
+        return input_path
+
+
 def analyse_video_with_vllm(
     video_input: Any,
     prompt: str,
@@ -452,7 +480,7 @@ def analyse_video_with_vllm(
     num_frames: int,
     fps: int,
     max_duration: int,
-) -> str:
+) -> Tuple[str, str]:
     """
     Analyse a video using the Vision Language Model via vLLM's media interface.
     
@@ -465,31 +493,40 @@ def analyse_video_with_vllm(
         max_duration: Maximum duration in seconds to consider.
         
     Returns:
-        The text response from the model.
+        A tuple of (text response from the model, duration string).
     """
     global client, model_id
+    start_time = time.time()
     if not client:
-        return "Client not configured. Set API Base and Key in the configuration panel."
+        return "Client not configured. Set API Base and Key in the configuration panel.", ""
 
     vid_path = _normalize_video_path(video_input)
     if not vid_path or not os.path.exists(vid_path):
-        return "Please upload a valid video file."
+        return "Please upload a valid video file.", ""
 
     try:
+        # Normalize for GPU compatibility before creating data URL (fixes NVCV INVALID_DATA_TYPE)
+        vid_path = normalize_video_for_gpu(vid_path)
         data_url = video_to_data_url(vid_path)
         chosen_model = model_override.strip() or (model_id or "")
         if not chosen_model:
-            return "No model selected. Provide a Model ID in the configuration or in this tab."
+            return "No model selected. Provide a Model ID in the configuration or in this tab.", ""
 
         resp = client.chat.completions.create(
             model=chosen_model,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "video_url", "video_url": {"url": data_url}},
-                ],
-            }],
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a specialized visual processing agent for analyzing images and videos. You will receive visual input and a user prompt. Please follow the user's instructions and describe or analyze the content accurately."
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "video_url", "video_url": {"url": data_url}},
+                    ],
+                }
+            ],
             temperature=0.1,
             extra_body={
                 "media_io_kwargs": {
@@ -501,10 +538,11 @@ def analyse_video_with_vllm(
                 }
             },
         )
-        return resp.choices[0].message.content
+        duration = time.time() - start_time
+        return resp.choices[0].message.content, f"⏱️ {duration:.2f}s"
     except Exception as e:
         logging.exception("analyse_video_with_vllm failed")
-        return f"Error during video analysis: {e}"
+        return f"Error during video analysis: {e}", ""
 
 
 # ==================================
@@ -733,7 +771,7 @@ def rtsp_stream_generator(rtsp_url: str):
         yield final_frame
 
 
-def analyse_current_rtsp_frame(rtsp_url: str, prompt: str) -> str:
+def analyse_current_rtsp_frame(rtsp_url: str, prompt: str) -> Tuple[str, str]:
     """
     Capture the current frame from an RTSP stream and analyse it.
     
@@ -742,10 +780,11 @@ def analyse_current_rtsp_frame(rtsp_url: str, prompt: str) -> str:
         prompt: The user prompt for analysis.
         
     Returns:
-        The text response from the model.
+        A tuple of (text response from the model, duration string).
     """
+    start_time = time.time()
     if not rtsp_url:
-        return "Please enter an RTSP URL."
+        return "Please enter an RTSP URL.", ""
     
     cap = None
     max_retries = 3
@@ -757,14 +796,16 @@ def analyse_current_rtsp_frame(rtsp_url: str, prompt: str) -> str:
         time.sleep(1)
         
     if not cap or not cap.isOpened():
-        return f"Error: Could not open RTSP stream at {rtsp_url}. Ensure the stream is active."
+        return f"Error: Could not open RTSP stream at {rtsp_url}. Ensure the stream is active.", ""
     try:
         ret, frame = cap.read()
         if not ret:
-            return "Error: Could not read frame from RTSP stream."
+            return "Error: Could not read frame from RTSP stream.", ""
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         b64 = encode_image_array_to_base64(frame_rgb)
-        return call_vision_language_model(b64, prompt)
+        res = call_vision_language_model(b64, prompt)
+        duration = time.time() - start_time
+        return res, f"⏱️ {duration:.2f}s"
     finally:
         cap.release()
 
@@ -928,20 +969,34 @@ def build_ui():
                 image_prompt.render()
 
                 analyse_image_btn = gr.Button("Analyse Image", variant="primary")
-                image_llm_output = gr.Textbox(label="LLM Response", lines=10)
-                gr.Markdown("---")
+                
+                with gr.Row():
+                    gr.Markdown("### LLM Response")
+                    image_duration_display = gr.Markdown("", elem_id="image_duration")
+
                 image_json_output = gr.JSON(visible=False)
                 image_markdown_output = gr.Markdown(visible=False)
+
+                with gr.Accordion("Raw Response", open=False):
+                    image_llm_output = gr.Textbox(label="Raw LLM Response", lines=10)
                 
                 # Event Wiring
                 analyse_image_btn.click(
+                    fn=lambda: (gr.update(interactive=False), ""),
+                    inputs=None,
+                    outputs=[analyse_image_btn, image_duration_display],
+                ).then(
                     fn=analyse_uploaded_image,
                     inputs=[image_in, image_prompt],
-                    outputs=[image_llm_output],
+                    outputs=[image_llm_output, image_duration_display],
                 ).then(
                     fn=render_llm_response,
                     inputs=[image_llm_output],
                     outputs=[image_json_output, image_markdown_output],
+                ).then(
+                    fn=lambda: gr.update(interactive=True),
+                    inputs=None,
+                    outputs=analyse_image_btn
                 )
 
             # ---------------- Tab 3: Video Understanding (UPDATED)
@@ -985,20 +1040,34 @@ def build_ui():
                     fps = gr.Slider(1, 60, value=1, step=1, label="fps (target extraction FPS)")
                     max_duration = gr.Slider(1, 100000, value=10000, step=1, label="max_duration (seconds cap)")
 
-                run_video_btn = gr.Button("Analyse Video")
-                video_llm_output = gr.Textbox(label="LLM Response", lines=12)
-                gr.Markdown("---")
+                run_video_btn = gr.Button("Analyse Video", variant="primary")
+                
+                with gr.Row():
+                    gr.Markdown("### LLM Response")
+                    video_duration_display = gr.Markdown("", elem_id="video_duration")
+
                 video_json_output = gr.JSON(visible=False)
                 video_markdown_output = gr.Markdown(visible=False)
 
+                with gr.Accordion("Raw Response", open=False):
+                    video_llm_output = gr.Textbox(label="Raw LLM Response", lines=12)
+
                 run_video_btn.click(
+                    fn=lambda: (gr.update(interactive=False), ""),
+                    inputs=None,
+                    outputs=[run_video_btn, video_duration_display],
+                ).then(
                     fn=analyse_video_with_vllm,
                     inputs=[video_in, video_prompt, model_override, num_frames, fps, max_duration],
-                    outputs=[video_llm_output],
+                    outputs=[video_llm_output, video_duration_display],
                 ).then(
                     fn=render_llm_response,
                     inputs=[video_llm_output],
                     outputs=[video_json_output, video_markdown_output],
+                ).then(
+                    fn=lambda: gr.update(interactive=True),
+                    inputs=None,
+                    outputs=run_video_btn
                 )
 
             # ---------------- Tab 4: RTSP Stream
@@ -1018,8 +1087,17 @@ def build_ui():
                 rtsp_image = gr.Image(label="Live RTSP Stream", interactive=False, type="numpy", height=400)
                 rtsp_status = gr.Textbox(label="Status", value="Stream not started.", interactive=False)
                 rtsp_prompt = gr.Textbox(label="Prompt for Frame Analysis", value=DEFAULT_FRAME_PROMPT, lines=4)
-                analyse_rtsp_btn = gr.Button("Analyse Current Frame")
-                rtsp_llm_out = gr.Textbox(label="LLM Response", lines=8)
+                analyse_rtsp_btn = gr.Button("Analyse Current Frame", variant="primary")
+                
+                with gr.Row():
+                    gr.Markdown("### LLM Response")
+                    rtsp_duration_display = gr.Markdown("", elem_id="rtsp_duration")
+
+                rtsp_json_output = gr.JSON(visible=False)
+                rtsp_markdown_output = gr.Markdown(visible=False)
+
+                with gr.Accordion("Raw Response", open=False):
+                    rtsp_llm_out = gr.Textbox(label="Raw LLM Response", lines=8)
 
                 def handle_start_stream(url, sample_path_list):
                     # Handle both list (older Gradio) and string (newer Gradio) from FileExplorer
@@ -1088,9 +1166,21 @@ def build_ui():
                 )
 
                 analyse_rtsp_btn.click(
+                    fn=lambda: (gr.update(interactive=False), ""),
+                    inputs=None,
+                    outputs=[analyse_rtsp_btn, rtsp_duration_display],
+                ).then(
                     fn=analyse_current_rtsp_frame,
                     inputs=[rtsp_url_input, rtsp_prompt],
-                    outputs=[rtsp_llm_out],
+                    outputs=[rtsp_llm_out, rtsp_duration_display],
+                ).then(
+                    fn=render_llm_response,
+                    inputs=[rtsp_llm_out],
+                    outputs=[rtsp_json_output, rtsp_markdown_output],
+                ).then(
+                    fn=lambda: gr.update(interactive=True),
+                    inputs=None,
+                    outputs=analyse_rtsp_btn
                 )
 
         demo.queue(default_concurrency_limit=8)
@@ -1099,7 +1189,7 @@ def build_ui():
         demo.load(
             fn=get_current_config_ui,
             inputs=None,
-            outputs=[api_key_input, api_base_input, preferred_model_input, ignore_tls_checkbox, root_dir_input, config_status_out, config_alert, settings_tab, file_explorer, file_explorer_video, root_explorer]
+            outputs=[api_key_input, api_base_input, preferred_model_input, ignore_tls_checkbox, root_dir_input, config_status_out, config_alert, settings_tab, file_explorer, file_explorer_video, file_explorer_rtsp, root_explorer]
         )
         
     return demo

@@ -1,0 +1,93 @@
+apiVersion: ezconfig.hpe.ezaf.com/v1alpha1
+kind: EzAppConfig
+metadata:
+  creationTimestamp: "2025-12-02T00:07:27Z"
+  finalizers:
+  - ezappconfig.ezconfig.hpe.ezaf.com/finalizer
+  generation: 2
+  labels:
+    hpe-ezua/imported-app: "true"
+  name: vision-analytics-chart-0.1.1-1764634047769
+  resourceVersion: "209209768"
+  uid: 2bf2754d-5516-4969-905e-fbf310de5992
+spec:
+  backoffLimit: 3
+  category: dataScience
+  chartVersion: 0.1.1
+  description: An interactive UI to upload an image or video and analyze the frames
+    using a Vision Language Model
+  install: true
+  label: Visual Analytics Studio
+  logoImage: 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
+  name: vision-analytics-chart
+  options:
+    create-namespace: "true"
+    namespace: vision-analytics
+    timeout: 45m
+    wait: "true"
+  releaseName: vision-analytics-2
+  values: |
+    # Default values for gradio-vlm-chart.
+    # All values can be overridden during Helm installation.
+
+    replicaCount: 1
+
+    # Configuration for the Gradio VLM container
+    app:
+      image:
+        repository: erdincka/vision_analytics_demo
+        pullPolicy: Always
+        # The image tag to deploy. Defaults to the chart's appVersion.
+        tag: "latest"
+
+      port: 7860
+
+      Note: |
+        These values can be configured through the application UI after deployment (`Settings` tab).
+      env:
+        llmApiBase: ""
+        llmApiKey: ""
+
+      resources:
+        # High resource requests based on the k8s manifest. Adjust as needed for your cluster.
+        requests:
+          cpu: "4"
+          memory: "10Gi"
+        limits:
+          cpu: "4"
+          memory: "10Gi"
+
+    # Service configuration
+    service:
+      type: ClusterIP
+      port: 7860
+
+    # Istio/PCAI configuration for external access
+    ezua:
+      enabled: true
+      virtualService:
+        # The external hostname for the service.
+        # IMPORTANT: Update this to match your PCAI environment's ingress domain.
+        # Example: gradio-vlm.my-namespace.ingress.my-pcai-cluster.com
+        endpoint: "vision-app.${DOMAIN_NAME}"
+
+        # The Istio gateway to bind to. This is the standard gateway for PCAI.
+        istioGateway: "istio-system/ezaf-gateway"
+  version: ""
+status:
+  category: dataScience
+  chartVersion: 0.1.1
+  description: An interactive UI to upload an image or video and analyze the frames
+    using a Vision Language Model
+  endpoints:
+    external: https://vision-app.demo.lon-pcai.twlon.com
+  generation: 2
+  healthState: ok
+  label: Visual Analytics Studio
+  logoImage: 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
+  name: vision-analytics-chart
+  releaseName: vision-analytics-2
+  retryTimestamp: 260224-230203
+  status: ready
+  valuesHash: "2142800848"
+  version: 0.0.2

@@ -9,7 +9,7 @@ app:
     repository: erdincka/vision_analytics_demo
     pullPolicy: Always
     # The image tag to deploy. Defaults to the chart's appVersion.
-    tag: "1.0.0"
+    tag: "1.0.5"
 
   port: 7860
 
