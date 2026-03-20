@@ -1,0 +1,18 @@
+{{- if and .Values.xttsTts .Values.xttsTts.enabled .Values.xttsTts.modelCache .Values.xttsTts.modelCache.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.xttsTts.modelCache.persistentVolumeClaim | default "xtts-model-cache" }}
+  labels:
+    {{- include "voice-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: xtts-cache
+spec:
+  accessModes:
+    - {{ .Values.xttsTts.modelCache.accessMode | default "ReadWriteOnce" }}
+  resources:
+    requests:
+      storage: {{ .Values.xttsTts.modelCache.size | default "5Gi" }}
+  {{- if .Values.xttsTts.modelCache.storageClassName }}
+  storageClassName: {{ .Values.xttsTts.modelCache.storageClassName }}
+  {{- end }}
+{{- end }}
