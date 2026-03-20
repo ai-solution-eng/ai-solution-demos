@@ -68,7 +68,7 @@ Also note that **only English has been tested for dicussion with database connec
 
 ### Overview
 
-The demo relies on Whisper to transcribe the demo user queries into text, a standard chat model (Qwen3-30B-A3B-Instruct-2507-FP8) for interpreting the queries and respond to them, and XTTS-v2 to generate an oral response from the text output. Those three models need to be deployed to MLIS, and the demo user is expected to connect them to Open WebUI to interact with them.
+The demo relies on Whisper to transcribe the demo user queries into text, a standard chat model (Qwen3-30B-A3B-Instruct-2507-FP8) for interpreting the queries and respond to them, and XTTS-v2 to generate an oral response from the text output. Those three models need to be deployed to MLIS, and the demo user is expected to connect them to the Gradio application to interact with them.
 
 Input language (expected by Whisper for its transcription), as well as output language (chat model response's language, to generate audio from by XTTS) can be selected from the application UI.
 
@@ -79,13 +79,13 @@ Additional demo part involves connecting to a postgres database, creating a few 
 
 #### Architecture Diagram
 
-![architecture](images/architecture.PNG)
+![architecture](images/architecture.png)
 
 ### Workflow
 
 #### Basic Demo Workflow
 
-The actual demo workflow is quite simple, open the gradio app, go the voice input and voice output tabs to:
+The actual demo workflow is quite simple, open the Gradio app, go the voice input and voice output tabs to:
 * Have Whisper transcribe your questions in the language you plan to speak (in the Voice Input tab)
 * Get answers from the language you want to hear as output (most likely identical to input language, but not necessarily) and select the voice you want the answer to be generated with (in the Voice Output tab)
 
@@ -94,7 +94,7 @@ Saying anything while a response is getting played will interrupt the response a
 The sound threshold above which the agent will actively listen and then respond to can be tuned with the Trigger Sensitivity bar. Lowering it will make your voice more easily detected in calm environments where you don't need to speak loudly, increasing it is better for noisy environments where you need to talk loudly and ignore significant background noise.
 
 
-![workflow1](images/workflow1.PNG)
+![workflow1](images/workflow1.png)
 
 #### Demo Workflow with optional SQL Data
 
@@ -109,7 +109,7 @@ If you are opting for the optional "agent with access to customer Database"/"DB 
 
 It is otherwise identical to chatting without access to SQL data.
 
-![workflow2](images/workflow2.PNG)
+![workflow2](images/workflow2.png)
 
 ## Deployment
 
@@ -158,7 +158,7 @@ It is otherwise identical to chatting without access to SQL data.
 	  * AIOLI_SERVICE_PORT to 8000 (mandatory)
 
 To use those models, an API token will have to be generated for each of those three deployments. You can do this from the Gen AI -> Model Endpoints page of AIE:
-![generate_token](images/generate_token.PNG)
+![generate_token](images/generate_token.png)
 
 
 **3. Connect models to Gradio application**:
@@ -167,14 +167,14 @@ To use those models, an API token will have to be generated for each of those th
     * Fill the **API Base URL** with the endpoint of the chat model you deployed with MLIS
     * Fill the **API key** field with the API token that you have generated after deploying the chat model with MLIS
     * Fill the **Model Name** field with the id of the model you deployed: Qwen/Qwen3-30B-A3B-Instruct-2507-FP8 if you decided to deploy that model. Depending on which model you deployed, the corresponding model id may slightly differ from the way it's displayed on HuggingFace, so be mindful of that (a GET request on the /v1/models endpoint will give you the exact model id).
-    ![qwen_connection](images/qwen_connection.PNG)
+    ![qwen_connection](images/qwen_connection.png)
   * Adding connection to Whisper and XTTS-v2:
     * Repeat the same process for Whisper by clicking on the **Voice Input** tab and filling the **ASR Server** and **ASR API Key** fields (model name not needed).
-    ![ASR_connection](images/asr_connection.PNG)
+    ![ASR_connection](images/asr_connection.png)
 	* And again for XTTS, by clicking on the **Voice Output** tab and filling the **TTS Server** and **TTS API Key** fields (model name not needed).
-    ![TTS_connection](images/tts_connection.PNG)
+    ![TTS_connection](images/tts_connection.png)
   * The **Status** tab should give you a precise state of the connection to all three models
-    ![check_status](images/check_status.PNG)
+    ![check_status](images/check_status.png)
 
 **4. (Optional) Enable connection with Postgres Database**
   * The next steps are only needed if you plan to show database interaction during your demo
@@ -187,11 +187,11 @@ To use those models, an API token will have to be generated for each of those th
     * **Database Password** should be to **postgres**
     * **Admin User** should be set to **postgres**
     * **Admin Password** should be to **postgres**
-    ![DB_connection](images/db_connection.PNG)
+    ![DB_connection](images/db_connection.png)
   * Once done, scroll down to Database Management, click on **Create Database** and then, **Initialize Tables**: this will create a new database with tables containing the required mock data to run that part of the demo
-	![tables_initialized](images/tables_initialized.PNG)
+	![tables_initialized](images/tables_initialized.png)
   * The **Data Viewer** tab will allow you to visualize data from the different tables
-    ![data_viewer](images/data_viewer.PNG)
+    ![data_viewer](images/data_viewer.png)
 
 **5. Run the demo**  
 
@@ -214,7 +214,7 @@ To use those models, an API token will have to be generated for each of those th
       *  Optional, **voice cloning:** Still on the Voice Output tab, you can open the Voice Cloning tab that allows you to create additional custom voices for the XTTS, by cloning the voice from a reference audio. Just provide a high-quality audio sample of a voice you wish to use (10s~20s is enough), upload it, give it a name and click on "Upload & Clone Voice". The process shouldn't take more than a couple of seconds, and the cloned voice should be available for selection in the Settings tab, alongside the original voices that XTTS provides. 
 4. **Discuss with the chat model**:
     * Go back to the Voice Chat tab, and click on Conversation Mode (more interactive and natural compared to Push-to-Talk option)
-![conversation_mode](images/conversation_mode.PNG)
+![conversation_mode](images/conversation_mode.png)
     * Allow the Gradio app to access your mic if prompted
     * Click on Start for the app to start listening to your mic, and ask anything you want to the agent (the chat model):
       * Once you stop talking, Whisper will transcribe your audio input into text, the chat model will process it and generate text as a response, and XTTS will generate the audio response from that text. The whole process shouldn't take more than a couple of seconds, depending on multiple factors (for how long you've been talking, how long of a response the chat model has output that needs audio generation, which models are in use, served with what images...)
@@ -231,7 +231,7 @@ To use those models, an API token will have to be generated for each of those th
     * Go back to the Voice Chat tab, and start a new session:
       * Interacting with the agent isn't any different from before, but the conversation will be railroaded to assume you are a customer from the database (whose data can be viewed beforehand in the Data Viewer tab)
       * You will be asked a 4-digit PIN to authentify (see Customers table in the Data Viewer for existing customers with their PINs - you can also add new customers from there)
-      * If successfully identified, you should see your account information on the side: ![authentified](images/authentified.PNG)
+      * If successfully identified, you should see your account information on the side: ![authentified](images/authentified.png)
       * Then, you can play around asking different things related to your account, for example:
         * Check your subscription, your invoice, your tickets
         * Complain about something (creating a sentiment alert)
@@ -241,20 +241,21 @@ To use those models, an API token will have to be generated for each of those th
     * If you want to go back to the free-form chat agent, untick the Enable Database Connection box in the Database tab 
 7. **(Optional) Visualize Data on Superset**:
     * Open Superset and go to Settings, Database Connections and **create a database connection** of type "PostgreSQL" with the same values you already filled in the application, with the addition of **customer_service** as database name.
-![authentified](images/superset_db.PNG)
+![superset_db](images/superset_db.png)
     * **Create a dataset**: Go to Datasets, + Dataset, and select your database, public as schema, and select the table you want to use for building charts. To build multiple charts using data from multiple tables, you will have to create multiple datasets. 
-![authentified](images/superset_ds.PNG)
+![superset_ds](images/superset_ds.png)
     * Database connection and dataset creation over, Superset charts and dashboard creation is no different than standard Superset usage.
     * Keep in mind that if you plan to build charts displaying data that is not available by in the original tables initialized by the app (such as sentiment alerts, after impersonating a dissatisfied customer for example), **you will erase that newly generated data if you click on the "Initialize Tables" or "Drop Database" buttons in the app**. This may break your charts. 
 
 ## Important notes
 
+* Don't hesitate to click on the **New Session** button: everytime you want to start a new conversation, reopen the application, think there has been an issue with the previous conversation, and want to impersonate another customer, if database connection has been enabled.
 * XTTS model is downloaded the first time the endpoint is called: this means that **the first time you test the application with a newly deployed XTTS model, the request will timeout**. This is normal: wait a couple of minutes, start a new session and try again, it should work.
-* Text pronounced by the XTTS-generated voice should be written in a single language. Expect heavily mispronounced words if that is not the case (e.g. asking the agent how to say X in language Y or having the agent connected to the database, with some info in english, while not setting english output).
+* Text pronounced by the XTTS-generated voice should be written in a single language. Expect heavily mispronounced words if that is not the case (e.g. asking the agent how to say X in language Y or having the agent connected to the database, with some info in English, while not setting English output).
 * Chat model (Qwen) output is processed to remove some special characters, but not all of them are captured: expect XTTS to generate unusual sounds when trying to pronounce those special characters. If you have access to kubectl, you can view which characters cause this by displaying the logs of the application.
 * "Error: Connection timed out" may appear on the app UI after chatting with the agent. This error display is inconsistent and inconsequential: if you hear the agent's voiced response, the application is still running fine.
 * All values to fill in the Gradio app are cached into your browser, except for the Database Admin password (used for creating/deleting tables). Refreshing/Closing/Reopening the app on the same browser shouldn't have an impact on its connection to the different models, but **opening the app in incognito mode, or in another browser will force you to fill in all the required values again**.
-* While only English has been tested with the Database-connected agent conversation, it may work with all languages supported by XTTS, but probably not as good as in english. Test it in advance if this is something you plan to demo, but be prepared to stick with the non-database-connected part of this demo if performance with your language is underwhelming.
+* While only English has been tested with the Database-connected agent conversation, it may work with all languages supported by XTTS, but probably not as good as in English. Test it in advance if this is something you plan to demo, but be prepared to stick with the non-database-connected part of this demo if performance with your language is underwhelming.
 * **Test the application before delivering a demo**: the application is complex, and not everything has been thoroughly tested.
 
 
@@ -265,4 +266,4 @@ To use those models, an API token will have to be generated for each of those th
   * Earlier versions of vLLM would lead to wrong Whisper output on L40S, but the issue has been solved with v0.15.1   
 * These observations are partial, and not the result of rigorous benchmarking. If you notice any performance issue with Whisper, test another deployment method: vLLM if previously using NIM, NIM or a different vLLM version if already using vLLM.
 * The chat model should be significantly faster than both Whisper and XTTS, and as such, shouldn't be a source of high latency
-* The XTTS deployment used by the app is entirely custom, and no easy-to-plug alternative is provided for this demo. That being said, the application helm chart does allow for built-in XTTS server deployment: enabling it from the values may slightly improve the overall latency of the app (fill "localhost:8000" with no API token on the app in that case), at the cost of the application blocking one GPU while deployed on the instance.
+* The XTTS deployment used by the app is entirely custom, and no easy-to-plug alternative is provided for this demo. That being said, the application helm chart does allow for built-in XTTS server deployment: enabling it from the values (setting xttsTts.enabled to true) may slightly improve the overall latency of the app (set "localhost:8000" as TTS Server with no API token on the app in that case), at the cost of the application blocking one GPU while deployed on the instance.
