@@ -61,7 +61,7 @@ In other words, you can expect to talk with the agent using languages that are n
 Also note that **only English has been tested for dicussion with database connection enabled**, some hiccups are to be expected with any of the other 17 languages supported by XTTS.
 
 **Recordings**:
-* Coming soon
+* [**Demo Video**](https://storage.googleapis.com/ai-solution-engineering-videos/public/Voice_Agent.mp4)
 
 
 ## Description
@@ -267,3 +267,7 @@ To use those models, an API token will have to be generated for each of those th
 * These observations are partial, and not the result of rigorous benchmarking. If you notice any performance issue with Whisper, test another deployment method: vLLM if previously using NIM, NIM or a different vLLM version if already using vLLM.
 * The chat model should be significantly faster than both Whisper and XTTS, and as such, shouldn't be a source of high latency
 * The XTTS deployment used by the app is entirely custom, and no easy-to-plug alternative is provided for this demo. That being said, the application helm chart does allow for built-in XTTS server deployment: enabling it from the values (setting xttsTts.enabled to true) may slightly improve the overall latency of the app (set "localhost:8000" as TTS Server with no API token on the app in that case), at the cost of the application blocking one GPU while deployed on the instance.
+
+## Acknowledgement
+
+This demo has been initially developed by Liav Nachmani.
