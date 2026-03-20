@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "gradio-vlm-chart.fullname" . }}-config-pvc
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gradio-vlm-chart.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.storage.config.capacity }}
+  storageClassName: {{ .Values.storage.config.storageClassName }}
+  volumeMode: Filesystem

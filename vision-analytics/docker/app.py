@@ -19,6 +19,15 @@ from kubernetes import client as k8s_client, config as k8s_config
 import shutil
 import tempfile
 import hashlib
+import subprocess
+
+# ==================================
+# RTSP Server State
+# ==================================
+rtsp_server_process = None
+ffmpeg_stream_process = None
+LOCAL_RTSP_URL = "rtsp://127.0.0.1:8554/live"
+DEFAULT_RTSP_URL = "http://monumentcam.kdhnc.com/mjpg/video.mjpg?timestamp=1717171717"
 
 # ==================================
 # Logging
@@ -28,7 +37,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(
 # ==================================
 # Global LLM client config (shared)
 # ==================================
-CONFIG_FILE = "config.json"
+CONFIG_DIR = "/app/config"
+CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 active_openai_api_key = os.getenv("OPENAI_API_KEY", "YOUR_API_KEY")
 active_openai_api_base = os.getenv("OPENAI_API_BASE", "YOUR_API_BASE_URL")
 active_ignore_tls = os.getenv("IGNORE_TLS", "false").lower() == "true"
@@ -40,18 +50,23 @@ current_config_status_message = "Config not yet initialized."
 def load_config_from_disk():
     """Load configuration from disk if available, overriding env vars."""
     global active_openai_api_key, active_openai_api_base, model_id, active_ignore_tls, active_root_dir
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, "r") as f:
-                config = json.load(f)
-                active_openai_api_key = config.get("api_key", active_openai_api_key)
-                active_openai_api_base = config.get("api_base", active_openai_api_base)
-                model_id = config.get("model_id", model_id)
-                active_ignore_tls = config.get("ignore_tls", active_ignore_tls)
-                active_root_dir = config.get("root_dir", active_root_dir).rstrip("/")
-                logging.info(f"Loaded config from {CONFIG_FILE}")
-        except Exception as e:
-            logging.error(f"Failed to load config file: {e}")
+    # Try local config first for compatibility, then persistent config
+    config_paths = ["config.json", CONFIG_FILE]
+    
+    for path in config_paths:
+        if os.path.exists(path):
+            try:
+                with open(path, "r") as f:
+                    config = json.load(f)
+                    active_openai_api_key = config.get("api_key", active_openai_api_key)
+                    active_openai_api_base = config.get("api_base", active_openai_api_base)
+                    model_id = config.get("model_id", model_id)
+                    active_ignore_tls = config.get("ignore_tls", active_ignore_tls)
+                    active_root_dir = config.get("root_dir", active_root_dir).rstrip("/")
+                    logging.info(f"Loaded config from {path}")
+                    break # Stop after first successful load
+            except Exception as e:
+                logging.error(f"Failed to load config file {path}: {e}")
 
 def save_config_to_disk():
     """Save current configuration to disk."""
@@ -63,6 +78,9 @@ def save_config_to_disk():
         "root_dir": active_root_dir
     }
     try:
+        # Ensure directory exists for persistent storage
+        os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
+        
         with open(CONFIG_FILE, "w") as f:
             json.dump(config, f, indent=2)
         logging.info(f"Saved config to {CONFIG_FILE}")
@@ -500,6 +518,10 @@ DEFAULT_FRAME_PROMPT = (
 def stop_streaming_generator_rtsp(url_key: str) -> str:
     if not url_key:
         return "Cannot stop: URL is empty."
+    
+    # Also stop local RTSP server if it was running
+    stop_local_rtsp_server()
+
     if url_key in streaming_active:
         streaming_active[url_key] = False
         logging.info(f"Stop signal sent for stream: {url_key}")
@@ -507,11 +529,119 @@ def stop_streaming_generator_rtsp(url_key: str) -> str:
     return f"Stream {url_key} was not active."
 
 
+def start_local_rtsp_server(video_path: str):
+    """Start a lightweight RTSP server and stream the selected video."""
+    global rtsp_server_process, ffmpeg_stream_process
+    stop_local_rtsp_server()
+    
+    # Verify input video path
+    if not video_path or not os.path.exists(video_path):
+        error_msg = f"Video file not found: {video_path}"
+        logging.error(error_msg)
+        return error_msg
+
+    try:
+        # Check if mediamtx exists
+        mediamtx_path = shutil.which("mediamtx")
+        if not mediamtx_path:
+            # Fallback for common docker installation path
+            if os.path.exists("/usr/local/bin/mediamtx"):
+                mediamtx_path = "/usr/local/bin/mediamtx"
+            else:
+                error_msg = "Error: 'mediamtx' (RTSP server) binary not found. Please ensure it is installed and in your PATH."
+                logging.error(error_msg)
+                return error_msg
+            
+        ffmpeg_path = shutil.which("ffmpeg")
+        if not ffmpeg_path:
+            error_msg = "Error: 'ffmpeg' binary not found. Please ensure it is installed and in your PATH."
+            logging.error(error_msg)
+            return error_msg
+
+        logging.info(f"Starting {mediamtx_path}...")
+        
+        # We'll write mediamtx logs to a file so they don't block pipes but are still accessible
+        mtx_log_path = "/tmp/mediamtx.log"
+        mtx_log_file = open(mtx_log_path, "w")
+        
+        # Construct the exact FFmpeg command that worked for the user in the CLI
+        ffmpeg_cmd_str = (
+            f"{ffmpeg_path} -re -stream_loop -1 -i \"{video_path}\" "
+            f"-c:v libx264 -preset ultrafast -tune zerolatency "
+            f"-profile:v baseline -level 3.0 -pix_fmt yuv420p "
+            f"-maxrate 2M -bufsize 4M -g 30 "
+            f"-f rtsp -rtsp_transport tcp rtsp://127.0.0.1:8554/live"
+        )
+        
+        env = {
+           "MTX_PATHS_LIVE_SOURCE": "publisher",
+           "MTX_PATHS_LIVE_RUNONINIT": ffmpeg_cmd_str,
+           "MTX_PROTOCOLS": "tcp",
+           "MTX_RTSPADDRESS": ":8554",
+           "MTX_LOGLEVEL": "info"
+        }
+        
+        rtsp_server_process = subprocess.Popen(
+            [mediamtx_path], 
+            stdout=mtx_log_file, 
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=env
+        )
+        
+        # Give mediamtx and its internal pusher a few seconds to initialize
+        time.sleep(1)
+        
+        # Check if mediamtx died immediately
+        if rtsp_server_process.poll() is not None:
+            mtx_log_file.close()
+            with open(mtx_log_path, "r") as f:
+                logs = f.read()
+            error_msg = f"RTSP server (mediamtx) failed to start. Logs:\n{logs}"
+            logging.error(error_msg)
+            return error_msg
+
+        logging.info(f"Local RTSP server and internal pusher started. Stream: {LOCAL_RTSP_URL}")
+        return "Local RTSP server and stream started."
+    except Exception as e:
+        logging.exception("Failed to start local RTSP server")
+        return f"Error starting RTSP server: {e}"
+
+
+def stop_local_rtsp_server():
+    """Stop the local RTSP server and any associated processes."""
+    global rtsp_server_process, ffmpeg_stream_process
+    
+    for process in [rtsp_server_process, ffmpeg_stream_process]:
+        if process:
+            try:
+                logging.info(f"Terminating process {process.pid}...")
+                process.terminate()
+                try:
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    logging.warning(f"Process {process.pid} did not terminate, killing...")
+                    process.kill()
+                    process.wait()
+            except Exception as e:
+                logging.warning(f"Error terminating process: {e}")
+    
+    rtsp_server_process = None
+    ffmpeg_stream_process = None
+    
+    # Clean up log file if it exists
+    if os.path.exists("/tmp/mediamtx.log"):
+        try:
+            os.remove("/tmp/mediamtx.log")
+        except:
+            pass
+
+
 def rtsp_stream_generator(rtsp_url: str):
     if not rtsp_url:
         placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
-        placeholder[:] = [100, 100, 100]
-        cv2.putText(placeholder, "No RTSP URL Provided", (40, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
+        placeholder[:] = [40, 40, 40]
+        cv2.putText(placeholder, "No RTSP URL Provided", (140, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (200, 200, 200), 2)
         yield placeholder
         return
 
@@ -520,13 +650,55 @@ def rtsp_stream_generator(rtsp_url: str):
     cap = None
     logging.info(f"Starting RTSP stream: {rtsp_url}")
 
+    # Explicit check for local server
+    if rtsp_url == LOCAL_RTSP_URL and (rtsp_server_process is None or rtsp_server_process.poll() is not None):
+        logging.error("Attempted to start local RTSP stream, but server is not running.")
+        placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
+        placeholder[:] = [40, 40, 40]
+        cv2.putText(placeholder, "Local RTSP Server Not Running", (100, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        cv2.putText(placeholder, "Please select a sample and click 'Start Stream'.", (80, 300), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 1)
+        streaming_active[url_key] = False
+        yield placeholder
+        return
+
     try:
-        cap = cv2.VideoCapture(rtsp_url)
-        if not cap.isOpened():
-            logging.warning("RTSP offline or URL incorrect.")
+        # Set environment variable for OpenCV to force TCP transport for this connection
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+        
+        # Retry logic for connecting to the stream
+        max_retries = 5
+        for i in range(max_retries):
+            # Use CAP_FFMPEG explicitly
+            cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
+            if cap.isOpened():
+                # Set buffer size to 1 to ensure we get the latest frame (low latency)
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                break
+            
+            logging.warning(f"RTSP offline or URL incorrect (attempt {i+1}/{max_retries}): {rtsp_url}")
+            if not streaming_active.get(url_key, False):
+                break # User stopped while we were retrying
+                
+            # Show a "connecting" placeholder
             placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
-            placeholder[:] = [128, 128, 128]
-            cv2.putText(placeholder, "Stream Offline / Error", (50, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+            placeholder[:] = [50, 50, 50]
+            cv2.putText(placeholder, f"Connecting... ({i+1}/{max_retries})", (160, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
+            cv2.putText(placeholder, f"URL: {rtsp_url}", (50, 450), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 150, 150), 1)
+            yield placeholder
+            time.sleep(1.5)
+
+        if not cap or not cap.isOpened():
+            logging.error(f"Failed to connect to RTSP after {max_retries} attempts.")
+            placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
+            placeholder[:] = [30, 30, 30]
+            cv2.putText(placeholder, "Connection Failed", (160, 200), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+            cv2.putText(placeholder, "Stream Offline or URL Incorrect", (120, 250), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 1)
+            cv2.putText(placeholder, f"Target: {rtsp_url}", (50, 450), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 150, 150), 1)
+            
+            # If it's the local URL, remind user to select a sample
+            if rtsp_url == LOCAL_RTSP_URL:
+                 cv2.putText(placeholder, "Note: Local server requires a sample file selection.", (80, 300), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 165, 0), 1)
+            
             streaming_active[url_key] = False
             yield placeholder
             return
@@ -539,23 +711,26 @@ def rtsp_stream_generator(rtsp_url: str):
                 continue
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             yield frame_rgb
-            time.sleep(0.03)
+            time.sleep(0.01) # Slightly faster updates
 
     except Exception as e:
-        logging.error(f"RTSP generator error: {e}")
+        logging.exception(f"RTSP generator error for {rtsp_url}")
         placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
-        placeholder[:] = [0, 0, 128]
-        cv2.putText(placeholder, "Streaming Error", (80, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        placeholder[:] = [30, 0, 0]
+        cv2.putText(placeholder, "Streaming Error", (200, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        cv2.putText(placeholder, str(e)[:50], (50, 300), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
         yield placeholder
 
     finally:
         if cap and cap.isOpened():
             cap.release()
         streaming_active.pop(url_key, None)
-        logging.info(f"RTSP stream ended: {rtsp_url}")
-        tail = np.zeros((100, 100, 3), dtype=np.uint8)
-        cv2.putText(tail, "Stopped", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-        yield tail
+        logging.info(f"RTSP stream session ended: {rtsp_url}")
+        # Final "Stopped" frame
+        final_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        final_frame[:] = [20, 20, 20]
+        cv2.putText(final_frame, "Stream Stopped", (210, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (100, 100, 100), 2)
+        yield final_frame
 
 
 def analyse_current_rtsp_frame(rtsp_url: str, prompt: str) -> str:
@@ -571,9 +746,18 @@ def analyse_current_rtsp_frame(rtsp_url: str, prompt: str) -> str:
     """
     if not rtsp_url:
         return "Please enter an RTSP URL."
-    cap = cv2.VideoCapture(rtsp_url)
-    if not cap.isOpened():
-        return "Error: Could not open RTSP stream."
+    
+    cap = None
+    max_retries = 3
+    for i in range(max_retries):
+        cap = cv2.VideoCapture(rtsp_url)
+        if cap.isOpened():
+            break
+        logging.warning(f"Analysis failed to open stream (attempt {i+1}/{max_retries})")
+        time.sleep(1)
+        
+    if not cap or not cap.isOpened():
+        return f"Error: Could not open RTSP stream at {rtsp_url}. Ensure the stream is active."
     try:
         ret, frame = cap.read()
         if not ret:
@@ -612,6 +796,14 @@ def build_ui():
             ignore_glob="**/.*",
             render=False
         )
+        file_explorer_rtsp = gr.FileExplorer(
+            glob="**/*.[mM][pP]4",
+            root_dir=active_root_dir,
+            file_count="single",
+            label=f"RTSP Sample files in {active_root_dir}",
+            ignore_glob="**/.*",
+            render=False
+        )
 
         config_alert = gr.HTML(visible=False)
 
@@ -641,6 +833,7 @@ def build_ui():
                 **Recommended model:** `Qwen/Qwen2.5-VL-32B-Instruct-AWQ` deployed via PCAI for the best experience.
                 """
             )
+            gr.Image("assets/SolutionOverview.png", label="Solution Overview")
 
         gr.Markdown("---")
 
@@ -690,9 +883,9 @@ def build_ui():
                     inputs=[api_key_input, api_base_input, preferred_model_input, ignore_tls_checkbox, root_dir_input],
                     outputs=[config_status_out, root_dir_input],
                 ).then(
-                    fn=lambda r: (gr.update(label=f"Image files in {r}", root_dir=r), gr.update(label=f"Video files in {r}", root_dir=r)),
+                    fn=lambda r: (gr.update(label=f"Image files in {r}", root_dir=r), gr.update(label=f"Video files in {r}", root_dir=r), gr.update(label=f"RTSP Sample files in {r}", root_dir=r)),
                     inputs=[root_dir_input],
-                    outputs=[file_explorer, file_explorer_video]
+                    outputs=[file_explorer, file_explorer_video, file_explorer_rtsp]
                 ).then(
                     fn=get_ui_validation_updates,
                     inputs=None,
@@ -808,23 +1001,85 @@ def build_ui():
                     outputs=[video_json_output, video_markdown_output],
                 )
 
-            # ---------------- Tab 4: RTSP Stream (UNCHANGED)
+            # ---------------- Tab 4: RTSP Stream
             with gr.TabItem("RTSP Stream"):
-                rtsp_url_input = gr.Textbox(label="RTSP URL", value="http://monumentcam.kdhnc.com/mjpg/video.mjpg?timestamp=1717171717",placeholder="http://monumentcam.kdhnc.com/mjpg/video.mjpg?timestamp=1717171717")
+                rtsp_url_input = gr.Textbox(label="RTSP URL", value=DEFAULT_RTSP_URL, placeholder=DEFAULT_RTSP_URL)
+                
                 with gr.Row():
-                    start_btn = gr.Button("Start Stream")
+                    start_btn = gr.Button("Start Stream", variant="primary")
                     stop_btn = gr.Button("Stop Stream")
+                
+                with gr.Accordion("Samples", open=False):
+                    file_explorer_rtsp.render()
+
+                with gr.Row():
+                    restore_btn = gr.Button("Restore Default RTSP URL", size="sm")
+
                 rtsp_image = gr.Image(label="Live RTSP Stream", interactive=False, type="numpy", height=400)
                 rtsp_status = gr.Textbox(label="Status", value="Stream not started.", interactive=False)
                 rtsp_prompt = gr.Textbox(label="Prompt for Frame Analysis", value=DEFAULT_FRAME_PROMPT, lines=4)
                 analyse_rtsp_btn = gr.Button("Analyse Current Frame")
                 rtsp_llm_out = gr.Textbox(label="LLM Response", lines=8)
 
+                def handle_start_stream(url, sample_path_list):
+                    # Handle both list (older Gradio) and string (newer Gradio) from FileExplorer
+                    sample_path = None
+                    if sample_path_list:
+                        sample_path = sample_path_list[0] if isinstance(sample_path_list, list) else sample_path_list
+                    
+
+                    if url == LOCAL_RTSP_URL:
+                        if not sample_path:
+                            # Try to find a default sample in active_root_dir
+                            try:
+                                paths = sorted(list(pathlib.Path(active_root_dir).glob("**/*.[mM][pP]4")))
+                                if paths:
+                                    sample_path = str(paths[0])
+                                    gr.Info(f"Auto-selected sample: {os.path.basename(sample_path)}")
+                            except Exception:
+                                pass
+
+                        if not sample_path:
+                            gr.Warning("No sample file selected or found in root directory for local RTSP server.")
+                            return "Error: Please browse and select a sample file first."
+                        
+                        gr.Info(f"Starting local RTSP server with: {os.path.basename(sample_path)}")
+                        msg = start_local_rtsp_server(sample_path)
+                        if msg.startswith("Error") or "failed" in msg.lower():
+                            gr.Error(msg)
+                            return f"Status: {msg}"
+                        return f"Status: {msg}"
+                    
+                    gr.Info(f"Connecting to remote RTSP stream: {url}")
+                    return f"Connecting to {url}..."
+
+                # When sample is selected, update the URL input to our local server address
+                def update_url_from_explorer(file_list):
+                    if not file_list:
+                        return DEFAULT_RTSP_URL
+                    return LOCAL_RTSP_URL
+
+                file_explorer_rtsp.change(
+                    fn=update_url_from_explorer,
+                    inputs=[file_explorer_rtsp],
+                    outputs=[rtsp_url_input]
+                )
+
+                restore_btn.click(
+                    fn=lambda: (DEFAULT_RTSP_URL, []),
+                    inputs=None,
+                    outputs=[rtsp_url_input, file_explorer_rtsp]
+                )
+
                 start_btn.click(
+                    fn=handle_start_stream,
+                    inputs=[rtsp_url_input, file_explorer_rtsp],
+                    outputs=[rtsp_status]
+                ).then(
                     fn=rtsp_stream_generator,
                     inputs=[rtsp_url_input],
                     outputs=[rtsp_image],
-                ).then(fn=lambda: "Streaming started (or attempting)...", outputs=[rtsp_status])
+                )
 
                 stop_btn.click(
                     fn=stop_streaming_generator_rtsp,

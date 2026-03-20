@@ -33,6 +33,9 @@ storage:
   shared:
     storageClassName: nfs-csi
     capacity: 100Gi
+  config:
+    storageClassName: nfs-csi
+    capacity: 1Gi
 
 # Service configuration
 service:
