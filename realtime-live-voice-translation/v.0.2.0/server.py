@@ -122,22 +122,38 @@ def defaults():
 
 
 code_to_language = {
+    "ar": "Arabic",
+    "da": "Danish",
     "en": "English",
     "es": "Spanish",
     "de": "German",
+    "fi": "Finnish",
     "fr": "French",
+    "hi": "Hindi",
     "it": "Italian",
+    "ja": "Japanese",
+    "ms": "Malay",
+    "no": "Norwegian",
+    "pt": "Portuguese",
+    "ru": "Russian",
+    "vi": "Vietnamese",
+    "zh": "Chinese",
 }
 
 SAMPLE_RATE = 16000
 
 # Silero VAD behavior
 SPEECH_THRESHOLD = 0.5
-SILENCE_THRESHOLD_MS = 300
-MAX_SENTENCE_MS = 4000
+SILENCE_THRESHOLD_MS = max(250, int(os.getenv("LIVE_SILENCE_THRESHOLD_MS", "900")))
+MAX_SENTENCE_MS = max(3000, int(os.getenv("LIVE_MAX_SENTENCE_MS", "10000")))
 MIN_SEND_TEXT_CHARS = 2
 SILENCE_DBFS_THRESHOLD = -45.0
 MIN_AUDIO_MS = 300
+LIVE_PARTIAL_UPDATE_MS = max(250, int(os.getenv("LIVE_PARTIAL_UPDATE_MS", "750")))
+LIVE_MIN_PARTIAL_AUDIO_MS = max(
+    MIN_AUDIO_MS, int(os.getenv("LIVE_MIN_PARTIAL_AUDIO_MS", "700"))
+)
+LIVE_CONTEXT_TURNS = max(0, int(os.getenv("LIVE_CONTEXT_TURNS", "3")))
 
 
 class TranscriptItem(BaseModel):
@@ -199,12 +215,19 @@ class JsonTranslationBatch(BaseModel):
 
 # --- LOAD SILERO VAD ---
 print("Loading Silero VAD...")
-model, utils = torch.hub.load(
-    repo_or_dir="snakers4/silero-vad",
-    model="silero_vad",
-    force_reload=False,
-    trust_repo=True,
-)
+try:
+    model, utils = torch.hub.load(
+        repo_or_dir="/app/silero-vad", model="silero_vad", source="local"
+    )
+except Exception as e:
+    print(f"Error: {e}")
+    model, utils = torch.hub.load(
+        repo_or_dir="snakers4/silero-vad",
+        model="silero_vad",
+        force_reload=False,
+        trust_repo=True,
+    )
+
 (get_speech_timestamps, save_audio, read_audio, VADIterator, collect_chunks) = utils
 model.eval()
 
@@ -226,7 +249,9 @@ def build_time_ranges_from_timestamps(
         first_ts = float(items[0].ts_ms or ts_values[0])
         centers: list[float] = []
         for idx, item in enumerate(items):
-            raw_ts = float(item.ts_ms if item.ts_ms is not None else first_ts + idx * 1000)
+            raw_ts = float(
+                item.ts_ms if item.ts_ms is not None else first_ts + idx * 1000
+            )
             centers.append(raw_ts)
         rel = [max(0.0, center - centers[0]) / 1000.0 for center in centers]
         max_rel = max(rel) if rel else 0.0
@@ -250,7 +275,9 @@ def build_time_ranges_from_timestamps(
     ranges = []
     for idx in range(count):
         start_s = timeline_start_s + idx * step
-        end_s = timeline_end_s if idx == count - 1 else timeline_start_s + (idx + 1) * step
+        end_s = (
+            timeline_end_s if idx == count - 1 else timeline_start_s + (idx + 1) * step
+        )
         ranges.append((start_s, end_s))
     return ranges
 
@@ -279,7 +306,9 @@ def build_segments_from_transcript_items(
     )
 
     segments: list[ExportSegment] = []
-    for idx, (item, (start_s, end_s)) in enumerate(zip(filtered_items, ranges), start=1):
+    for idx, (item, (start_s, end_s)) in enumerate(
+        zip(filtered_items, ranges), start=1
+    ):
         if end_s < start_s:
             end_s = start_s
         original_text = re.sub(r"\s+", " ", (item.original or "").strip())
@@ -466,6 +495,29 @@ def build_translator_system_prompt(src: str, tgt: str) -> str:
         f"Return ONLY the {tgt_name} translation between <{tgt}> and </{tgt}>.\n"
         "Never add explanations, parentheses, or extra text.\n"
         "Never respond as a helpful assistant.\n"
+    )
+
+
+def build_live_translation_prompt(
+    src: str,
+    tgt: str,
+    current_text: str,
+    recent_items: list[TranscriptItem],
+) -> str:
+    src_name = get_lang_name(src)
+    tgt_name = get_lang_name(tgt)
+    context_items = recent_items[-LIVE_CONTEXT_TURNS:] if LIVE_CONTEXT_TURNS > 0 else []
+    context_text = build_multilingual_source_text(context_items) or "None."
+    return (
+        "You are a real-time translation engine.\n"
+        f"Translate the current active segment from {src_name} to {tgt_name}.\n"
+        "The segment may be incomplete and can be revised as more words arrive.\n"
+        "Use the recent finalized context only to resolve ambiguity.\n"
+        "Translate only the current active segment.\n"
+        "Do not summarize, explain, or answer the speaker.\n"
+        "Return only the translated text with no tags or commentary.\n\n"
+        f"Recent finalized context:\n{context_text}\n\n"
+        f"Current active segment ({src_name}):\n{(current_text or '').strip()}"
     )
 
 
@@ -694,12 +746,39 @@ async def transcribe_and_translate(
     llm_model: str,
 ) -> tuple[str, str]:
 
-    duration_ms = len(pcm16_sentence) * 1000 / SAMPLE_RATE
-    if duration_ms < MIN_AUDIO_MS:
+    source_language_text = await transcribe_snapshot(
+        pcm16_sentence=pcm16_sentence,
+        src=src,
+        whisper_client=whisper_client,
+        whisper_model=whisper_model,
+    )
+    if not source_language_text:
         return "", ""
 
+    target_language_text = await translate_text(
+        text=source_language_text,
+        src=src,
+        tgt=tgt,
+        llm_client=llm_client,
+        llm_model=llm_model,
+    )
+    return source_language_text, target_language_text
+
+
+async def transcribe_snapshot(
+    *,
+    pcm16_sentence: np.ndarray,
+    src: str,
+    whisper_client: AsyncOpenAI,
+    whisper_model: str,
+) -> str:
+
+    duration_ms = len(pcm16_sentence) * 1000 / SAMPLE_RATE
+    if duration_ms < MIN_AUDIO_MS:
+        return ""
+
     if rms_dbfs(pcm16_sentence) < SILENCE_DBFS_THRESHOLD:
-        return "", ""
+        return ""
 
     wav_io = wav_bytesio_from_pcm16(pcm16_sentence, sr=SAMPLE_RATE)
 
@@ -715,7 +794,21 @@ async def transcribe_and_translate(
 
     source_language_text = (getattr(transcript_resp, "text", "") or "").strip()
     if len(source_language_text) <= MIN_SEND_TEXT_CHARS:
-        return "", ""
+        return ""
+
+    return source_language_text
+
+
+async def translate_text(
+    *,
+    text: str,
+    src: str,
+    tgt: str,
+    llm_client: AsyncOpenAI,
+    llm_model: str,
+) -> str:
+    if not text:
+        return ""
 
     print("Sending transcription to LLM for translation...")
     start_time = time.perf_counter()
@@ -723,7 +816,7 @@ async def transcribe_and_translate(
         model=llm_model,
         messages=[
             {"role": "system", "content": build_translator_system_prompt(src, tgt)},
-            {"role": "user", "content": source_language_text},
+            {"role": "user", "content": text},
         ],
         temperature=0,
         max_tokens=200,
@@ -731,8 +824,42 @@ async def transcribe_and_translate(
     )
     print("Translation took:", time.perf_counter() - start_time)
 
-    target_language_text = clean_translation(chat_resp.choices[0].message.content or "")
-    return source_language_text, target_language_text
+    return clean_translation(chat_resp.choices[0].message.content or "")
+
+
+async def translate_live_text(
+    *,
+    text: str,
+    src: str,
+    tgt: str,
+    recent_items: list[TranscriptItem],
+    llm_client: AsyncOpenAI,
+    llm_model: str,
+) -> str:
+    if not text:
+        return ""
+
+    print("Sending live transcription to LLM for contextual translation...")
+    start_time = time.perf_counter()
+    chat_resp = await llm_client.chat.completions.create(
+        model=llm_model,
+        messages=[
+            {
+                "role": "user",
+                "content": build_live_translation_prompt(
+                    src=src,
+                    tgt=tgt,
+                    current_text=text,
+                    recent_items=recent_items,
+                ),
+            }
+        ],
+        temperature=0,
+        max_tokens=200,
+        stop=["\n\n", "```"],
+    )
+    print("Live translation took:", time.perf_counter() - start_time)
+    return clean_translation(chat_resp.choices[0].message.content or "")
 
 
 def ffmpeg_convert_to_pcm_wav(
@@ -1927,6 +2054,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
     whisper_client = make_client(cfg["whisper"]["base_url"], cfg["whisper"]["api_key"])
     llm_client = make_client(cfg["llm"]["base_url"], cfg["llm"]["api_key"])
+    send_lock = asyncio.Lock()
 
     vad_iterator = VADIterator(
         model, threshold=SPEECH_THRESHOLD, sampling_rate=SAMPLE_RATE
@@ -1936,6 +2064,217 @@ async def websocket_endpoint(websocket: WebSocket):
     is_speaking = False
     saw_end = False
     silence_after_end_ms = 0
+    segment_sequence = 0
+    active_segment_id: str | None = None
+    active_segment_started_ts: int | None = None
+    last_partial_analysis_at = 0.0
+    pending_snapshot: dict[str, Any] | None = None
+    analysis_task: asyncio.Task | None = None
+    recent_final_items: list[TranscriptItem] = []
+    emitted_segments: dict[str, dict[str, Any]] = {}
+    segment_final_requested: dict[str, bool] = {}
+    session_epoch = 0
+
+    async def send_json(payload: dict[str, Any]) -> None:
+        async with send_lock:
+            await websocket.send_json(payload)
+
+    def next_segment_id() -> str:
+        nonlocal segment_sequence
+        segment_sequence += 1
+        return f"seg-{segment_sequence:04d}"
+
+    def ensure_active_segment() -> tuple[str, int]:
+        nonlocal active_segment_id, active_segment_started_ts
+        if active_segment_id is None:
+            active_segment_id = next_segment_id()
+            active_segment_started_ts = int(time.time() * 1000)
+        return active_segment_id, int(active_segment_started_ts or int(time.time() * 1000))
+
+    def reset_active_stream_state() -> None:
+        nonlocal sentence_pcm, is_speaking, saw_end, silence_after_end_ms
+        nonlocal active_segment_id, active_segment_started_ts, last_partial_analysis_at
+        sentence_pcm = np.zeros((0,), dtype=np.int16)
+        is_speaking = False
+        saw_end = False
+        silence_after_end_ms = 0
+        active_segment_id = None
+        active_segment_started_ts = None
+        last_partial_analysis_at = 0.0
+        vad_iterator.reset_states()
+
+    async def cancel_analysis() -> None:
+        nonlocal analysis_task, pending_snapshot
+        pending_snapshot = None
+        task = analysis_task
+        analysis_task = None
+        if task is None:
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            print("Error while cancelling live analysis task")
+            traceback.print_exc()
+
+    async def emit_segment_update(
+        *,
+        segment_id: str,
+        src: str,
+        tgt: str,
+        original: str,
+        translation: str,
+        ts_ms: int,
+        is_final: bool,
+    ) -> None:
+        nonlocal recent_final_items
+        original = (original or "").strip()
+        translation = (translation or "").strip()
+        if not original and not translation:
+            return
+
+        if not is_final and segment_final_requested.get(segment_id):
+            return
+
+        segment_state = emitted_segments.setdefault(
+            segment_id,
+            {
+                "revision": 0,
+                "original": "",
+                "translation": "",
+                "is_final": False,
+            },
+        )
+
+        previous_is_final = bool(segment_state.get("is_final"))
+        if (
+            normalize_text(original) == normalize_text(segment_state.get("original", ""))
+            and normalize_text(translation)
+            == normalize_text(segment_state.get("translation", ""))
+            and previous_is_final == is_final
+        ):
+            return
+
+        segment_state["revision"] = int(segment_state.get("revision", 0)) + 1
+        segment_state["original"] = original
+        segment_state["translation"] = translation
+        segment_state["is_final"] = is_final
+        status = "final"
+        if not is_final:
+            status = "listening" if segment_state["revision"] == 1 else "refining"
+
+        await send_json(
+            {
+                "type": "segment",
+                "segment_id": segment_id,
+                "revision": segment_state["revision"],
+                "status": status,
+                "is_final": is_final,
+                "original": original,
+                "translation": translation,
+                "src": src,
+                "tgt": tgt,
+                "ts_ms": ts_ms,
+            }
+        )
+
+        if is_final and not previous_is_final and original and LIVE_CONTEXT_TURNS > 0:
+            recent_final_items.append(
+                TranscriptItem(
+                    original=original,
+                    translation=translation,
+                    src=src,
+                    tgt=tgt,
+                    ts_ms=ts_ms,
+                )
+            )
+            if len(recent_final_items) > LIVE_CONTEXT_TURNS:
+                recent_final_items = recent_final_items[-LIVE_CONTEXT_TURNS:]
+
+    async def analyze_snapshot(snapshot: dict[str, Any]) -> None:
+        if snapshot.get("epoch") != session_epoch:
+            return
+
+        try:
+            original = await transcribe_snapshot(
+                pcm16_sentence=snapshot["pcm16_sentence"],
+                src=snapshot["src"],
+                whisper_client=whisper_client,
+                whisper_model=cfg["whisper"]["model"],
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            print("Live transcription failed")
+            traceback.print_exc()
+            return
+
+        if snapshot.get("epoch") != session_epoch or not original:
+            return
+
+        translation = ""
+        try:
+            translation = await translate_live_text(
+                text=original,
+                src=snapshot["src"],
+                tgt=snapshot["tgt"],
+                recent_items=snapshot.get("recent_items") or [],
+                llm_client=llm_client,
+                llm_model=cfg["llm"]["model"],
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            print("Live translation failed")
+            traceback.print_exc()
+
+        if snapshot.get("epoch") != session_epoch:
+            return
+
+        await emit_segment_update(
+            segment_id=snapshot["segment_id"],
+            src=snapshot["src"],
+            tgt=snapshot["tgt"],
+            original=original,
+            translation=translation,
+            ts_ms=snapshot["ts_ms"],
+            is_final=bool(snapshot.get("is_final")),
+        )
+
+    async def process_pending_snapshots() -> None:
+        nonlocal analysis_task, pending_snapshot
+        try:
+            while True:
+                snapshot = pending_snapshot
+                pending_snapshot = None
+                if snapshot is None:
+                    return
+                await analyze_snapshot(snapshot)
+        finally:
+            analysis_task = None
+            if pending_snapshot is not None:
+                analysis_task = asyncio.create_task(process_pending_snapshots())
+
+    def queue_snapshot(*, segment_id: str, ts_ms: int, src: str, tgt: str, is_final: bool) -> None:
+        nonlocal pending_snapshot, analysis_task
+        if sentence_pcm.size == 0:
+            return
+        if is_final:
+            segment_final_requested[segment_id] = True
+        pending_snapshot = {
+            "epoch": session_epoch,
+            "segment_id": segment_id,
+            "ts_ms": ts_ms,
+            "src": src,
+            "tgt": tgt,
+            "is_final": is_final,
+            "pcm16_sentence": sentence_pcm.copy(),
+            "recent_items": list(recent_final_items),
+        }
+        if analysis_task is None:
+            analysis_task = asyncio.create_task(process_pending_snapshots())
 
     try:
         while True:
@@ -1987,13 +2326,13 @@ async def websocket_endpoint(websocket: WebSocket):
                         cfg["llm"]["base_url"], cfg["llm"]["api_key"]
                     )
 
-                    sentence_pcm = np.zeros((0,), dtype=np.int16)
-                    is_speaking = False
-                    saw_end = False
-                    silence_after_end_ms = 0
-                    vad_iterator.reset_states()
+                    session_epoch += 1
+                    recent_final_items = []
+                    segment_final_requested = {}
+                    await cancel_analysis()
+                    reset_active_stream_state()
 
-                    await websocket.send_json(
+                    await send_json(
                         {
                             "type": "ack",
                             "src": cfg["src"],
@@ -2031,6 +2370,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         print("👉 Speech started")
                         is_speaking = True
                         sentence_pcm = np.zeros((0,), dtype=np.int16)
+                        active_segment_id, active_segment_started_ts = ensure_active_segment()
                     saw_end = False
                     silence_after_end_ms = 0
 
@@ -2041,41 +2381,47 @@ async def websocket_endpoint(websocket: WebSocket):
 
             if is_speaking:
                 sentence_pcm = np.concatenate([sentence_pcm, pcm_chunk], axis=0)
+                active_segment_id, active_segment_started_ts = ensure_active_segment()
 
             if is_speaking and saw_end:
                 silence_after_end_ms += chunk_ms
 
             if is_speaking:
                 sentence_ms = int(len(sentence_pcm) / SAMPLE_RATE * 1000)
+                now = time.monotonic()
+                if (
+                    active_segment_id is not None
+                    and sentence_ms >= LIVE_MIN_PARTIAL_AUDIO_MS
+                    and now - last_partial_analysis_at
+                    >= LIVE_PARTIAL_UPDATE_MS / 1000.0
+                ):
+                    src, tgt = cfg["src"], cfg["tgt"]
+                    queue_snapshot(
+                        segment_id=active_segment_id,
+                        ts_ms=int(active_segment_started_ts or int(time.time() * 1000)),
+                        src=src,
+                        tgt=tgt,
+                        is_final=False,
+                    )
+                    last_partial_analysis_at = now
+
                 if sentence_ms > MAX_SENTENCE_MS:
                     print(
                         f"⚠️ Max sentence length reached; forcing flush. [{sentence_ms} ms]"
                     )
                     src, tgt = cfg["src"], cfg["tgt"]
-                    orig, trans = await transcribe_and_translate(
-                        pcm16_sentence=sentence_pcm,
-                        src=src,
-                        tgt=tgt,
-                        whisper_client=whisper_client,
-                        whisper_model=cfg["whisper"]["model"],
-                        llm_client=llm_client,
-                        llm_model=cfg["llm"]["model"],
-                    )
-                    if orig:
-                        await websocket.send_json(
-                            {
-                                "original": orig,
-                                "translation": trans,
-                                "src": src,
-                                "tgt": tgt,
-                            }
+                    segment_id = active_segment_id
+                    started_ts = int(active_segment_started_ts or int(time.time() * 1000))
+                    if segment_id is not None:
+                        queue_snapshot(
+                            segment_id=segment_id,
+                            ts_ms=started_ts,
+                            src=src,
+                            tgt=tgt,
+                            is_final=True,
                         )
 
-                    sentence_pcm = np.zeros((0,), dtype=np.int16)
-                    is_speaking = False
-                    saw_end = False
-                    silence_after_end_ms = 0
-                    vad_iterator.reset_states()
+                    reset_active_stream_state()
                     continue
 
             if is_speaking and saw_end and silence_after_end_ms >= SILENCE_THRESHOLD_MS:
@@ -2083,25 +2429,18 @@ async def websocket_endpoint(websocket: WebSocket):
                 print(f"✅ End of sentence confirmed. Processing… [{sentence_ms} ms]")
 
                 src, tgt = cfg["src"], cfg["tgt"]
-                orig, trans = await transcribe_and_translate(
-                    pcm16_sentence=sentence_pcm,
-                    src=src,
-                    tgt=tgt,
-                    whisper_client=whisper_client,
-                    whisper_model=cfg["whisper"]["model"],
-                    llm_client=llm_client,
-                    llm_model=cfg["llm"]["model"],
-                )
-                if orig:
-                    await websocket.send_json(
-                        {"original": orig, "translation": trans, "src": src, "tgt": tgt}
+                segment_id = active_segment_id
+                started_ts = int(active_segment_started_ts or int(time.time() * 1000))
+                if segment_id is not None:
+                    queue_snapshot(
+                        segment_id=segment_id,
+                        ts_ms=started_ts,
+                        src=src,
+                        tgt=tgt,
+                        is_final=True,
                     )
 
-                sentence_pcm = np.zeros((0,), dtype=np.int16)
-                is_speaking = False
-                saw_end = False
-                silence_after_end_ms = 0
-                vad_iterator.reset_states()
+                reset_active_stream_state()
 
     except WebSocketDisconnect:
         print("Client disconnected")
@@ -2111,3 +2450,6 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.close()
         except Exception:
             pass
+    finally:
+        session_epoch += 1
+        await cancel_analysis()

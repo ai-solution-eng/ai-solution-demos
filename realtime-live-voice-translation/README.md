@@ -30,11 +30,22 @@ It also supports post-conversation exports such as transcripts, multilingual sum
 
 The backend currently supports these language codes:
 
+- `ar` - Arabic
+- `da` - Danish
 - `en` - English
 - `es` - Spanish
-- `fr` - French
-- `it` - Italian
 - `de` - German
+- `fi` - Finnish
+- `fr` - French
+- `hi` - Hindi
+- `it` - Italian
+- `ja` - Japanese
+- `ms` - Malay
+- `no` - Norwegian
+- `pt` - Portuguese
+- `ru` - Russian
+- `vi` - Vietnamese
+- `zh` - Chinese
 
 Default language selection:
 
@@ -226,9 +237,9 @@ env:
 
 Suggested app metadata:
 
-- Framework name: `Real time voice translator - Beta`
+- Framework name: `Realtime live voice translation`
 - Namespace: `realtime-translation`
-- Description: `Currently in beta version supports transcription + translation from / to English, French, Italian, German, Spanish. Uses AI to summarize your meeting and create meeting minutes. Try it out.`
+- Description: `Supports transcription + translation from / to English, French, Italian, German, Spanish. Uses AI to summarize your meeting and create meeting minutes. Try it out.`
 
 ## API Surface
 
