@@ -199,12 +199,18 @@ class JsonTranslationBatch(BaseModel):
 
 # --- LOAD SILERO VAD ---
 print("Loading Silero VAD...")
-model, utils = torch.hub.load(
-    repo_or_dir="snakers4/silero-vad",
-    model="silero_vad",
-    force_reload=False,
-    trust_repo=True,
-)
+try:
+    model, utils = torch.hub.load(
+        repo_or_dir="/app/silero-vad", model="silero_vad", source="local"
+    )
+except Exception as e:
+    print(f"Error: {e}")
+    model, utils = torch.hub.load(
+        repo_or_dir="snakers4/silero-vad",
+        model="silero_vad",
+        force_reload=False,
+        trust_repo=True,
+    )
 (get_speech_timestamps, save_audio, read_audio, VADIterator, collect_chunks) = utils
 model.eval()
 
@@ -226,7 +232,9 @@ def build_time_ranges_from_timestamps(
         first_ts = float(items[0].ts_ms or ts_values[0])
         centers: list[float] = []
         for idx, item in enumerate(items):
-            raw_ts = float(item.ts_ms if item.ts_ms is not None else first_ts + idx * 1000)
+            raw_ts = float(
+                item.ts_ms if item.ts_ms is not None else first_ts + idx * 1000
+            )
             centers.append(raw_ts)
         rel = [max(0.0, center - centers[0]) / 1000.0 for center in centers]
         max_rel = max(rel) if rel else 0.0
@@ -250,7 +258,9 @@ def build_time_ranges_from_timestamps(
     ranges = []
     for idx in range(count):
         start_s = timeline_start_s + idx * step
-        end_s = timeline_end_s if idx == count - 1 else timeline_start_s + (idx + 1) * step
+        end_s = (
+            timeline_end_s if idx == count - 1 else timeline_start_s + (idx + 1) * step
+        )
         ranges.append((start_s, end_s))
     return ranges
 
@@ -279,7 +289,9 @@ def build_segments_from_transcript_items(
     )
 
     segments: list[ExportSegment] = []
-    for idx, (item, (start_s, end_s)) in enumerate(zip(filtered_items, ranges), start=1):
+    for idx, (item, (start_s, end_s)) in enumerate(
+        zip(filtered_items, ranges), start=1
+    ):
         if end_s < start_s:
             end_s = start_s
         original_text = re.sub(r"\s+", " ", (item.original or "").strip())

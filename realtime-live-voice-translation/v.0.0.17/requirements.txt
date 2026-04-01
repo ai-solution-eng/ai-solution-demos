@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+openai
+numpy
+torch
+python-dotenv
+torchaudio
+packaging
+python-multipart
+ffmpeg-python
+pydub
+aiofiles
+python-magic
+tqdm

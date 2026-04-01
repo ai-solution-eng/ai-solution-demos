@@ -226,7 +226,7 @@ env:
 
 Suggested app metadata:
 
-- Framework name: `Real time voice translator - Beta`
+- Framework name: `Realtime live voice translation`
 - Namespace: `realtime-translation`
 - Description: `Currently in beta version supports transcription + translation from / to English, French, Italian, German, Spanish. Uses AI to summarize your meeting and create meeting minutes. Try it out.`
 
