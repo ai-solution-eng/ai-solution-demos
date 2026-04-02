@@ -419,7 +419,7 @@
             flex: 0 0 auto;
         }
 
-        .controls-row.select-row > .field-group {
+        .controls-row.select-row>.field-group {
             margin-top: 10px;
         }
 
@@ -616,6 +616,13 @@
             border: 1px solid rgba(255, 255, 255, 0.08);
             background: rgba(255, 255, 255, 0.025);
             overflow: hidden;
+        }
+
+        .advanced-hint {
+            font-size: 0.8rem;
+            color: #9aa0a6;
+            font-style: italic;
+            margin-bottom: 1px;
         }
 
         .advanced-panel summary,
@@ -1256,6 +1263,9 @@
                 <details class="advanced-panel" id="advancedPanel">
                     <summary>Advanced model and endpoint settings</summary>
                     <div class="advanced-content">
+                        <div class="advanced-hint" id="advancedHint">
+                            <p class="advanced-hint">Leave empty to use default values</p>
+                        </div>
                         <div class="controls-row param-row whisper-row">
                             <input id="whisperModel" placeholder="WHISPER_MODEL" />
                             <input id="whisperBaseUrl" placeholder="WHISPER_BASE_URL" />
