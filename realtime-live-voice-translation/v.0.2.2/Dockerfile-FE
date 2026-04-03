@@ -1,0 +1,7 @@
+FROM nginx:alpine
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY index-pcai.html /usr/share/nginx/html/index.html
+COPY pcm-worklet.js /usr/share/nginx/html/pcm-worklet.js
+COPY logo.jpg /usr/share/nginx/html/logo.jpg
+
+EXPOSE 80

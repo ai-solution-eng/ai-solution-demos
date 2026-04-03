@@ -44,6 +44,8 @@ The backend currently supports these language codes:
 - `no` - Norwegian
 - `pt` - Portuguese
 - `ru` - Russian
+- `tr` - Turkish
+- `km` - Khmer
 - `vi` - Vietnamese
 - `zh` - Chinese
 
