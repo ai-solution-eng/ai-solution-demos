@@ -191,7 +191,6 @@
 
         .hero-chip,
         #connectionStatus,
-        #recordingStatus,
         #currentRoom {
             min-height: 42px;
             display: inline-flex;
@@ -206,7 +205,6 @@
         }
 
         #connectionStatus::before,
-        #recordingStatus::before,
         #currentRoom::before,
         .hero-chip::before {
             content: "";
@@ -219,15 +217,13 @@
         }
 
         #connectionStatus[data-tone="connected"]::before,
-        #recordingStatus[data-tone="ready"]::before,
         #currentRoom[data-tone="ready"]::before,
         .hero-chip[data-tone="ready"]::before {
             background: var(--brand);
             box-shadow: 0 0 0 4px rgba(0, 199, 129, 0.18);
         }
 
-        #connectionStatus[data-tone="error"]::before,
-        #recordingStatus[data-tone="error"]::before {
+        #connectionStatus[data-tone="error"]::before {
             background: var(--danger);
             box-shadow: 0 0 0 4px rgba(255, 107, 107, 0.18);
         }
@@ -456,6 +452,39 @@
             margin-bottom: 14px;
         }
 
+        #recordingBanner {
+            position: sticky;
+            top: 0;
+            margin: -24px -16px 18px;
+            height: 42px;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(90deg, rgba(255, 157, 47, 0.92), rgba(255, 107, 107, 0.92));
+            color: #0f1115;
+            font-weight: 800;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            z-index: 200;
+            animation: recordingPulse 1.4s ease-in-out infinite;
+        }
+
+        #recordingBanner.visible {
+            display: flex;
+        }
+
+        @keyframes recordingPulse {
+
+            0%,
+            100% {
+                filter: saturate(1);
+            }
+
+            50% {
+                filter: saturate(1.18);
+            }
+        }
+
         .history-panel summary {
             padding: 18px 20px;
         }
@@ -549,6 +578,10 @@
                 padding: 14px 12px 28px;
             }
 
+            #recordingBanner {
+                margin: -14px -12px 16px;
+            }
+
             .collapsible-panel,
             .translation-box,
             .history-panel {
@@ -580,6 +613,8 @@
 </head>
 
 <body>
+    <div id="recordingBanner">conversation recording in progress</div>
+
     <main class="app-shell">
         <details class="collapsible-panel topbar-panel" id="topbarPanel" open>
             <summary class="collapsible-summary">
@@ -603,7 +638,6 @@
                 <div class="status-grid">
                     <span id="currentRoom" data-tone="warning">Room not joined</span>
                     <span id="connectionStatus" data-tone="warning">Disconnected</span>
-                    <span id="recordingStatus" data-tone="warning">Recording idle</span>
                 </div>
                 <!-- <div class="status-copy" id="footerNote">
                     Waiting for room connection.
@@ -687,7 +721,7 @@
         const connectBtn = document.getElementById("connectBtn");
         const downloadBtn = document.getElementById("downloadBtn");
         const connectionStatusEl = document.getElementById("connectionStatus");
-        const recordingStatusEl = document.getElementById("recordingStatus");
+        const recordingBannerEl = document.getElementById("recordingBanner");
         const currentRoomEl = document.getElementById("currentRoom");
         const heroRoomCodeEl = document.getElementById("heroRoomCode");
         const heroRoomChipEl = document.getElementById("heroRoomChip");
@@ -828,16 +862,13 @@
             throw new Error(detail || "That room does not exist. Check the presenter room code and try again.");
         }
 
-        function setRecordingStatus() {
-            let label = "Recording idle";
-            let tone = "warning";
-            if (state.recordingState === "recording") label = "Recording in progress";
-            if (state.recordingState === "stopped") {
-                label = "Recording stopped";
-                tone = state.canDownloadPackage ? "ready" : "warning";
-            }
-            recordingStatusEl.textContent = label;
-            recordingStatusEl.dataset.tone = tone;
+        function setRecordingBanner(visible) {
+            if (!recordingBannerEl) return;
+            recordingBannerEl.classList.toggle("visible", !!visible);
+        }
+
+        function syncRecordingUI() {
+            setRecordingBanner(state.recordingState === "recording");
             downloadBtn.disabled = !canDownloadAnything();
             // statusNoteEl.textContent = state.canDownloadPackage
             //     ? "The full package is ready to download."
@@ -880,7 +911,7 @@
         function applySnapshot(segments) {
             state.segments = Array.isArray(segments) ? segments.map((segment) => ({ ...segment })) : [];
             renderTranscriptView();
-            setRecordingStatus();
+            syncRecordingUI();
         }
 
         function buildLiveCard(item, variant, turnNumber) {
@@ -1089,7 +1120,7 @@
                     setExportOverlay(false);
                     updateExportProgress(0, "Queued", "Preparing export.");
                 }, 600);
-                setRecordingStatus();
+                syncRecordingUI();
             }
         }
 
@@ -1162,7 +1193,7 @@
                             roomInputEl.value = msg.room_id;
                             setRoomLabel();
                         }
-                        setRecordingStatus();
+                        syncRecordingUI();
                         return;
                     }
                     if (msg.type === "snapshot") {
@@ -1189,7 +1220,7 @@
                         ts_ms: msg.ts_ms || Date.now()
                     });
                     renderTranscriptView();
-                    setRecordingStatus();
+                    syncRecordingUI();
                 } catch (error) {
                     console.error(error);
                 }
@@ -1222,7 +1253,7 @@
 
         populateLanguages();
         setConnectionStatus("Disconnected", "warning");
-        setRecordingStatus();
+        syncRecordingUI();
         setRoomLabel();
         renderPlaceholderOnce();
 
