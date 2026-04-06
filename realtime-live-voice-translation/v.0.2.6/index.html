@@ -238,6 +238,21 @@
             margin-top: 22px;
         }
 
+        .previous-room-note {
+            margin-top: 14px;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 10px;
+            color: var(--text-soft);
+            font-size: 13px;
+        }
+
+        .previous-room-note strong {
+            color: var(--text);
+            letter-spacing: 0.02em;
+        }
+
         .hero-chip,
         #status {
             display: inline-flex;
@@ -918,6 +933,11 @@
             display: flex;
         }
 
+        #recordingBanner[data-state="paused"] {
+            background: linear-gradient(90deg, rgba(255, 216, 107, 0.95), rgba(255, 183, 77, 0.95));
+            animation: none;
+        }
+
         @keyframes recordingPulse {
 
             0%,
@@ -1174,6 +1194,10 @@
                             <button id="newRoomBtn" type="button" class="btn-secondary">New room</button>
                             <button id="copyRoomLinkBtn" type="button" class="btn-secondary">Copy attendee link</button>
                         </div>
+                        <div id="previousRoomNote" class="previous-room-note" hidden>
+                            <span>Previous room: <strong id="previousRoomCode">-</strong></span>
+                            <button id="downloadPreviousRoomBtn" type="button" class="btn-secondary">Download package</button>
+                        </div>
                     </div>
 
                     <aside class="wave-card">
@@ -1408,6 +1432,9 @@
         const roomCodeChipEl = document.getElementById("roomCodeChip");
         const newRoomBtn = document.getElementById("newRoomBtn");
         const copyRoomLinkBtn = document.getElementById("copyRoomLinkBtn");
+        const previousRoomNoteEl = document.getElementById("previousRoomNote");
+        const previousRoomCodeEl = document.getElementById("previousRoomCode");
+        const downloadPreviousRoomBtn = document.getElementById("downloadPreviousRoomBtn");
 
         const statusEl = document.getElementById("status");
         const logEl = document.getElementById("log");
@@ -1503,14 +1530,17 @@
             analyser: null,
             animationId: null,
             mediaRecorder: null,
+            presenterClientSessionId: window.crypto?.randomUUID?.() || `presenter-${Date.now()}`,
+            recordingSessionId: "",
             recordingMimeType: "",
-            recordingChunks: [],
-            recordingBlob: null,
+            recordingUploadQueue: Promise.resolve(),
+            recordingUploadError: null,
             recordingApproved: false,
             recordingActive: false,
             recordingState: "idle",
             canDownloadPackage: false,
             roomId: "",
+            previousRoomId: "",
             joined: false
         };
         let presenterRoomInitPromise = null;
@@ -1610,15 +1640,35 @@
             if (roomCodeChipEl) roomCodeChipEl.title = roomId;
         }
 
+        function updatePreviousRoomNote() {
+            if (!previousRoomNoteEl || !previousRoomCodeEl || !downloadPreviousRoomBtn) return;
+            const hasPreviousRoom = !!state.previousRoomId;
+            previousRoomNoteEl.hidden = !hasPreviousRoom;
+            previousRoomCodeEl.textContent = state.previousRoomId || "-";
+            downloadPreviousRoomBtn.disabled = !hasPreviousRoom;
+        }
+
+        function currentRoomHasResumableRecording() {
+            return !!state.recordingSessionId && state.recordingState !== "stopped";
+        }
+
         function setRoomState(payload = {}) {
-            state.recordingState = payload.recording_state || state.recordingState || "idle";
+            if (Object.prototype.hasOwnProperty.call(payload, "recording_state")) {
+                state.recordingState = payload.recording_state || "idle";
+            }
+            if (Object.prototype.hasOwnProperty.call(payload, "recording_session_id")) {
+                state.recordingSessionId = payload.recording_session_id || "";
+            }
             state.canDownloadPackage = !!payload.can_download_package;
             if (payload.room_id) {
                 state.roomId = payload.room_id;
                 setCookie(ROOM_COOKIE_NAME, payload.room_id);
                 updateRoomBadge();
             }
-            syncDownloadAvailability();
+            if (state.recordingState !== "recording") {
+                state.recordingActive = false;
+            }
+            syncPresenterRecordingUI();
         }
 
         function escapeHtml(s) {
@@ -1897,7 +1947,7 @@
 
         function canDownloadAnything() {
             if (state.canDownloadPackage) return true;
-            if (state.recordingState === "recording") return false;
+            if (state.recordingSessionId) return true;
             return canDownloadNotes();
         }
 
@@ -1962,9 +2012,14 @@
             `;
         }
 
-        function setRecordingBanner(visible) {
+        function setRecordingBanner(mode) {
             if (!recordingBannerEl) return;
-            recordingBannerEl.classList.toggle("visible", !!visible);
+            const normalized = mode === "paused" ? "paused" : mode === "recording" ? "recording" : "idle";
+            recordingBannerEl.dataset.state = normalized;
+            recordingBannerEl.textContent = normalized === "paused"
+                ? "Recording paused"
+                : "conversation recording in progress";
+            recordingBannerEl.classList.toggle("visible", normalized === "recording" || normalized === "paused");
         }
 
         function showRecordConsentModal(show) {
@@ -2025,11 +2080,11 @@
         }
 
         function resetRecordingState() {
-            state.recordingChunks = [];
-            state.recordingBlob = null;
             state.recordingMimeType = "";
             state.mediaRecorder = null;
             state.recordingActive = false;
+            state.recordingUploadQueue = Promise.resolve();
+            state.recordingUploadError = null;
         }
 
         function clearRecordingSessionState() {
@@ -2037,27 +2092,57 @@
             state.recordingApproved = false;
             state.recordingActive = false;
             state.recordingState = "idle";
+            state.recordingSessionId = "";
             state.canDownloadPackage = false;
             recordedTranscript.length = 0;
-            setRecordingBanner(false);
-            updateRecordButtonState();
+            syncPresenterRecordingUI();
         }
 
         function updateRecordButtonState() {
             if (!recordBtn) return;
             const sessionActive = !!state.micStream;
-            if (!sessionActive || !state.ws || state.ws.readyState !== WebSocket.OPEN) {
-                recordBtn.disabled = true;
-                recordBtn.textContent = "Record";
-                return;
-            }
-            if (state.recordingActive || state.recordingState === "recording") {
+            const isConnected = !!(state.ws && state.ws.readyState === WebSocket.OPEN);
+            if (state.recordingState === "recording") {
                 recordBtn.disabled = true;
                 recordBtn.textContent = "Recording…";
                 return;
             }
-            recordBtn.textContent = state.recordingApproved ? "Restart recording" : "Record";
+            if (state.recordingState === "stopped") {
+                recordBtn.disabled = true;
+                recordBtn.textContent = "Record";
+                return;
+            }
+            if (!sessionActive || !isConnected) {
+                recordBtn.disabled = true;
+                recordBtn.textContent = state.recordingState === "paused" ? "Resume recording" : "Record";
+                return;
+            }
+            recordBtn.textContent = state.recordingState === "paused" ? "Resume recording" : "Record";
             recordBtn.disabled = false;
+        }
+
+        function updateStopButtonState() {
+            if (!stopBtn) return;
+            const isConnected = !!(state.ws && state.ws.readyState === WebSocket.OPEN);
+            const sessionActive = !!state.micStream;
+            stopBtn.textContent = state.recordingState === "recording" ? "Pause" : "Stop";
+            if (!isConnected) {
+                stopBtn.disabled = true;
+                return;
+            }
+            if (state.recordingState === "paused") {
+                stopBtn.disabled = !sessionActive;
+                return;
+            }
+            stopBtn.disabled = !sessionActive;
+        }
+
+        function syncPresenterRecordingUI() {
+            setRecordingBanner(state.recordingState);
+            updateRecordButtonState();
+            updateStopButtonState();
+            syncDownloadAvailability();
+            updatePreviousRoomNote();
         }
 
         async function beginRecordingAfterConsent() {
@@ -2071,21 +2156,24 @@
             resetRecordingState();
 
             try {
+                await requestRoomRecordingStart();
                 await startVoiceRecording(state.micStream);
                 state.recordingApproved = true;
                 state.recordingActive = true;
                 state.recordingState = "recording";
                 state.canDownloadPackage = false;
-                setRecordingBanner(true);
-                updateRecordButtonState();
-                syncDownloadAvailability();
-                if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-                    state.ws.send(JSON.stringify({ type: "recording", action: "start" }));
-                }
+                syncPresenterRecordingUI();
                 setStatus("Recording in progress");
             } catch (error) {
                 console.error(error);
-                alert("Could not start recording. Please check microphone permissions and try again.");
+                if (state.recordingState === "recording" && !state.recordingActive) {
+                    try {
+                        await requestRoomRecordingPause();
+                    } catch (pauseError) {
+                        console.error(pauseError);
+                    }
+                }
+                alert(`Could not start recording. ${error?.message || "Please check microphone permissions and try again."}`.trim());
             } finally {
                 showRecordConsentModal(false);
             }
@@ -2409,17 +2497,107 @@
         }
 
         function hasVoiceRecording() {
-            return !!state.recordingBlob || state.recordingChunks.length > 0;
+            return !!state.recordingSessionId;
+        }
+
+        async function waitForRecordingUploads() {
+            await Promise.resolve(state.recordingUploadQueue);
+            if (state.recordingUploadError) {
+                const error = state.recordingUploadError;
+                state.recordingUploadError = null;
+                throw error;
+            }
+        }
+
+        function queueRecordingChunkUpload(chunk) {
+            const uploadTask = Promise.resolve(state.recordingUploadQueue).then(async () => {
+                if (!chunk || chunk.size === 0) return;
+                if (!state.roomId) throw new Error("No active room is available.");
+                if (!state.recordingSessionId) throw new Error("The room recording session is not ready yet.");
+
+                const ext = extensionForMimeType(chunk.type || state.recordingMimeType);
+                const formData = new FormData();
+                formData.append("audio", chunk, `chunk.${ext}`);
+                formData.append("recording_session_id", state.recordingSessionId);
+                formData.append("client_session_id", state.presenterClientSessionId);
+                formData.append("mime_type", chunk.type || state.recordingMimeType || "audio/webm");
+
+                const response = await fetch(`${HTTP_BASE}/api/rooms/${encodeURIComponent(state.roomId)}/recording/chunk`, {
+                    method: "POST",
+                    body: formData
+                });
+                if (!response.ok) {
+                    const detail = await response.text().catch(() => "");
+                    throw new Error(detail || `Recording chunk upload failed with status ${response.status}`);
+                }
+            });
+
+            state.recordingUploadQueue = uploadTask.catch((error) => {
+                console.error(error);
+                if (!state.recordingUploadError) {
+                    state.recordingUploadError = error;
+                }
+            });
+
+            return uploadTask;
+        }
+
+        async function requestRoomRecordingStart() {
+            if (!state.roomId) throw new Error("No active room is available.");
+            const response = await fetch(`${HTTP_BASE}/api/rooms/${encodeURIComponent(state.roomId)}/recording/start`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ client_session_id: state.presenterClientSessionId })
+            });
+            if (!response.ok) {
+                const detail = await response.text().catch(() => "");
+                throw new Error(detail || `Recording start failed with status ${response.status}`);
+            }
+            const payload = await response.json();
+            setRoomState(payload);
+            return payload;
+        }
+
+        async function requestRoomRecordingPause() {
+            if (!state.roomId) throw new Error("No active room is available.");
+            const response = await fetch(`${HTTP_BASE}/api/rooms/${encodeURIComponent(state.roomId)}/recording/pause`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ client_session_id: state.presenterClientSessionId })
+            });
+            if (!response.ok) {
+                const detail = await response.text().catch(() => "");
+                throw new Error(detail || `Recording pause failed with status ${response.status}`);
+            }
+            const payload = await response.json();
+            setRoomState(payload);
+            return payload;
+        }
+
+        async function requestRoomRecordingFinalize({ roomId = state.roomId, recordingSessionId = state.recordingSessionId, applyState = true } = {}) {
+            if (!roomId) throw new Error("No active room is available.");
+            if (!recordingSessionId) throw new Error("No paused recording is available to stop.");
+            const response = await fetch(`${HTTP_BASE}/api/rooms/${encodeURIComponent(roomId)}/recording/finalize`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ recording_session_id: recordingSessionId })
+            });
+            if (!response.ok) {
+                const detail = await response.text().catch(() => "");
+                throw new Error(detail || `Recording stop failed with status ${response.status}`);
+            }
+            const payload = await response.json();
+            if (applyState) setRoomState(payload);
+            return payload;
         }
 
         async function startVoiceRecording(stream) {
             if (!window.MediaRecorder) {
-                log("MediaRecorder is not available in this browser.");
-                return;
+                throw new Error("MediaRecorder is not available in this browser.");
             }
 
-            state.recordingChunks = [];
-            state.recordingBlob = null;
+            state.recordingUploadQueue = Promise.resolve();
+            state.recordingUploadError = null;
 
             const mimeType = getPreferredRecordingMimeType();
             state.recordingMimeType = mimeType;
@@ -2428,14 +2606,7 @@
             const recorder = new MediaRecorder(stream, options);
             recorder.ondataavailable = (event) => {
                 if (event.data && event.data.size > 0) {
-                    state.recordingChunks.push(event.data);
-                }
-            };
-            recorder.onstop = () => {
-                if (state.recordingChunks.length > 0) {
-                    state.recordingBlob = new Blob(state.recordingChunks, {
-                        type: state.recordingMimeType || "audio/webm"
-                    });
+                    queueRecordingChunkUpload(event.data);
                 }
             };
             recorder.start(1000);
@@ -2443,7 +2614,10 @@
         }
 
         async function stopVoiceRecording() {
-            if (!state.mediaRecorder) return;
+            if (!state.mediaRecorder) {
+                await waitForRecordingUploads();
+                return;
+            }
             const recorder = state.mediaRecorder;
             state.mediaRecorder = null;
 
@@ -2460,37 +2634,10 @@
                 }
             });
             state.recordingActive = false;
+            await waitForRecordingUploads();
         }
 
-        async function uploadRoomRecording() {
-            if (!state.roomId) throw new Error("No active room is available.");
-            if (!state.recordingBlob || state.recordingBlob.size === 0) {
-                throw new Error("No audio recording is available to upload.");
-            }
-
-            const recordedFinalized = recordedTranscript.map(({ segment_id, ...item }) => item);
-            const fullFinalized = finalizedTranscriptItems();
-            const ext = extensionForMimeType(state.recordingBlob.type || state.recordingMimeType);
-            const formData = new FormData();
-            formData.append("audio", state.recordingBlob, `voice_recording.${ext}`);
-            formData.append("transcript_json", JSON.stringify(recordedFinalized));
-            formData.append("documents_transcript_json", JSON.stringify(fullFinalized));
-            formData.append("mime_type", state.recordingBlob.type || state.recordingMimeType || "audio/webm");
-
-            const response = await fetch(`${HTTP_BASE}/api/rooms/${encodeURIComponent(state.roomId)}/recording`, {
-                method: "POST",
-                body: formData
-            });
-            if (!response.ok) {
-                const detail = await response.text().catch(() => "");
-                throw new Error(detail || `Recording upload failed with status ${response.status}`);
-            }
-            const payload = await response.json();
-            setRoomState(payload);
-            return payload;
-        }
-
-        async function stopLiveSession({ uploadRecordingWhenReady = true } = {}) {
+        async function stopLiveSession({ statusText = "Connected" } = {}) {
             setStatus("Stopping…");
             await stopVoiceRecording();
 
@@ -2513,26 +2660,25 @@
             state.micStream = null;
             state.analyser = null;
 
-            setRecordingBanner(false);
             state.recordingActive = false;
-            updateRecordButtonState();
+            syncPresenterRecordingUI();
 
-            if (uploadRecordingWhenReady && state.recordingApproved && state.recordingBlob && state.recordingBlob.size > 0) {
-                setStatus("Saving recording…");
-                await uploadRoomRecording();
-            }
-
-            setStatus("Connected");
+            setStatus(statusText);
             startBtn.disabled = false;
-            stopBtn.disabled = true;
-            syncDownloadAvailability();
+            updateStopButtonState();
+        }
+
+        async function pauseRecordingOnly() {
+            setStatus("Pausing recording…");
+            await stopVoiceRecording();
+            state.recordingActive = false;
+            await requestRoomRecordingPause();
+            setStatus("Live");
+            syncPresenterRecordingUI();
         }
 
         async function addVoiceRecordingFiles(zip, stamp) {
-            const blob = state.recordingBlob;
-            if (!blob || blob.size === 0) return;
-            const ext = extensionForMimeType(blob.type || state.recordingMimeType);
-            zip.file(`voice_recording_${stamp}.${ext}`, blob);
+            return;
         }
 
         async function buildLightweightMeetingZip(stamp) {
@@ -2554,16 +2700,25 @@
             return await zip.generateAsync({ type: "blob" });
         }
 
-        async function downloadCurrentMeetingBundle() {
+        async function downloadCurrentMeetingBundle(roomIdOverride = "") {
             const stamp = sessionStamp();
+            const explicitRoomId = typeof roomIdOverride === "string" ? roomIdOverride.trim() : "";
+            const roomId = explicitRoomId || state.roomId;
+            const downloadPackageOnly = !!explicitRoomId && explicitRoomId !== state.roomId;
             downloadBtn.disabled = true;
+            if (downloadPreviousRoomBtn && downloadPackageOnly) {
+                downloadPreviousRoomBtn.disabled = true;
+            }
             setExportOverlay(true);
 
             try {
-                if (state.canDownloadPackage) {
+                if (!downloadPackageOnly && state.recordingState === "recording" && (state.canDownloadPackage || state.recordingSessionId)) {
+                    throw new Error("Pause recording or stop live before downloading the full package.");
+                }
+                if (downloadPackageOnly || state.canDownloadPackage || state.recordingSessionId) {
                     setStatus("Preparing package…");
                     updateExportProgress(6, "Queued", "Export job created. Waiting for the backend to start processing.");
-                    const response = await fetch(`${HTTP_BASE}/api/rooms/${encodeURIComponent(state.roomId)}/export-package/start`, {
+                    const response = await fetch(`${HTTP_BASE}/api/rooms/${encodeURIComponent(roomId)}/export-package/start`, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
@@ -2583,9 +2738,6 @@
                     updateExportProgress(100, "Done", "Meeting package downloaded.");
                     setStatus("Meeting package downloaded.");
                 } else {
-                    if (state.recordingState === "recording") {
-                        throw new Error("The full package is only available after recording stops. While recording is active, downloads are paused.");
-                    }
                     if (!canDownloadNotes()) {
                         throw new Error("Summary, minutes, and transcripts are not available yet.");
                     }
@@ -2605,6 +2757,7 @@
                     updateExportProgress(0, "Queued", "Preparing export.");
                 }, 600);
                 syncDownloadAvailability();
+                updatePreviousRoomNote();
             }
         }
 
@@ -2680,16 +2833,32 @@
             }
 
             const shouldReconnect = !!(state.ws && state.ws.readyState === WebSocket.OPEN);
+            const previousRoomId = state.roomId;
+            const previousRecordingSessionId = state.recordingSessionId;
+            const shouldFinalizePreviousRoom = !!(previousRoomId && previousRecordingSessionId);
             newRoomBtn.disabled = true;
             connectBtn.disabled = true;
             setStatus("Creating room…");
 
             try {
+                if (shouldFinalizePreviousRoom) {
+                    setStatus("Finalizing room…");
+                    await requestRoomRecordingFinalize({
+                        roomId: previousRoomId,
+                        recordingSessionId: previousRecordingSessionId,
+                        applyState: false
+                    });
+                    state.previousRoomId = previousRoomId;
+                } else {
+                    state.previousRoomId = "";
+                }
+
                 const roomId = await requestNewRoomId();
                 state.roomId = roomId;
                 presenterRoomInitPromise = Promise.resolve(roomId);
                 setCookie(ROOM_COOKIE_NAME, roomId);
                 updateRoomBadge();
+                updatePreviousRoomNote();
                 resetUIAndContext();
 
                 if (state.ws) {
@@ -2740,7 +2909,7 @@
         });
         updateRoomBadge();
         renderPlaceholderOnce();
-        updateRecordButtonState();
+        syncPresenterRecordingUI();
         populateMics().catch(console.error);
         loadDefaultsFromBackend();
 
@@ -2756,13 +2925,25 @@
             applyLanguagePair(tgtLangEl.value, srcLangEl.value, { emit: true, emitRole: "src" });
         };
         clearBtn.onclick = () => {
+            if (currentRoomHasResumableRecording()) {
+                const confirmed = window.confirm("This will discard the current room recording and reset the room to idle. Continue?");
+                if (!confirmed) {
+                    return;
+                }
+            }
             resetUIAndContext();
             if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
                 return;
             }
             state.ws.send(JSON.stringify({ type: "clear_session" }));
         };
-        downloadBtn.onclick = downloadCurrentMeetingBundle;
+        downloadBtn.onclick = () => downloadCurrentMeetingBundle();
+        if (downloadPreviousRoomBtn) {
+            downloadPreviousRoomBtn.onclick = async () => {
+                if (!state.previousRoomId) return;
+                await downloadCurrentMeetingBundle(state.previousRoomId);
+            };
+        }
 
         startBtn.onclick = async () => {
             if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
@@ -2806,20 +2987,27 @@
                 state.workletNode.connect(gain).connect(state.audioCtx.destination);
 
                 state.recordingActive = false;
-                setRecordingBanner(false);
-                updateRecordButtonState();
+                syncPresenterRecordingUI();
                 setStatus("Live");
                 startBtn.disabled = true;
-                stopBtn.disabled = false;
+                updateStopButtonState();
             } catch (e) {
                 console.error(e);
                 setStatus("Error");
-                updateRecordButtonState();
+                syncPresenterRecordingUI();
             }
         };
 
         stopBtn.onclick = async () => {
             try {
+                if (state.recordingState === "recording" && state.recordingActive) {
+                    await pauseRecordingOnly();
+                    return;
+                }
+                if (state.recordingState === "paused") {
+                    await stopLiveSession({ statusText: "Connected" });
+                    return;
+                }
                 await stopLiveSession();
             } catch (e) {
                 console.error(e);
@@ -2842,7 +3030,8 @@
                     type: "join",
                     role: "presenter",
                     room_id: roomId,
-                    target_language: tgtLangEl.value
+                    target_language: tgtLangEl.value,
+                    client_session_id: state.presenterClientSessionId
                 }));
             };
 
@@ -2854,12 +3043,14 @@
                 connectBtn.disabled = false;
                 clearBtn.disabled = true;
                 swapBtn.disabled = true;
-                syncDownloadAvailability();
                 state.ws = null;
                 state.micStream = null;
                 state.recordingActive = false;
-                setRecordingBanner(false);
-                updateRecordButtonState();
+                state.mediaRecorder = null;
+                if (state.recordingState === "recording") {
+                    state.recordingState = "paused";
+                }
+                syncPresenterRecordingUI();
             };
 
             state.ws.onerror = () => setStatus("WS error");
@@ -2880,13 +3071,11 @@
                         clearBtn.disabled = false;
                         swapBtn.disabled = false;
                         sendConfig();
-                        updateRecordButtonState();
+                        syncPresenterRecordingUI();
                         return;
                     }
                     if (msg.type === "room_state") {
                         setRoomState(msg);
-                        setRecordingBanner(msg.recording_state === "recording");
-                        updateRecordButtonState();
                         return;
                     }
                     if (msg.type === "snapshot") {
@@ -2899,9 +3088,7 @@
                             applyLanguagePair(msg.src || srcLangEl.value, msg.presenter_tgt || msg.tgt || tgtLangEl.value);
                         }
                         setRoomState(msg);
-                        setRecordingBanner(msg.recording_state === "recording");
                         applySnapshotSegments(Array.isArray(msg.segments) ? msg.segments : []);
-                        updateRecordButtonState();
                         return;
                     }
                     if (msg.type === "ack") {
@@ -2943,9 +3130,6 @@
                     });
 
                     renderTranscriptView();
-                    if (state.recordingActive && is_final) {
-                        upsertRecordedTranscript(segment);
-                    }
                     syncDownloadAvailability();
                 } catch { }
             };

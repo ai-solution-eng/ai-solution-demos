@@ -752,6 +752,7 @@
             roomId: "",
             targetLanguage: "es",
             recordingState: "idle",
+            recordingSessionId: "",
             canDownloadPackage: false,
             connected: false,
             joinRejected: false,
@@ -840,7 +841,7 @@
 
         function canDownloadAnything() {
             if (state.canDownloadPackage) return true;
-            if (state.recordingState === "recording") return false;
+            if (state.recordingSessionId) return true;
             return canDownloadNotes();
         }
 
@@ -1080,10 +1081,9 @@
         async function startDownload() {
             if (!state.roomId || !canDownloadAnything()) return;
             downloadBtn.disabled = true;
-            setConnectionStatus("Preparing download", "warning");
             setExportOverlay(true);
             try {
-                if (state.canDownloadPackage) {
+                if (state.canDownloadPackage || state.recordingSessionId) {
                     const response = await fetch(`${HTTP_BASE}/api/rooms/${encodeURIComponent(state.roomId)}/export-package/start`, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
@@ -1097,11 +1097,7 @@
                     updateExportProgress(6, "Queued", "Export job created. Waiting for the backend to start processing.");
                     const finalStatus = await pollMeetingPackageJob(started.job_id);
                     await downloadMeetingPackageJob(finalStatus.job_id || started.job_id, finalStatus.archive_name || "meeting_package.zip");
-                    setConnectionStatus("Package downloaded", "connected");
                 } else {
-                    if (state.recordingState === "recording") {
-                        throw new Error("The full package is only available after recording stops. While recording is active, downloads are paused.");
-                    }
                     if (!canDownloadNotes()) {
                         throw new Error("Summary, minutes, and transcripts are not available yet.");
                     }
@@ -1109,12 +1105,10 @@
                     const blob = await buildLightweightMeetingZip(stamp);
                     updateExportProgress(100, "Done", "Summary and minutes are ready.");
                     triggerBlobDownload(blob, `meeting_notes_${stamp}.zip`);
-                    setConnectionStatus("Download completed", "connected");
                 }
             } catch (error) {
                 console.error(error);
                 alert(`Could not download the bundle. ${error?.message || ""}`.trim());
-                setConnectionStatus(state.connected ? "Connected" : "Disconnected", state.connected ? "connected" : "error");
             } finally {
                 setTimeout(() => {
                     setExportOverlay(false);
@@ -1148,7 +1142,7 @@
             } catch (error) {
                 state.joinRejected = true;
                 state.connected = false;
-                setConnectionStatus("Join failed", "error");
+                setConnectionStatus("Connection failed", "error");
                 // footerNoteEl.textContent = error?.message || "Could not join the presenter room.";
                 return;
             }
@@ -1170,7 +1164,7 @@
                     if (msg.type === "error") {
                         state.connected = false;
                         state.joinRejected = true;
-                        setConnectionStatus("Join failed", "error");
+                        setConnectionStatus("Connection failed", "error");
                         footerNoteEl.textContent = msg.detail || "Could not join the presenter room.";
                         try {
                             state.ws?.close();
@@ -1187,6 +1181,7 @@
                     }
                     if (msg.type === "room_state") {
                         state.recordingState = msg.recording_state || state.recordingState;
+                        state.recordingSessionId = msg.recording_session_id || "";
                         state.canDownloadPackage = !!msg.can_download_package;
                         if (msg.room_id) {
                             state.roomId = msg.room_id;
@@ -1201,6 +1196,7 @@
                         state.targetLanguage = msg.tgt || state.targetLanguage;
                         languageSelectEl.value = state.targetLanguage;
                         state.recordingState = msg.recording_state || state.recordingState;
+                        state.recordingSessionId = msg.recording_session_id || "";
                         state.canDownloadPackage = !!msg.can_download_package;
                         roomInputEl.value = state.roomId;
                         setRoomLabel();
@@ -1228,7 +1224,7 @@
 
             state.ws.onerror = () => {
                 if (state.joinRejected) return;
-                setConnectionStatus("Connection error", "error");
+                setConnectionStatus("Connection failed", "error");
                 footerNoteEl.textContent = "Could not reach the presenter room.";
             };
             state.ws.onclose = () => {

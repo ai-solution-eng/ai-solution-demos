@@ -4,6 +4,7 @@ import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -74,6 +75,10 @@ EXPORT_VAD_MAX_UNIT_SECONDS = max(
 )
 
 EXPORT_JOB_TTL_SECONDS = int(os.getenv("EXPORT_JOB_TTL_SECONDS", "3600"))
+RECORDING_STORAGE_ROOT = (
+    Path(tempfile.gettempdir()) / "realtime-live-voice-translation-recordings"
+)
+RECORDING_STORAGE_ROOT.mkdir(parents=True, exist_ok=True)
 EXPORT_JOBS: dict[str, dict[str, Any]] = {}
 EXPORT_JOBS_LOCK = asyncio.Lock()
 ROOMS: dict[str, dict[str, Any]] = {}
@@ -149,9 +154,7 @@ code_to_language = {
 SAMPLE_RATE = int(os.getenv("SAMPLE_RATE", "16000"))
 # Silero VAD behavior
 SPEECH_THRESHOLD = 0.5
-LIVE_COMPLETE_SILENCE_MS = max(
-    250, int(os.getenv("LIVE_SILENCE_THRESHOLD_MS", "1300"))
-)
+LIVE_COMPLETE_SILENCE_MS = max(250, int(os.getenv("LIVE_SILENCE_THRESHOLD_MS", "1300")))
 LIVE_INCOMPLETE_FINALIZE_MS = max(
     LIVE_COMPLETE_SILENCE_MS,
     int(os.getenv("LIVE_INCOMPLETE_FINALIZE_MS", "2200")),
@@ -200,6 +203,14 @@ class RoomExportRequest(BaseModel):
 
 class RoomCreateRequest(BaseModel):
     room_id: str | None = None
+
+
+class RecordingControlRequest(BaseModel):
+    client_session_id: str = ""
+
+
+class RecordingFinalizeRequest(BaseModel):
+    recording_session_id: str = ""
 
 
 @app.post("/api/rooms")
@@ -272,6 +283,40 @@ def is_valid_room_id(room_id: str | None) -> bool:
     return bool(raw and re.fullmatch(r"[a-z0-9-]{8,64}", raw))
 
 
+def normalize_client_session_id(client_session_id: str | None) -> str:
+    raw = (client_session_id or "").strip().lower()
+    return raw or uuid.uuid4().hex
+
+
+def recording_extension_for_name(name: str | None, mime_type: str | None) -> str:
+    ext = (Path(name or "").suffix or "").strip().lower()
+    if ext:
+        return ext
+    normalized = (mime_type or "").strip().lower()
+    if "ogg" in normalized:
+        return ".ogg"
+    if "mp4" in normalized or "aac" in normalized:
+        return ".mp4"
+    if "wav" in normalized:
+        return ".wav"
+    return ".webm"
+
+
+def room_recording_dir(room_id: str, recording_session_id: str) -> Path:
+    return RECORDING_STORAGE_ROOT / normalize_room_id(room_id) / recording_session_id
+
+
+def cleanup_recording_dir(path_str: str | None) -> None:
+    path = Path(path_str or "")
+    if not path_str:
+        return
+    try:
+        if path.exists():
+            shutil.rmtree(path)
+    except Exception:
+        pass
+
+
 def build_room_state(room_id: str) -> dict[str, Any]:
     cfg = build_default_runtime_config()
     now = time.time()
@@ -285,10 +330,15 @@ def build_room_state(room_id: str) -> dict[str, Any]:
         "segment_index": {},
         "connections": [],
         "recording_state": "idle",
+        "recording_owner_session_id": "",
+        "recording_session_id": "",
+        "recording_chunk_dir": "",
+        "recording_chunk_paths": [],
         "recording_audio_bytes": b"",
         "recording_filename": "",
         "recording_mime_type": "",
         "recording_transcript_items": [],
+        "recording_segment_ids": set(),
         "documents_source_items": [],
         "created_at": now,
         "updated_at": now,
@@ -298,6 +348,12 @@ def build_room_state(room_id: str) -> dict[str, Any]:
 def room_can_download(room: dict[str, Any]) -> bool:
     return room.get("recording_state") == "stopped" and bool(
         room.get("recording_audio_bytes")
+    )
+
+
+def room_has_resumable_recording(room: dict[str, Any]) -> bool:
+    return bool(room.get("recording_session_id")) and bool(
+        room.get("recording_chunk_paths")
     )
 
 
@@ -329,6 +385,7 @@ def serialize_room_state(room: dict[str, Any]) -> dict[str, Any]:
         "src": room.get("src") or DEFAULT_SOURCE_LANGUAGE,
         "presenter_tgt": room.get("presenter_tgt") or DEFAULT_TARGET_LANGUAGE,
         "recording_state": room.get("recording_state") or "idle",
+        "recording_session_id": room.get("recording_session_id") or "",
         "can_download_package": room_can_download(room),
     }
 
@@ -1129,6 +1186,21 @@ async def update_room_segment(
             room["segments"].append(segment)
         else:
             segment = room["segments"][index]
+            existing_revision = int(segment.get("revision") or 0)
+            if revision < existing_revision:
+                room["updated_at"] = time.time()
+                return {
+                    "segment_id": segment.get("segment_id"),
+                    "revision": existing_revision,
+                    "status": segment.get("status") or "listening",
+                    "is_final": bool(segment.get("is_final")),
+                    "original": segment.get("original") or "",
+                    "src": segment.get("src")
+                    or room.get("src")
+                    or DEFAULT_SOURCE_LANGUAGE,
+                    "ts_ms": segment.get("ts_ms"),
+                    "translations": dict(segment.get("translations") or {}),
+                }
             if revision > int(segment.get("revision") or 0):
                 segment["translations"] = {}
             segment.update(
@@ -1160,6 +1232,7 @@ async def update_room_segment(
 
 async def clear_room_session(room_id: str) -> None:
     normalized = normalize_room_id(room_id)
+    chunk_dir = ""
     async with ROOMS_LOCK:
         room = ROOMS.get(normalized)
         if room is None:
@@ -1167,29 +1240,271 @@ async def clear_room_session(room_id: str) -> None:
         room["segments"] = []
         room["segment_index"] = {}
         room["recording_state"] = "idle"
+        room["recording_owner_session_id"] = ""
+        room["recording_session_id"] = ""
+        chunk_dir = room.get("recording_chunk_dir") or ""
+        room["recording_chunk_dir"] = ""
+        room["recording_chunk_paths"] = []
         room["recording_audio_bytes"] = b""
         room["recording_filename"] = ""
         room["recording_mime_type"] = ""
         room["recording_transcript_items"] = []
+        room["recording_segment_ids"] = set()
         room["documents_source_items"] = []
         room["updated_at"] = time.time()
+    await asyncio.to_thread(cleanup_recording_dir, chunk_dir)
 
 
-async def set_room_recording_state(room_id: str, state: str) -> None:
+async def start_or_resume_room_recording(
+    room_id: str, *, client_session_id: str
+) -> dict[str, Any]:
     normalized = normalize_room_id(room_id)
+    chunk_dir = ""
     async with ROOMS_LOCK:
         room = ROOMS.get(normalized)
         if room is None:
             room = build_room_state(normalized)
             ROOMS[normalized] = room
-        room["recording_state"] = state
-        if state == "recording":
+        if room.get("recording_state") == "stopped":
+            raise HTTPException(
+                status_code=409,
+                detail="Clear the session before starting a brand-new recording in this room.",
+            )
+        if room.get("recording_state") == "idle":
+            chunk_dir = room.get("recording_chunk_dir") or ""
+            room["recording_session_id"] = uuid.uuid4().hex
+            room["recording_chunk_dir"] = str(
+                room_recording_dir(normalized, room["recording_session_id"])
+            )
+            room["recording_chunk_paths"] = []
             room["recording_audio_bytes"] = b""
             room["recording_filename"] = ""
             room["recording_mime_type"] = ""
             room["recording_transcript_items"] = []
+            room["recording_segment_ids"] = set()
             room["documents_source_items"] = []
+        elif not room.get("recording_session_id"):
+            room["recording_session_id"] = uuid.uuid4().hex
+            room["recording_chunk_dir"] = str(
+                room_recording_dir(normalized, room["recording_session_id"])
+            )
+        room["recording_state"] = "recording"
+        room["recording_owner_session_id"] = normalize_client_session_id(
+            client_session_id
+        )
         room["updated_at"] = time.time()
+        payload = serialize_room_state(room)
+    if chunk_dir:
+        await asyncio.to_thread(cleanup_recording_dir, chunk_dir)
+    await asyncio.to_thread(
+        lambda: room_recording_dir(normalized, payload["recording_session_id"]).mkdir(
+            parents=True, exist_ok=True
+        )
+    )
+    return payload
+
+
+async def pause_room_recording(
+    room_id: str, *, client_session_id: str | None = None
+) -> dict[str, Any] | None:
+    normalized = normalize_room_id(room_id)
+    async with ROOMS_LOCK:
+        room = ROOMS.get(normalized)
+        if room is None:
+            return None
+        if room.get("recording_state") != "recording":
+            return serialize_room_state(room)
+        owner_session_id = room.get("recording_owner_session_id") or ""
+        normalized_session = normalize_client_session_id(client_session_id)
+        if (
+            client_session_id
+            and owner_session_id
+            and owner_session_id != normalized_session
+        ):
+            return serialize_room_state(room)
+        room["recording_state"] = "paused"
+        room["recording_owner_session_id"] = ""
+        room["updated_at"] = time.time()
+        return serialize_room_state(room)
+
+
+async def append_room_recording_chunk(
+    room_id: str,
+    *,
+    recording_session_id: str,
+    client_session_id: str,
+    filename: str,
+    mime_type: str,
+    chunk_bytes: bytes,
+) -> dict[str, Any]:
+    normalized = normalize_room_id(room_id)
+    client_session_id = normalize_client_session_id(client_session_id)
+    if not chunk_bytes:
+        raise HTTPException(status_code=400, detail="Recording chunk is empty.")
+
+    async with ROOMS_LOCK:
+        room = ROOMS.get(normalized)
+        if room is None:
+            raise HTTPException(status_code=404, detail="Room not found.")
+        if room.get("recording_state") != "recording":
+            raise HTTPException(
+                status_code=409,
+                detail="Recording is not currently active for this room.",
+            )
+        if (room.get("recording_session_id") or "") != (recording_session_id or ""):
+            raise HTTPException(
+                status_code=409,
+                detail="This recording session is no longer active.",
+            )
+        if (room.get("recording_owner_session_id") or "") != client_session_id:
+            raise HTTPException(
+                status_code=409,
+                detail="Only the active presenter recording session can upload audio chunks.",
+            )
+        chunk_dir = room.get("recording_chunk_dir") or str(
+            room_recording_dir(normalized, recording_session_id)
+        )
+        room["recording_chunk_dir"] = chunk_dir
+        chunk_index = len(room.get("recording_chunk_paths") or [])
+        chunk_ext = recording_extension_for_name(filename, mime_type)
+        chunk_path = str(Path(chunk_dir) / f"chunk-{chunk_index:06d}{chunk_ext}")
+        if mime_type:
+            room["recording_mime_type"] = mime_type
+        room["updated_at"] = time.time()
+
+    target_path = Path(chunk_path)
+    await asyncio.to_thread(
+        lambda: target_path.parent.mkdir(parents=True, exist_ok=True)
+    )
+    try:
+        await asyncio.to_thread(target_path.write_bytes, chunk_bytes)
+    except Exception:
+        raise
+
+    should_keep_chunk = False
+    async with ROOMS_LOCK:
+        room = ROOMS.get(normalized)
+        if room is not None and (room.get("recording_session_id") or "") == (
+            recording_session_id or ""
+        ):
+            committed_paths = list(room.get("recording_chunk_paths") or [])
+            if chunk_path not in committed_paths:
+                committed_paths.append(chunk_path)
+                committed_paths.sort()
+                room["recording_chunk_paths"] = committed_paths
+            room["updated_at"] = time.time()
+            should_keep_chunk = True
+
+    if not should_keep_chunk:
+        try:
+            await asyncio.to_thread(target_path.unlink)
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=409,
+            detail="This recording session is no longer active.",
+        )
+
+    return {"ok": True, "chunk_count": chunk_index + 1}
+
+
+async def append_room_recording_transcript_item(
+    room_id: str, *, segment_id: str, item: TranscriptItem
+) -> None:
+    normalized = normalize_room_id(room_id)
+    async with ROOMS_LOCK:
+        room = ROOMS.get(normalized)
+        if room is None or room.get("recording_state") != "recording":
+            return
+        segment_ids = room.setdefault("recording_segment_ids", set())
+        if segment_id in segment_ids:
+            return
+        segment_ids.add(segment_id)
+        room.setdefault("recording_transcript_items", []).append(item.model_dump())
+        room["updated_at"] = time.time()
+
+
+def reconstruct_recording_media_bytes(
+    chunk_paths: list[str], mime_type: str | None = None
+) -> tuple[bytes, str]:
+    if not chunk_paths:
+        raise RuntimeError("No recording chunks are available.")
+    ordered_paths = sorted(chunk_paths)
+    media_bytes = b"".join(Path(path).read_bytes() for path in ordered_paths)
+    if not media_bytes:
+        raise RuntimeError("No recording media bytes were reconstructed.")
+    suffix = recording_extension_for_name(ordered_paths[0], mime_type)
+    return media_bytes, suffix
+
+
+async def finalize_room_recording(
+    room_id: str, *, recording_session_id: str
+) -> dict[str, Any]:
+    normalized = normalize_room_id(room_id)
+    chunk_dir = ""
+    recording_mime_type = ""
+    async with ROOMS_LOCK:
+        room = ROOMS.get(normalized)
+        if room is None:
+            raise HTTPException(status_code=404, detail="Room not found.")
+        current_session_id = room.get("recording_session_id") or ""
+        if current_session_id != (recording_session_id or ""):
+            raise HTTPException(
+                status_code=409,
+                detail="This recording session is no longer active.",
+            )
+        if room.get("recording_state") not in {"paused", "recording"}:
+            raise HTTPException(
+                status_code=409,
+                detail="Only a paused or active recording can be stopped.",
+            )
+        chunk_paths = list(room.get("recording_chunk_paths") or [])
+        if not chunk_paths:
+            raise HTTPException(
+                status_code=409,
+                detail="No recorded audio is available for this room yet.",
+            )
+        recorded_items = [
+            TranscriptItem.model_validate(item)
+            for item in room.get("recording_transcript_items") or []
+        ]
+        documents_source_items = room_segments_to_transcript_items(room)
+        chunk_dir = room.get("recording_chunk_dir") or ""
+        recording_mime_type = room.get("recording_mime_type") or ""
+
+    media_bytes, media_suffix = await asyncio.to_thread(
+        reconstruct_recording_media_bytes, chunk_paths, recording_mime_type
+    )
+    pcm16, _ = await asyncio.to_thread(ffmpeg_convert_to_pcm_wav, media_bytes, media_suffix)
+    wav_bytes = wav_bytesio_from_pcm16(pcm16, SAMPLE_RATE).getvalue()
+
+    async with ROOMS_LOCK:
+        room = ROOMS.get(normalized)
+        if room is None:
+            raise HTTPException(status_code=404, detail="Room not found.")
+        if (room.get("recording_session_id") or "") != (recording_session_id or ""):
+            raise HTTPException(
+                status_code=409,
+                detail="This recording session is no longer active.",
+            )
+        room["recording_audio_bytes"] = wav_bytes
+        room["recording_filename"] = "meeting_audio.wav"
+        room["recording_mime_type"] = "audio/wav"
+        room["recording_state"] = "stopped"
+        room["recording_owner_session_id"] = ""
+        room["recording_chunk_dir"] = ""
+        room["recording_chunk_paths"] = []
+        room["recording_transcript_items"] = [
+            item.model_dump() for item in recorded_items
+        ]
+        room["documents_source_items"] = [
+            item.model_dump() for item in documents_source_items
+        ]
+        room["updated_at"] = time.time()
+        payload = serialize_room_state(room)
+
+    await asyncio.to_thread(cleanup_recording_dir, chunk_dir)
+    return payload
 
 
 async def store_room_recording(
@@ -1202,22 +1517,29 @@ async def store_room_recording(
     documents_source_items: list[TranscriptItem],
 ) -> None:
     normalized = normalize_room_id(room_id)
+    chunk_dir = ""
     async with ROOMS_LOCK:
         room = ROOMS.get(normalized)
         if room is None:
             room = build_room_state(normalized)
             ROOMS[normalized] = room
+        chunk_dir = room.get("recording_chunk_dir") or ""
         room["recording_audio_bytes"] = audio_bytes
         room["recording_filename"] = audio_filename
         room["recording_mime_type"] = mime_type
         room["recording_state"] = "stopped"
+        room["recording_owner_session_id"] = ""
+        room["recording_chunk_dir"] = ""
+        room["recording_chunk_paths"] = []
         room["recording_transcript_items"] = [
             item.model_dump() for item in transcript_items
         ]
+        room["recording_segment_ids"] = set()
         room["documents_source_items"] = [
             item.model_dump() for item in documents_source_items
         ]
         room["updated_at"] = time.time()
+    await asyncio.to_thread(cleanup_recording_dir, chunk_dir)
 
 
 async def ensure_room_translation(
@@ -1294,6 +1616,7 @@ async def build_room_snapshot(
             "src": room.get("src") or DEFAULT_SOURCE_LANGUAGE,
             "presenter_tgt": room.get("presenter_tgt") or DEFAULT_TARGET_LANGUAGE,
             "recording_state": room.get("recording_state") or "idle",
+            "recording_session_id": room.get("recording_session_id") or "",
             "can_download_package": room_can_download(room),
             "segments": [
                 {
@@ -1362,6 +1685,7 @@ async def build_room_snapshot(
         "tgt": requested_target,
         "presenter_tgt": room_copy["presenter_tgt"],
         "recording_state": room_copy["recording_state"],
+        "recording_session_id": room_copy["recording_session_id"],
         "can_download_package": room_copy["can_download_package"],
         "segments": serialized_segments,
     }
@@ -2141,7 +2465,7 @@ async def generate_meeting_package(
     original_transcript = segments_to_timestamped_text(segments, "original")
     english_transcript = segments_to_timestamped_text(segments, "english")
     await _progress(
-        88, "Writing meeting docs", "Generating meeting summary and minutes in English."
+        88, "Writing meeting docs", "Generating meeting summary and minutes."
     )
     doc_items = documents_source_items if documents_source_items else transcript_items
     doc_multilingual_text = build_multilingual_source_text(doc_items)
@@ -2580,6 +2904,55 @@ async def export_package_download(job_id: str):
     return Response(content=zip_bytes, media_type="application/zip", headers=headers)
 
 
+@app.post("/api/rooms/{room_id}/recording/start")
+async def start_room_recording(room_id: str, payload: RecordingControlRequest):
+    room_state = await start_or_resume_room_recording(
+        room_id, client_session_id=payload.client_session_id
+    )
+    await broadcast_room_state(room_id)
+    return JSONResponse(room_state)
+
+
+@app.post("/api/rooms/{room_id}/recording/pause")
+async def pause_room_recording_api(room_id: str, payload: RecordingControlRequest):
+    room_state = await pause_room_recording(
+        room_id, client_session_id=payload.client_session_id
+    )
+    room = await get_room_or_404(room_id)
+    payload_state = room_state or serialize_room_state(room)
+    await broadcast_room_state(room_id)
+    return JSONResponse(payload_state)
+
+
+@app.post("/api/rooms/{room_id}/recording/chunk")
+async def upload_room_recording_chunk(
+    room_id: str,
+    audio: UploadFile = File(...),
+    recording_session_id: str = Form(""),
+    client_session_id: str = Form(""),
+    mime_type: str = Form(""),
+):
+    chunk_bytes = await audio.read()
+    result = await append_room_recording_chunk(
+        room_id,
+        recording_session_id=recording_session_id,
+        client_session_id=client_session_id,
+        filename=audio.filename or "chunk.webm",
+        mime_type=(mime_type or audio.content_type or "").strip(),
+        chunk_bytes=chunk_bytes,
+    )
+    return JSONResponse(result)
+
+
+@app.post("/api/rooms/{room_id}/recording/finalize")
+async def finalize_room_recording_api(room_id: str, payload: RecordingFinalizeRequest):
+    room_state = await finalize_room_recording(
+        room_id, recording_session_id=payload.recording_session_id
+    )
+    await broadcast_room_state(room_id)
+    return JSONResponse(room_state)
+
+
 @app.post("/api/rooms/{room_id}/recording")
 async def upload_room_recording(
     room_id: str,
@@ -2631,22 +3004,34 @@ async def get_room_state(room_id: str):
 @app.post("/api/rooms/{room_id}/export-package/start")
 async def start_room_export_package(room_id: str, payload: RoomExportRequest):
     normalized = normalize_room_id(room_id)
+    resumable_chunk_paths: list[str] = []
+    recording_mime_type = ""
     async with ROOMS_LOCK:
         room = ROOMS.get(normalized)
         if room is None:
             raise HTTPException(status_code=404, detail="Room not found.")
-        if not room_can_download(room):
+        if not room_can_download(room) and not room_has_resumable_recording(room):
             raise HTTPException(
                 status_code=409,
-                detail="The package becomes available only after recording has stopped.",
+                detail="The full package is only available after a recording has been captured.",
             )
         source_raw = list(room.get("recording_transcript_items") or [])
         documents_raw = list(room.get("documents_source_items") or [])
         room_history_items = room_segments_to_transcript_items(room)
         audio_bytes = bytes(room.get("recording_audio_bytes") or b"")
         audio_filename = room.get("recording_filename") or "meeting_audio.webm"
+        resumable_chunk_paths = list(room.get("recording_chunk_paths") or [])
+        recording_mime_type = room.get("recording_mime_type") or ""
         room_llm = dict(room.get("llm") or {})
         room_whisper = dict(room.get("whisper") or {})
+
+    if not audio_bytes and resumable_chunk_paths:
+        audio_bytes, media_suffix = await asyncio.to_thread(
+            reconstruct_recording_media_bytes,
+            resumable_chunk_paths,
+            recording_mime_type,
+        )
+        audio_filename = f"meeting_audio{media_suffix}"
 
     if not audio_bytes:
         raise HTTPException(
@@ -2662,6 +3047,8 @@ async def start_room_export_package(room_id: str, payload: RoomExportRequest):
         source_raw = [item.model_dump() for item in room_history_items]
     if not documents_raw and room_history_items:
         documents_raw = [item.model_dump() for item in room_history_items]
+    if not documents_raw and source_raw:
+        documents_raw = list(source_raw)
 
     target_language = (payload.target_language or "").strip().lower()
     if target_language not in code_to_language:
@@ -2750,6 +3137,7 @@ async def websocket_endpoint(websocket: WebSocket):
     send_lock = asyncio.Lock()
     room_id: str | None = None
     role = "presenter"
+    client_session_id = uuid.uuid4().hex
     attendee_target_language = DEFAULT_TARGET_LANGUAGE
 
     vad_iterator = VADIterator(
@@ -2872,7 +3260,15 @@ async def websocket_endpoint(websocket: WebSocket):
     def next_segment_id() -> str:
         nonlocal segment_sequence
         segment_sequence += 1
-        return f"seg-{segment_sequence:04d}"
+        session_prefix = (
+            re.sub(
+                r"[^a-z0-9]",
+                "",
+                (client_session_id or "session").strip().lower(),
+            )[:8]
+            or "session"
+        )
+        return f"seg-{session_prefix}-{segment_sequence:04d}"
 
     def ensure_active_segment() -> tuple[str, int]:
         nonlocal active_segment_id, active_segment_started_ts
@@ -2971,6 +3367,19 @@ async def websocket_endpoint(websocket: WebSocket):
             translation=translation,
         )
         await broadcast_segment_to_room(room_segment)
+
+        if is_final and not previous_is_final and original:
+            await append_room_recording_transcript_item(
+                room_id or uuid.uuid4().hex,
+                segment_id=segment_id,
+                item=TranscriptItem(
+                    original=original,
+                    translation=translation,
+                    src=src,
+                    tgt=tgt,
+                    ts_ms=ts_ms,
+                ),
+            )
 
         if is_final and not previous_is_final and original and LIVE_CONTEXT_TURNS > 0:
             recent_final_items.append(
@@ -3084,6 +3493,10 @@ async def websocket_endpoint(websocket: WebSocket):
                         str(payload.get("role") or "presenter").strip().lower()
                     )
                     role = "attendee" if requested_role == "attendee" else "presenter"
+                    if role == "presenter":
+                        client_session_id = normalize_client_session_id(
+                            payload.get("client_session_id")
+                        )
                     requested_target = (
                         str(payload.get("target_language") or cfg["tgt"])
                         .strip()
@@ -3261,7 +3674,14 @@ async def websocket_endpoint(websocket: WebSocket):
                         continue
                     action = str(payload.get("action") or "").strip().lower()
                     if action == "start":
-                        await set_room_recording_state(room_id, "recording")
+                        await start_or_resume_room_recording(
+                            room_id, client_session_id=client_session_id
+                        )
+                        await broadcast_room_state(room_id)
+                    if action == "pause":
+                        await pause_room_recording(
+                            room_id, client_session_id=client_session_id
+                        )
                         await broadcast_room_state(room_id)
                     continue
 
@@ -3362,7 +3782,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 latest_original = ""
                 if active_segment_id is not None:
                     latest_original = (
-                        (emitted_segments.get(active_segment_id) or {}).get("original") or ""
+                        (emitted_segments.get(active_segment_id) or {}).get("original")
+                        or ""
                     ).strip()
                 required_silence_ms = (
                     LIVE_INCOMPLETE_FINALIZE_MS
@@ -3378,7 +3799,9 @@ async def websocket_endpoint(websocket: WebSocket):
 
                     src, tgt = cfg["src"], cfg["tgt"]
                     segment_id = active_segment_id
-                    started_ts = int(active_segment_started_ts or int(time.time() * 1000))
+                    started_ts = int(
+                        active_segment_started_ts or int(time.time() * 1000)
+                    )
                     if segment_id is not None:
                         queue_snapshot(
                             segment_id=segment_id,
@@ -3402,3 +3825,6 @@ async def websocket_endpoint(websocket: WebSocket):
         session_epoch += 1
         await cancel_analysis()
         await unregister_room_connection(room_id, websocket)
+        if role == "presenter" and room_id:
+            await pause_room_recording(room_id, client_session_id=client_session_id)
+            await broadcast_room_state(room_id)
