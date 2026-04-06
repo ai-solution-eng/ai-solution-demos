@@ -1593,7 +1593,13 @@
         function attendeeLink() {
             const roomId = ensurePresenterRoomId();
             if (!roomId) return "";
-            return `${window.location.origin}/attendee.html?room=${encodeURIComponent(roomId)}`;
+            const url = new URL("/attendee.html", window.location.origin);
+            url.searchParams.set("room", roomId);
+            url.searchParams.set("lang", (tgtLangEl?.value || "es").trim().toLowerCase() || "es");
+            if (HTTP_BASE && HTTP_BASE !== window.location.origin) {
+                url.searchParams.set("backend", HTTP_BASE);
+            }
+            return url.toString();
         }
 
         async function requestNewRoomId(existingRoomId = "") {
@@ -2157,6 +2163,7 @@
 
             try {
                 await requestRoomRecordingStart();
+                sendRecordingBoundaryMarker();
                 await startVoiceRecording(state.micStream);
                 state.recordingApproved = true;
                 state.recordingActive = true;
@@ -2374,12 +2381,14 @@
         }
 
         async function fetchGeneratedDocuments() {
-            const finalized = finalizedTranscriptItems();
-            const response = await fetch(`${HTTP_BASE}/api/export-documents`, {
+            if (!state.roomId) {
+                throw new Error("No active room is available.");
+            }
+            const response = await fetch(`${HTTP_BASE}/api/rooms/${encodeURIComponent(state.roomId)}/export-documents`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    transcript: finalized,
+                    target_language: tgtLangEl.value,
                     llm: currentLlmConfigPayload()
                 })
             });
@@ -2591,6 +2600,11 @@
             return payload;
         }
 
+        function sendRecordingBoundaryMarker() {
+            if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+            state.ws.send(JSON.stringify({ type: "recording_boundary" }));
+        }
+
         async function startVoiceRecording(stream) {
             if (!window.MediaRecorder) {
                 throw new Error("MediaRecorder is not available in this browser.");
@@ -2682,16 +2696,14 @@
         }
 
         async function buildLightweightMeetingZip(stamp) {
-            updateExportProgress(15, "Preparing notes", "Collecting summary and minutes for download.");
-            updateExportProgress(45, "Generating documents", "Creating the summary and minutes from the live transcript.");
+            updateExportProgress(15, "Preparing documents", "Collecting translated meeting documents for download.");
+            updateExportProgress(45, "Generating documents", "Creating transcripts, summary, and minutes from the room transcript.");
             const generated = await fetchGeneratedDocuments();
-            const docs = (generated?.documents || []).filter((doc) =>
-                doc?.kind === "summary" || doc?.kind === "minutes"
-            );
+            const docs = generated?.documents || [];
             if (docs.length === 0) {
-                throw new Error("Summary and minutes are not available yet. Keep the conversation going for more content.");
+                throw new Error("Meeting documents are not available yet. Keep the conversation going for more content.");
             }
-            updateExportProgress(80, "Building ZIP", "Packaging summary and minutes for download.");
+            updateExportProgress(80, "Building ZIP", "Packaging meeting documents for download.");
             const zip = new JSZip();
             docs.forEach((doc, idx) => {
                 const filename = doc.filename || `notes_${idx + 1}.txt`;

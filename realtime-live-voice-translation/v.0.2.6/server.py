@@ -329,6 +329,7 @@ def build_room_state(room_id: str) -> dict[str, Any]:
         "segments": [],
         "segment_index": {},
         "connections": [],
+        "used_translation_languages": [],
         "recording_state": "idle",
         "recording_owner_session_id": "",
         "recording_session_id": "",
@@ -355,6 +356,30 @@ def room_has_resumable_recording(room: dict[str, Any]) -> bool:
     return bool(room.get("recording_session_id")) and bool(
         room.get("recording_chunk_paths")
     )
+
+
+def remember_room_translation_language(room: dict[str, Any], language_code: str) -> None:
+    normalized = (language_code or "").strip().lower()
+    if normalized not in code_to_language or normalized == "en":
+        return
+    languages = list(room.get("used_translation_languages") or [])
+    if normalized not in languages:
+        languages.append(normalized)
+        room["used_translation_languages"] = languages
+
+
+def room_export_language_codes(room: dict[str, Any]) -> list[str]:
+    seen: list[str] = []
+    for code in room.get("used_translation_languages") or []:
+        normalized = (code or "").strip().lower()
+        if normalized in code_to_language and normalized not in seen:
+            seen.append(normalized)
+    for code in language_codes_from_room_segments_list(room.get("segments") or []):
+        if code in code_to_language and code not in seen:
+            seen.append(code)
+    if "en" not in seen:
+        seen.insert(0, "en")
+    return seen
 
 
 async def get_or_create_room(room_id: str | None) -> tuple[str, dict[str, Any]]:
@@ -390,12 +415,14 @@ def serialize_room_state(room: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def room_segments_to_transcript_items(room: dict[str, Any]) -> list[TranscriptItem]:
+def room_segments_to_transcript_items_for_segments(
+    room: dict[str, Any], room_segments: list[dict[str, Any]]
+) -> list[TranscriptItem]:
     presenter_tgt = (
         (room.get("presenter_tgt") or DEFAULT_TARGET_LANGUAGE).strip().lower()
     )
     items: list[TranscriptItem] = []
-    for segment in room.get("segments") or []:
+    for segment in room_segments:
         if not segment.get("is_final"):
             continue
         original = (segment.get("original") or "").strip()
@@ -417,6 +444,49 @@ def room_segments_to_transcript_items(room: dict[str, Any]) -> list[TranscriptIt
             )
         )
     return items
+
+
+def room_segments_to_transcript_items(room: dict[str, Any]) -> list[TranscriptItem]:
+    return room_segments_to_transcript_items_for_segments(room, room.get("segments") or [])
+
+
+def language_codes_from_room_segments_list(
+    room_segments: list[dict[str, Any]],
+) -> list[str]:
+    seen: list[str] = []
+    for segment in room_segments:
+        if not segment.get("is_final"):
+            continue
+        for code, translated_text in (segment.get("translations") or {}).items():
+            normalized = (code or "").strip().lower()
+            if (
+                normalized in code_to_language
+                and (translated_text or "").strip()
+                and normalized not in seen
+            ):
+                seen.append(normalized)
+    if "en" not in seen:
+        seen.insert(0, "en")
+    return seen
+
+
+def language_codes_from_room_segments(room: dict[str, Any]) -> list[str]:
+    return language_codes_from_room_segments_list(room.get("segments") or [])
+
+
+def room_recording_segments(room: dict[str, Any]) -> list[dict[str, Any]]:
+    recorded_segment_ids = {
+        str(segment_id or "").strip()
+        for segment_id in (room.get("recording_segment_ids") or set())
+        if str(segment_id or "").strip()
+    }
+    if not recorded_segment_ids:
+        return []
+    return [
+        dict(segment)
+        for segment in (room.get("segments") or [])
+        if str(segment.get("segment_id") or "").strip() in recorded_segment_ids
+    ]
 
 
 async def register_room_connection(
@@ -615,6 +685,129 @@ def build_segments_from_transcript_items(
                 segment.english = translated_text
         segments.append(segment)
     return segments
+
+
+def build_segments_from_room_segments(
+    room_segments: list[dict[str, Any]],
+    *,
+    duration_s: float,
+    speech_chunks: list[dict[str, Any]],
+) -> list[ExportSegment]:
+    finalized_segments = []
+    for segment in room_segments:
+        if not segment.get("is_final"):
+            continue
+        original_text = re.sub(r"\s+", " ", (segment.get("original") or "").strip())
+        if not original_text:
+            continue
+        finalized_segments.append(
+            {
+                "original": original_text,
+                "src": (segment.get("src") or DEFAULT_SOURCE_LANGUAGE).strip().lower(),
+                "ts_ms": segment.get("ts_ms"),
+                "translations": dict(segment.get("translations") or {}),
+            }
+        )
+
+    if not finalized_segments:
+        return []
+
+    base_segments = build_segments_from_transcript_items(
+        [
+            TranscriptItem(
+                original=item["original"],
+                src=item["src"],
+                ts_ms=item["ts_ms"],
+            )
+            for item in finalized_segments
+        ],
+        duration_s=duration_s,
+        speech_chunks=speech_chunks,
+    )
+
+    for export_segment, source_segment in zip(base_segments, finalized_segments):
+        translations: dict[str, str] = {}
+        for code, translated_text in source_segment["translations"].items():
+            normalized = (code or "").strip().lower()
+            cleaned_text = re.sub(r"\s+", " ", (translated_text or "").strip())
+            if normalized in code_to_language and cleaned_text:
+                translations[normalized] = cleaned_text
+        export_segment.translations.update(translations)
+        if source_segment["src"] == "en":
+            export_segment.english = source_segment["original"]
+        elif translations.get("en"):
+            export_segment.english = translations["en"]
+
+    return base_segments
+
+
+def transcript_items_from_room_segments(
+    room_segments: list[dict[str, Any]],
+) -> list[TranscriptItem]:
+    items: list[TranscriptItem] = []
+    for segment in room_segments:
+        if not segment.get("is_final"):
+            continue
+        original_text = re.sub(r"\s+", " ", (segment.get("original") or "").strip())
+        if not original_text:
+            continue
+        items.append(
+            TranscriptItem(
+                original=original_text,
+                src=(segment.get("src") or DEFAULT_SOURCE_LANGUAGE).strip().lower(),
+                ts_ms=segment.get("ts_ms"),
+            )
+        )
+    return items
+
+
+def build_segments_from_room_segments_without_audio(
+    room_segments: list[dict[str, Any]],
+) -> list[ExportSegment]:
+    finalized_segments = []
+    for segment in room_segments:
+        if not segment.get("is_final"):
+            continue
+        original_text = re.sub(r"\s+", " ", (segment.get("original") or "").strip())
+        if not original_text:
+            continue
+        finalized_segments.append(
+            {
+                "original": original_text,
+                "src": (segment.get("src") or DEFAULT_SOURCE_LANGUAGE).strip().lower(),
+                "ts_ms": int(segment.get("ts_ms") or 0),
+                "translations": dict(segment.get("translations") or {}),
+            }
+        )
+    if not finalized_segments:
+        return []
+
+    baseline_ts = min(item["ts_ms"] for item in finalized_segments if item["ts_ms"] > 0) if any(item["ts_ms"] > 0 for item in finalized_segments) else 0
+    export_segments: list[ExportSegment] = []
+    for idx, item in enumerate(finalized_segments, start=1):
+        start_s = max(0.0, (item["ts_ms"] - baseline_ts) / 1000.0) if baseline_ts else float(idx - 1)
+        end_s = start_s
+        export_segment = ExportSegment(
+            id=idx,
+            start_s=start_s,
+            end_s=end_s,
+            start_label=format_seconds_label(start_s),
+            end_label=format_seconds_label(end_s),
+            original=item["original"],
+        )
+        translations: dict[str, str] = {}
+        for code, translated_text in item["translations"].items():
+            normalized = (code or "").strip().lower()
+            cleaned_text = re.sub(r"\s+", " ", (translated_text or "").strip())
+            if normalized in code_to_language and cleaned_text:
+                translations[normalized] = cleaned_text
+        export_segment.translations.update(translations)
+        if item["src"] == "en":
+            export_segment.english = item["original"]
+        elif translations.get("en"):
+            export_segment.english = translations["en"]
+        export_segments.append(export_segment)
+    return export_segments
 
 
 def export_zip_path(filename: str) -> str:
@@ -1024,6 +1217,152 @@ async def generate_export_documents(
     return {"languages": languages, "documents": documents}
 
 
+async def build_documents_from_export_segments(
+    *,
+    segments: list[ExportSegment],
+    transcript_items: list[TranscriptItem],
+    documents_source_items: list[TranscriptItem] | None,
+    export_languages: list[str] | None,
+    llm_client: AsyncOpenAI,
+    llm_model: str,
+    progress_cb: Any | None = None,
+) -> MeetingPackageResult:
+    async def _progress(pct: int, stage: str, detail: str) -> None:
+        if progress_cb is not None:
+            await progress_cb(pct, stage, detail)
+
+    await _progress(
+        78,
+        "Detecting languages",
+        "Identifying languages used in the meeting for translated exports.",
+    )
+    languages = language_codes_from_segments(
+        segments,
+        export_languages
+        if export_languages is not None
+        else language_codes_from_transcript(transcript_items),
+    )
+    await _progress(
+        82,
+        "Translating transcripts",
+        "Creating translated transcript exports for meeting languages.",
+    )
+    for lang in languages:
+        if lang == "en":
+            continue
+        await translate_segments_to_language(
+            segments=segments,
+            target_language_code=lang,
+            llm_client=llm_client,
+            llm_model=llm_model,
+        )
+
+    original_transcript = segments_to_timestamped_text(segments, "original")
+    english_transcript = segments_to_timestamped_text(segments, "english")
+    await _progress(
+        88, "Writing meeting docs", "Generating meeting summary and minutes."
+    )
+    doc_items = documents_source_items if documents_source_items else transcript_items
+    doc_multilingual_text = build_multilingual_source_text(doc_items)
+    if doc_multilingual_text:
+        english_summary = await llm_complete_document(
+            llm_client=llm_client,
+            llm_model=llm_model,
+            prompt=build_summary_prompt(doc_multilingual_text),
+            temperature=0.2,
+        )
+        english_minutes = await llm_complete_document(
+            llm_client=llm_client,
+            llm_model=llm_model,
+            prompt=build_minutes_prompt(doc_multilingual_text),
+            temperature=0.2,
+        )
+    else:
+        english_summary, english_minutes = await build_english_summary_and_minutes(
+            english_transcript_text=english_transcript,
+            llm_client=llm_client,
+            llm_model=llm_model,
+        )
+
+    documents: list[dict[str, str]] = [
+        {
+            "filename": "transcript_original_timestamped.txt",
+            "language": "multi",
+            "kind": "transcript_original",
+            "content": original_transcript,
+        },
+        {
+            "filename": "transcript_english_timestamped.txt",
+            "language": "en",
+            "kind": "transcript_translation",
+            "content": english_transcript,
+        },
+        {
+            "filename": "meeting_summary_en.txt",
+            "language": "en",
+            "kind": "summary",
+            "content": english_summary,
+        },
+        {
+            "filename": "meeting_minutes_en.txt",
+            "language": "en",
+            "kind": "minutes",
+            "content": english_minutes,
+        },
+        {
+            "filename": "transcript_parallel.csv",
+            "language": "multi",
+            "kind": "parallel_csv",
+            "content": build_parallel_csv(segments, languages),
+        },
+    ]
+
+    for lang in languages:
+        if lang == "en":
+            continue
+        transcript_text = segments_to_timestamped_text(
+            segments, "translation", language_code=lang
+        )
+        documents.append(
+            {
+                "filename": f"transcript_{lang}_timestamped.txt",
+                "language": lang,
+                "kind": "transcript_translation",
+                "content": transcript_text,
+            }
+        )
+        translated_summary = await llm_complete_document(
+            llm_client=llm_client,
+            llm_model=llm_model,
+            prompt=build_document_translation_prompt(english_summary, lang),
+            temperature=0,
+        )
+        translated_minutes = await llm_complete_document(
+            llm_client=llm_client,
+            llm_model=llm_model,
+            prompt=build_document_translation_prompt(english_minutes, lang),
+            temperature=0,
+        )
+        documents.append(
+            {
+                "filename": f"meeting_summary_{lang}.txt",
+                "language": lang,
+                "kind": "summary",
+                "content": translated_summary,
+            }
+        )
+        documents.append(
+            {
+                "filename": f"meeting_minutes_{lang}.txt",
+                "language": lang,
+                "kind": "minutes",
+                "content": translated_minutes,
+            }
+        )
+
+    return MeetingPackageResult(languages=languages, documents=documents, segments=segments)
+
+
 async def transcribe_and_translate(
     *,
     pcm16_sentence: np.ndarray,
@@ -1216,6 +1555,7 @@ async def update_room_segment(
         cleaned_translation = (translation or "").strip()
         if tgt in code_to_language and cleaned_translation:
             segment.setdefault("translations", {})[tgt] = cleaned_translation
+            remember_room_translation_language(room, tgt)
         room["src"] = src or room.get("src") or DEFAULT_SOURCE_LANGUAGE
         room["updated_at"] = time.time()
         return {
@@ -1230,6 +1570,34 @@ async def update_room_segment(
         }
 
 
+async def remove_room_segment(room_id: str, *, segment_id: str) -> bool:
+    normalized = normalize_room_id(room_id)
+    async with ROOMS_LOCK:
+        room = ROOMS.get(normalized)
+        if room is None:
+            return False
+        index = room["segment_index"].pop(segment_id, None)
+        if index is None:
+            return False
+        segments = room.get("segments") or []
+        if not (0 <= index < len(segments)):
+            room["segment_index"] = {
+                str(segment.get("segment_id") or ""): idx
+                for idx, segment in enumerate(segments)
+                if str(segment.get("segment_id") or "")
+            }
+            room["updated_at"] = time.time()
+            return False
+        segments.pop(index)
+        room["segment_index"] = {
+            str(segment.get("segment_id") or ""): idx
+            for idx, segment in enumerate(segments)
+            if str(segment.get("segment_id") or "")
+        }
+        room["updated_at"] = time.time()
+        return True
+
+
 async def clear_room_session(room_id: str) -> None:
     normalized = normalize_room_id(room_id)
     chunk_dir = ""
@@ -1239,6 +1607,7 @@ async def clear_room_session(room_id: str) -> None:
             return
         room["segments"] = []
         room["segment_index"] = {}
+        room["used_translation_languages"] = []
         room["recording_state"] = "idle"
         room["recording_owner_session_id"] = ""
         room["recording_session_id"] = ""
@@ -1277,6 +1646,7 @@ async def start_or_resume_room_recording(
                 room_recording_dir(normalized, room["recording_session_id"])
             )
             room["recording_chunk_paths"] = []
+            room["used_translation_languages"] = []
             room["recording_audio_bytes"] = b""
             room["recording_filename"] = ""
             room["recording_mime_type"] = ""
@@ -1443,6 +1813,7 @@ async def finalize_room_recording(
     normalized = normalize_room_id(room_id)
     chunk_dir = ""
     recording_mime_type = ""
+    documents_source_items: list[TranscriptItem] = []
     async with ROOMS_LOCK:
         room = ROOMS.get(normalized)
         if room is None:
@@ -1468,7 +1839,12 @@ async def finalize_room_recording(
             TranscriptItem.model_validate(item)
             for item in room.get("recording_transcript_items") or []
         ]
-        documents_source_items = room_segments_to_transcript_items(room)
+        recording_segments = room_recording_segments(room)
+        documents_source_items = room_segments_to_transcript_items_for_segments(
+            room, recording_segments
+        )
+        if not documents_source_items:
+            documents_source_items = list(recorded_items)
         chunk_dir = room.get("recording_chunk_dir") or ""
         recording_mime_type = room.get("recording_mime_type") or ""
 
@@ -1593,6 +1969,7 @@ async def ensure_room_translation(
         segment = room["segments"][index]
         if int(segment.get("revision") or 0) == revision and translated:
             segment.setdefault("translations", {})[target] = translated
+            remember_room_translation_language(room, target)
             room["updated_at"] = time.time()
         return (segment.get("translations") or {}).get(target, translated)
 
@@ -2354,6 +2731,8 @@ async def generate_meeting_package(
     audio_filename: str,
     transcript_items: list[TranscriptItem],
     documents_source_items: list[TranscriptItem] | None,
+    export_languages: list[str] | None,
+    room_segments: list[dict[str, Any]] | None,
     whisper_client: AsyncOpenAI,
     whisper_model: str,
     llm_client: AsyncOpenAI,
@@ -2390,7 +2769,18 @@ async def generate_meeting_package(
         "Transcribing audio",
         f"Transcribing {len(chunks)} speech chunk(s) with bounded parallelism.",
     )
-    if transcript_items:
+    if room_segments:
+        segments = build_segments_from_room_segments(
+            room_segments,
+            duration_s=duration_s,
+            speech_chunks=chunks,
+        )
+        await _progress(
+            58,
+            "Aligning live transcript",
+            "Using the live transcript as the source of truth and aligning it to the recording.",
+        )
+    elif transcript_items:
         segments = build_segments_from_transcript_items(
             transcript_items,
             duration_s=duration_s,
@@ -2439,136 +2829,14 @@ async def generate_meeting_package(
         llm_model=llm_model,
     )
 
-    await _progress(
-        78,
-        "Detecting languages",
-        "Identifying languages used in the meeting for translated exports.",
-    )
-    languages = language_codes_from_segments(
-        segments, language_codes_from_transcript(transcript_items)
-    )
-    await _progress(
-        82,
-        "Translating transcripts",
-        "Creating translated transcript exports for meeting languages.",
-    )
-    for lang in languages:
-        if lang == "en":
-            continue
-        await translate_segments_to_language(
-            segments=segments,
-            target_language_code=lang,
-            llm_client=llm_client,
-            llm_model=llm_model,
-        )
-
-    original_transcript = segments_to_timestamped_text(segments, "original")
-    english_transcript = segments_to_timestamped_text(segments, "english")
-    await _progress(
-        88, "Writing meeting docs", "Generating meeting summary and minutes."
-    )
-    doc_items = documents_source_items if documents_source_items else transcript_items
-    doc_multilingual_text = build_multilingual_source_text(doc_items)
-    if doc_multilingual_text:
-        english_summary = await llm_complete_document(
-            llm_client=llm_client,
-            llm_model=llm_model,
-            prompt=build_summary_prompt(doc_multilingual_text),
-            temperature=0.2,
-        )
-        english_minutes = await llm_complete_document(
-            llm_client=llm_client,
-            llm_model=llm_model,
-            prompt=build_minutes_prompt(doc_multilingual_text),
-            temperature=0.2,
-        )
-    else:
-        english_summary, english_minutes = await build_english_summary_and_minutes(
-            english_transcript_text=english_transcript,
-            llm_client=llm_client,
-            llm_model=llm_model,
-        )
-
-    documents: list[dict[str, str]] = [
-        {
-            "filename": "transcript_original_timestamped.txt",
-            "language": "multi",
-            "kind": "transcript_original",
-            "content": original_transcript,
-        },
-        {
-            "filename": "transcript_english_timestamped.txt",
-            "language": "en",
-            "kind": "transcript_translation",
-            "content": english_transcript,
-        },
-        {
-            "filename": "meeting_summary_en.txt",
-            "language": "en",
-            "kind": "summary",
-            "content": english_summary,
-        },
-        {
-            "filename": "meeting_minutes_en.txt",
-            "language": "en",
-            "kind": "minutes",
-            "content": english_minutes,
-        },
-        {
-            "filename": "transcript_parallel.csv",
-            "language": "multi",
-            "kind": "parallel_csv",
-            "content": build_parallel_csv(segments, languages),
-        },
-    ]
-
-    for lang in languages:
-        if lang == "en":
-            continue
-        transcript_text = segments_to_timestamped_text(
-            segments, "translation", language_code=lang
-        )
-        documents.append(
-            {
-                "filename": f"transcript_{lang}_timestamped.txt",
-                "language": lang,
-                "kind": "transcript_translation",
-                "content": transcript_text,
-            }
-        )
-        translated_summary = await llm_complete_document(
-            llm_client=llm_client,
-            llm_model=llm_model,
-            prompt=build_document_translation_prompt(english_summary, lang),
-            temperature=0,
-        )
-        translated_minutes = await llm_complete_document(
-            llm_client=llm_client,
-            llm_model=llm_model,
-            prompt=build_document_translation_prompt(english_minutes, lang),
-            temperature=0,
-        )
-        documents.append(
-            {
-                "filename": f"meeting_summary_{lang}.txt",
-                "language": lang,
-                "kind": "summary",
-                "content": translated_summary,
-            }
-        )
-        documents.append(
-            {
-                "filename": f"meeting_minutes_{lang}.txt",
-                "language": lang,
-                "kind": "minutes",
-                "content": translated_minutes,
-            }
-        )
-
-    return MeetingPackageResult(
-        languages=languages,
-        documents=documents,
+    return await build_documents_from_export_segments(
         segments=segments,
+        transcript_items=transcript_items,
+        documents_source_items=documents_source_items,
+        export_languages=export_languages,
+        llm_client=llm_client,
+        llm_model=llm_model,
+        progress_cb=progress_cb,
     )
 
 
@@ -2615,6 +2883,8 @@ async def build_export_package_bytes(
     audio_filename: str,
     transcript_items: list[TranscriptItem],
     documents_source_items: list[TranscriptItem] | None,
+    export_languages: list[str] | None = None,
+    room_segments: list[dict[str, Any]] | None = None,
     whisper_client: AsyncOpenAI,
     whisper_model: str,
     llm_client: AsyncOpenAI,
@@ -2631,6 +2901,8 @@ async def build_export_package_bytes(
         audio_filename=audio_filename,
         transcript_items=transcript_items,
         documents_source_items=documents_source_items,
+        export_languages=export_languages,
+        room_segments=room_segments,
         whisper_client=whisper_client,
         whisper_model=whisper_model,
         llm_client=llm_client,
@@ -2703,6 +2975,8 @@ async def run_export_job(
     audio_filename: str,
     transcript_items: list[TranscriptItem],
     documents_transcript_items: list[TranscriptItem] | None = None,
+    export_languages: list[str] | None = None,
+    room_segments: list[dict[str, Any]] | None = None,
     llm_cfg: ExportLlmConfig,
     whisper_cfg: ExportWhisperConfig,
 ) -> None:
@@ -2730,6 +3004,8 @@ async def run_export_job(
             audio_filename=audio_filename,
             transcript_items=transcript_items,
             documents_source_items=documents_transcript_items,
+            export_languages=export_languages,
+            room_segments=room_segments,
             whisper_client=whisper_client,
             whisper_model=whisper_cfg.model or DEFAULT_WHISPER_MODEL,
             llm_client=llm_client,
@@ -2775,6 +3051,69 @@ async def export_documents(payload: ExportRequest):
         llm_model=llm_model,
     )
     return result
+
+
+@app.post("/api/rooms/{room_id}/export-documents")
+async def export_room_documents(room_id: str, payload: RoomExportRequest):
+    normalized = normalize_room_id(room_id)
+    async with ROOMS_LOCK:
+        room = ROOMS.get(normalized)
+        if room is None:
+            raise HTTPException(status_code=404, detail="Room not found.")
+        room_export_segments = [
+            {
+                "segment_id": segment.get("segment_id"),
+                "revision": int(segment.get("revision") or 0),
+                "status": segment.get("status") or "listening",
+                "is_final": bool(segment.get("is_final")),
+                "original": segment.get("original") or "",
+                "src": segment.get("src") or room.get("src") or DEFAULT_SOURCE_LANGUAGE,
+                "ts_ms": segment.get("ts_ms"),
+                "translations": dict(segment.get("translations") or {}),
+            }
+            for segment in room.get("segments") or []
+        ]
+        export_languages = room_export_language_codes(room)
+        room_llm = dict(room.get("llm") or {})
+        documents_raw = list(room.get("documents_source_items") or [])
+
+    source_items = transcript_items_from_room_segments(room_export_segments)
+    if not source_items:
+        return {"languages": ["en"], "documents": [], "segments": []}
+    documents_items = [TranscriptItem.model_validate(item) for item in documents_raw]
+    if not documents_items:
+        documents_items = source_items
+
+    llm_cfg = ExportLlmConfig(
+        base_url=(
+            payload.llm.base_url
+            if payload.llm and payload.llm.base_url
+            else room_llm.get("base_url") or DEFAULT_LLM_BASE_URL
+        ),
+        api_key=(
+            payload.llm.api_key
+            if payload.llm and payload.llm.api_key
+            else room_llm.get("api_key") or DEFAULT_LLM_API_KEY
+        ),
+        model=(
+            payload.llm.model
+            if payload.llm and payload.llm.model
+            else room_llm.get("model") or DEFAULT_LLM_MODEL
+        ),
+    )
+    llm_client = make_client(
+        llm_cfg.base_url or DEFAULT_LLM_BASE_URL, llm_cfg.api_key or DEFAULT_LLM_API_KEY
+    )
+    segments = build_segments_from_room_segments_without_audio(room_export_segments)
+    result = await build_documents_from_export_segments(
+        segments=segments,
+        transcript_items=source_items,
+        documents_source_items=documents_items,
+        export_languages=export_languages,
+        llm_client=llm_client,
+        llm_model=llm_cfg.model or DEFAULT_LLM_MODEL,
+    )
+    return result.model_dump()
 
 
 @app.post("/api/export-package")
@@ -3006,6 +3345,8 @@ async def start_room_export_package(room_id: str, payload: RoomExportRequest):
     normalized = normalize_room_id(room_id)
     resumable_chunk_paths: list[str] = []
     recording_mime_type = ""
+    export_languages: list[str] = []
+    room_export_segments: list[dict[str, Any]] = []
     async with ROOMS_LOCK:
         room = ROOMS.get(normalized)
         if room is None:
@@ -3015,13 +3356,34 @@ async def start_room_export_package(room_id: str, payload: RoomExportRequest):
                 status_code=409,
                 detail="The full package is only available after a recording has been captured.",
             )
+        recording_segments = room_recording_segments(room)
         source_raw = list(room.get("recording_transcript_items") or [])
         documents_raw = list(room.get("documents_source_items") or [])
-        room_history_items = room_segments_to_transcript_items(room)
+        room_history_items = room_segments_to_transcript_items_for_segments(
+            room, recording_segments
+        )
         audio_bytes = bytes(room.get("recording_audio_bytes") or b"")
         audio_filename = room.get("recording_filename") or "meeting_audio.webm"
         resumable_chunk_paths = list(room.get("recording_chunk_paths") or [])
         recording_mime_type = room.get("recording_mime_type") or ""
+        export_languages = (
+            language_codes_from_room_segments_list(recording_segments)
+            if recording_segments
+            else room_export_language_codes(room)
+        )
+        room_export_segments = [
+            {
+                "segment_id": segment.get("segment_id"),
+                "revision": int(segment.get("revision") or 0),
+                "status": segment.get("status") or "listening",
+                "is_final": bool(segment.get("is_final")),
+                "original": segment.get("original") or "",
+                "src": segment.get("src") or room.get("src") or DEFAULT_SOURCE_LANGUAGE,
+                "ts_ms": segment.get("ts_ms"),
+                "translations": dict(segment.get("translations") or {}),
+            }
+            for segment in recording_segments
+        ]
         room_llm = dict(room.get("llm") or {})
         room_whisper = dict(room.get("whisper") or {})
 
@@ -3049,10 +3411,6 @@ async def start_room_export_package(room_id: str, payload: RoomExportRequest):
         documents_raw = [item.model_dump() for item in room_history_items]
     if not documents_raw and source_raw:
         documents_raw = list(source_raw)
-
-    target_language = (payload.target_language or "").strip().lower()
-    if target_language not in code_to_language:
-        raise HTTPException(status_code=400, detail="Unsupported target language.")
 
     llm_cfg = ExportLlmConfig(
         base_url=(
@@ -3089,25 +3447,8 @@ async def start_room_export_package(room_id: str, payload: RoomExportRequest):
         ),
     )
 
-    llm_client = make_client(
-        llm_cfg.base_url or DEFAULT_LLM_BASE_URL, llm_cfg.api_key or DEFAULT_LLM_API_KEY
-    )
     source_items = [TranscriptItem.model_validate(item) for item in source_raw]
     documents_items = [TranscriptItem.model_validate(item) for item in documents_raw]
-    translated_items = await build_transcript_items_for_target(
-        source_items,
-        room_id=normalized,
-        target_language=target_language,
-        llm_client=llm_client,
-        llm_model=llm_cfg.model or DEFAULT_LLM_MODEL,
-    )
-    translated_documents_items = await build_transcript_items_for_target(
-        documents_items,
-        room_id=normalized,
-        target_language=target_language,
-        llm_client=llm_client,
-        llm_model=llm_cfg.model or DEFAULT_LLM_MODEL,
-    )
 
     await cleanup_old_export_jobs()
     job_id = await create_export_job()
@@ -3116,8 +3457,10 @@ async def start_room_export_package(room_id: str, payload: RoomExportRequest):
             job_id=job_id,
             audio_bytes=audio_bytes,
             audio_filename=audio_filename,
-            transcript_items=translated_items,
-            documents_transcript_items=translated_documents_items,
+            transcript_items=source_items,
+            documents_transcript_items=documents_items,
+            export_languages=export_languages,
+            room_segments=room_export_segments,
             llm_cfg=llm_cfg,
             whisper_cfg=whisper_cfg,
         )
@@ -3667,6 +4010,25 @@ async def websocket_endpoint(websocket: WebSocket):
                                     break
                             room["updated_at"] = time.time()
                     await send_snapshot_to_current_client()
+                    continue
+
+                if payload.get("type") == "recording_boundary":
+                    if role != "presenter" or not room_id:
+                        continue
+                    stale_segment_id = active_segment_id
+                    session_epoch += 1
+                    await cancel_analysis()
+                    reset_active_stream_state()
+                    if stale_segment_id and not bool(
+                        (emitted_segments.get(stale_segment_id) or {}).get("is_final")
+                    ):
+                        emitted_segments.pop(stale_segment_id, None)
+                        segment_final_requested.pop(stale_segment_id, None)
+                        removed = await remove_room_segment(
+                            room_id, segment_id=stale_segment_id
+                        )
+                        if removed:
+                            await broadcast_snapshots_to_room()
                     continue
 
                 if payload.get("type") == "recording":

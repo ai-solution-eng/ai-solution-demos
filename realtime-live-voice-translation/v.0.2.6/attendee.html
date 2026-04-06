@@ -633,19 +633,12 @@
                         <select id="languageSelect"></select>
                     </div>
                     <button id="connectBtn" class="btn-primary" type="button">Join room</button>
-                    <button id="downloadBtn" class="btn-secondary" type="button" disabled>Download</button>
+                    <!-- <button id="downloadBtn" class="btn-secondary" type="button" disabled>Download</button> -->
                 </div>
                 <div class="status-grid">
                     <span id="currentRoom" data-tone="warning">Room not joined</span>
                     <span id="connectionStatus" data-tone="warning">Disconnected</span>
                 </div>
-                <!-- <div class="status-copy" id="footerNote">
-                    Waiting for room connection.
-                </div> -->
-                <!-- <div class="status-note" id="statusNote">
-                    When recording is not active, download includes summary and minutes only. After the presenter stops
-                    recording, the same button downloads the full package.
-                </div> -->
             </div>
         </details>
 
@@ -780,6 +773,11 @@
             return languageNames[normalized] || normalized.toUpperCase() || "Unknown";
         }
 
+        function setFooterNote(text = "") {
+            if (!footerNoteEl) return;
+            footerNoteEl.textContent = text;
+        }
+
         function formatTurnTime(ts) {
             if (!ts) return "";
             return new Date(ts).toLocaleTimeString([], {
@@ -870,14 +868,7 @@
 
         function syncRecordingUI() {
             setRecordingBanner(state.recordingState === "recording");
-            downloadBtn.disabled = !canDownloadAnything();
-            // statusNoteEl.textContent = state.canDownloadPackage
-            //     ? "The full package is ready to download."
-            //     : state.recordingState === "recording"
-            //         ? "Recording is active. Full package export will be available after the presenter stops recording."
-            //         : canDownloadNotes()
-            //             ? "Download is ready with summary and minutes."
-            //             : "Download becomes available once the room has finalized transcript content.";
+            if (downloadBtn) downloadBtn.disabled = !canDownloadAnything();
         }
 
         function setRoomLabel() {
@@ -1023,10 +1014,13 @@
         }
 
         async function fetchGeneratedDocuments() {
-            const response = await fetch(`${HTTP_BASE}/api/export-documents`, {
+            if (!state.roomId) {
+                throw new Error("No active room is available.");
+            }
+            const response = await fetch(`${HTTP_BASE}/api/rooms/${encodeURIComponent(state.roomId)}/export-documents`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ transcript: finalizedTranscriptItems() })
+                body: JSON.stringify({ target_language: state.targetLanguage })
             });
             if (!response.ok) {
                 const detail = await response.text().catch(() => "");
@@ -1060,16 +1054,14 @@
         }
 
         async function buildLightweightMeetingZip(stamp) {
-            updateExportProgress(15, "Preparing notes", "Collecting summary and minutes for download.");
-            updateExportProgress(45, "Generating documents", "Creating the summary and minutes from the live transcript.");
+            updateExportProgress(15, "Preparing documents", "Collecting translated meeting documents for download.");
+            updateExportProgress(45, "Generating documents", "Creating transcripts, summary, and minutes from the room transcript.");
             const generated = await fetchGeneratedDocuments();
-            const docs = (generated?.documents || []).filter((doc) =>
-                doc?.kind === "summary" || doc?.kind === "minutes"
-            );
+            const docs = generated?.documents || [];
             if (docs.length === 0) {
-                throw new Error("Summary and minutes are not available yet. Keep the conversation going for more content.");
+                throw new Error("Meeting documents are not available yet. Keep the conversation going for more content.");
             }
-            updateExportProgress(80, "Building ZIP", "Packaging summary and minutes for download.");
+            updateExportProgress(80, "Building ZIP", "Packaging meeting documents for download.");
             const zip = new JSZip();
             docs.forEach((doc, idx) => {
                 const filename = doc.filename || `notes_${idx + 1}.txt`;
@@ -1080,7 +1072,7 @@
 
         async function startDownload() {
             if (!state.roomId || !canDownloadAnything()) return;
-            downloadBtn.disabled = true;
+            if (downloadBtn) downloadBtn.disabled = true;
             setExportOverlay(true);
             try {
                 if (state.canDownloadPackage || state.recordingSessionId) {
@@ -1165,7 +1157,7 @@
                         state.connected = false;
                         state.joinRejected = true;
                         setConnectionStatus("Connection failed", "error");
-                        footerNoteEl.textContent = msg.detail || "Could not join the presenter room.";
+                        setFooterNote(msg.detail || "Could not join the presenter room.");
                         try {
                             state.ws?.close();
                         } catch { }
@@ -1225,7 +1217,7 @@
             state.ws.onerror = () => {
                 if (state.joinRejected) return;
                 setConnectionStatus("Connection failed", "error");
-                footerNoteEl.textContent = "Could not reach the presenter room.";
+                setFooterNote("Could not reach the presenter room.");
             };
             state.ws.onclose = () => {
                 state.connected = false;
@@ -1235,7 +1227,7 @@
         }
 
         connectBtn.onclick = connectToRoom;
-        downloadBtn.onclick = startDownload;
+        if (downloadBtn) downloadBtn.onclick = startDownload;
         languageSelectEl.onchange = () => {
             state.targetLanguage = languageSelectEl.value;
             if (state.ws && state.ws.readyState === WebSocket.OPEN) {
