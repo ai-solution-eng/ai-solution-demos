@@ -1,10 +1,16 @@
-# Real-Time Voice Translation
+# Real-Time Live Voice Translation
 
-Live voice translation for HPE Private Cloud AI environments.
+| Owner                 | Name              | Email                              |
+| ----------------------|-------------------|------------------------------------|
+| Use Case Owner              | Francesco Caliva | francesco.caliva@hpe.com |
+| PCAI Deployment Owner       | Francesco Caliva | francesco.caliva@hpe.com |
+
+
+Live voice transcription anad translation for HPE Private Cloud AI environments.
 
 This application captures microphone audio in the browser, detects speech with Silero VAD, transcribes it with a Whisper-compatible ASR endpoint, translates it with an OpenAI-compatible LLM endpoint, and streams the results back to the UI in real time.
 
-It also supports post-conversation exports such as transcripts, multilingual summaries, meeting minutes, and a packaged download when recording is enabled.
+It also supports post-conversation exports such as transcripts, multilingual summaries, meeting minutes, and audio download when recording is enabled.
 
 ## What The App Does
 
@@ -15,6 +21,7 @@ It also supports post-conversation exports such as transcripts, multilingual sum
 5. Sends the transcript to an LLM for translation.
 6. Displays the latest translated turn in the UI while keeping earlier turns in history.
 7. Optionally generates meeting documents and export packages after the conversation.
+8. Personal Meeting Rooms where attendees can follow along the conversation in their preferred language.
 
 ## Key Capabilities
 
@@ -306,3 +313,5 @@ This is expected the first time because Torch may download and cache Silero VAD 
 ## Summary
 
 This application is best suited for live multilingual conversations running on HPE Private Cloud AI, with backend model endpoints provided through AI Essentials or compatible OpenAI-style services.
+
+## To do 
