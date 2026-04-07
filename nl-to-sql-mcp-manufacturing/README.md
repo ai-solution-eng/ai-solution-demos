@@ -213,6 +213,7 @@ Install Superset if not yet available in your cluster. Therefore go to Administr
 ![Install Superset](https://github.com/ai-solution-eng/ai-solution-demos/blob/nl2sql/nl-to-sql-mcp-manufacturing/images/DeploySuperset.png)
 
 **4.2 Superset Presto Connection**
+This step can be skipped if you plan to import the ready dashboard, as this connection will be created for you.
 
 Open Superset ( BI Reporting ).
 Within Superset we first need to configure the connection to Presto. 
@@ -256,9 +257,10 @@ WITH operator_performance AS ( SELECT m.location , o.name operator_name , "sum"(
 
 **4.4 Superset Import Dahsboard**
 
-To import the Dashboard open Superset. Naviagte to Dashboards and click import Dashboard. Use the *.zip* file in this folder to upload. 
+To import the Dashboard open Superset. Navigate to Dashboards and click import Dashboard. 
+Within the *.zip* file you can find here in this folder, you will need to edit the file databases/Presto.yaml . In Line 2 please replace YOURDOMAINNAME with the domain name of the cluster you are working on. You can take that from the URL in your browser, eg home.YOURDOMAINNAME. Repackage that folder as zip and use this file to upload.
 
-This will create the dashboard, the charts and the datasets for you. Again only if you created the Cached Assets with the same names as well as the Database connection to Presto. If you named something differently you will need to edit it accordingly.
+This will create the database, the dashboard, the charts and the datasets for you. Again only if you created the Cached Assets with the same names. If you named something differently you will need to edit it accordingly.
 ![Import Dashboard in Superset](https://github.com/ai-solution-eng/ai-solution-demos/blob/nl2sql/nl-to-sql-mcp-manufacturing/images/Superset_ImportDashboard.png)
 
 The final Dashboard should look similar to this:
