@@ -1,0 +1,1256 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <title>Live Translation Attendee</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="./logo.jpg" type="image/jpeg" />
+    <style>
+        :root {
+            color-scheme: dark;
+            --bg: #061019;
+            --panel: rgba(12, 20, 31, 0.92);
+            --panel-soft: rgba(255, 255, 255, 0.05);
+            --border: rgba(255, 255, 255, 0.12);
+            --text: #f5f7fa;
+            --text-soft: rgba(245, 247, 250, 0.72);
+            --text-faint: rgba(245, 247, 250, 0.56);
+            --brand: #00c781;
+            --warning: #ffb257;
+            --danger: #ff6b6b;
+            --shadow: 0 26px 60px rgba(0, 0, 0, 0.32);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            padding: 24px 16px 40px;
+            background:
+                radial-gradient(circle at top right, rgba(0, 199, 129, 0.14), transparent 28%),
+                linear-gradient(180deg, #07111a 0%, #03070c 100%);
+            color: var(--text);
+            font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
+
+        button,
+        input,
+        select {
+            font: inherit;
+        }
+
+        button {
+            cursor: pointer;
+        }
+
+        button:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+
+        .app-shell {
+            max-width: 1180px;
+            margin: 0 auto;
+            display: grid;
+            gap: 18px;
+        }
+
+        .collapsible-panel,
+        .translation-box,
+        .history-panel {
+            border: 1px solid var(--border);
+            background: var(--panel);
+            box-shadow: var(--shadow);
+            border-radius: 24px;
+            overflow: hidden;
+            backdrop-filter: blur(16px);
+        }
+
+        .collapsible-panel summary,
+        .history-panel summary {
+            list-style: none;
+            cursor: pointer;
+            padding: 18px 22px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            user-select: none;
+        }
+
+        .collapsible-panel summary::-webkit-details-marker,
+        .history-panel summary::-webkit-details-marker {
+            display: none;
+        }
+
+        .collapsible-panel summary::after,
+        .history-panel summary::after {
+            content: "+";
+            color: var(--text-soft);
+            font-size: 28px;
+            line-height: 1;
+            transition: transform 0.18s ease;
+        }
+
+        .collapsible-panel[open] summary::after,
+        .history-panel[open] summary::after {
+            transform: rotate(45deg);
+        }
+
+        .collapsible-summary-main,
+        .history-summary-main {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            min-width: 0;
+        }
+
+        .panel-label,
+        .hero-eyebrow {
+            color: var(--text-soft);
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+        }
+
+        .hero-eyebrow {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+
+        .hero-eyebrow::before {
+            content: "";
+            width: 36px;
+            height: 3px;
+            border-radius: 999px;
+            background: var(--brand);
+            box-shadow: 0 0 18px rgba(0, 199, 129, 0.35);
+        }
+
+        .collapsible-title {
+            font-size: 18px;
+            font-weight: 700;
+        }
+
+        .translation-label {
+            color: var(--text-faint);
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+        }
+
+        .collapsible-body,
+        .history-body {
+            padding: 0 22px 22px;
+        }
+
+        .topbar {
+            display: grid;
+            gap: 18px;
+            align-items: stretch;
+        }
+
+        .hero-card,
+        .status-card {
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            background: rgba(255, 255, 255, 0.04);
+            border-radius: 22px;
+            padding: 22px;
+        }
+
+        .hero-card h3 {
+            margin: 0;
+            font-size: clamp(28px, 4vw, 40px);
+            line-height: 1.05;
+            letter-spacing: -0.03em;
+        }
+
+        .hero-subtitle {
+            margin: 12px 0 0;
+            color: var(--text-soft);
+            line-height: 1.6;
+            max-width: 60ch;
+        }
+
+        .hero-meta,
+        .status-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 18px;
+            padding: 5px;
+        }
+
+        .hero-chip,
+        #connectionStatus,
+        #currentRoom {
+            min-height: 42px;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 0 14px;
+            border-radius: 999px;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            background: rgba(255, 255, 255, 0.06);
+            color: var(--text-soft);
+            font-weight: 600;
+        }
+
+        #connectionStatus::before,
+        #currentRoom::before,
+        .hero-chip::before {
+            content: "";
+            width: 10px;
+            height: 10px;
+            border-radius: 999px;
+            background: var(--warning);
+            box-shadow: 0 0 0 4px rgba(255, 178, 87, 0.18);
+            flex: 0 0 auto;
+        }
+
+        #connectionStatus[data-tone="connected"]::before,
+        #currentRoom[data-tone="ready"]::before,
+        .hero-chip[data-tone="ready"]::before {
+            background: var(--brand);
+            box-shadow: 0 0 0 4px rgba(0, 199, 129, 0.18);
+        }
+
+        #connectionStatus[data-tone="error"]::before {
+            background: var(--danger);
+            box-shadow: 0 0 0 4px rgba(255, 107, 107, 0.18);
+        }
+
+        .status-copy {
+            display: grid;
+            gap: 8px;
+            color: var(--text-soft);
+            line-height: 1.6;
+        }
+
+        .controls-row {
+            display: grid;
+            grid-template-columns: minmax(240px, 1.2fr) minmax(220px, 1fr) auto auto auto;
+            gap: 12px;
+            align-items: end;
+        }
+
+        .field-group {
+            display: grid;
+            gap: 8px;
+        }
+
+        .field-group label {
+            color: var(--text-faint);
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+        }
+
+        input,
+        select,
+        .btn-primary,
+        .btn-secondary {
+            min-height: 44px;
+            border-radius: 999px;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            background: rgba(255, 255, 255, 0.06);
+            color: var(--text);
+            padding: 10px 14px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, rgba(0, 199, 129, 0.28), rgba(0, 199, 129, 0.12));
+            border-color: rgba(0, 199, 129, 0.42);
+        }
+
+        #downloadBtn:not(:disabled) {
+            background: linear-gradient(135deg, rgba(0, 199, 129, 0.28), rgba(0, 199, 129, 0.12));
+            border-color: rgba(0, 199, 129, 0.42);
+            box-shadow: 0 10px 28px rgba(0, 199, 129, 0.18);
+        }
+
+        .status-note {
+            margin-top: 14px;
+            color: var(--text-soft);
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        .translation-box {
+            border-radius: 28px;
+            padding: 24px;
+            position: relative;
+            z-index: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+        }
+
+        .translation-heading {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            align-items: flex-start;
+            flex-wrap: wrap;
+        }
+
+        .translation-subtitle {
+            color: var(--text-soft);
+            font-size: 14px;
+        }
+
+        .translation-scroll {
+            min-height: 340px;
+        }
+
+        .stack,
+        .history-list {
+            display: grid;
+            gap: 16px;
+        }
+
+        .pair {
+            border: 1px solid var(--border);
+            border-radius: 22px;
+            padding: 20px;
+            background:
+                linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.015)),
+                rgba(9, 15, 22, 0.92);
+        }
+
+        .pair.latest {
+            border-color: rgba(0, 199, 129, 0.3);
+            background:
+                linear-gradient(180deg, rgba(0, 199, 129, 0.1), rgba(255, 255, 255, 0.02)),
+                rgba(8, 16, 23, 0.98);
+            box-shadow: inset 0 0 0 1px rgba(0, 199, 129, 0.08);
+        }
+
+        .pair.previous {
+            border-color: rgba(255, 255, 255, 0.12);
+        }
+
+        .pair.placeholder {
+            display: grid;
+            place-items: center;
+            min-height: 280px;
+            text-align: center;
+            background:
+                linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0.01)),
+                rgba(9, 15, 22, 0.88);
+        }
+
+        .pair-meta {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: center;
+            margin-bottom: 18px;
+        }
+
+        .pair-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .lang-chip,
+        .status-chip {
+            display: inline-flex;
+            align-items: center;
+            min-height: 30px;
+            border-radius: 999px;
+            padding: 0 10px;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            background: rgba(255, 255, 255, 0.06);
+            font-weight: 600;
+        }
+
+        .status-chip.is-final {
+            color: #7ce0a5;
+            border-color: rgba(124, 224, 165, 0.34);
+            background: rgba(124, 224, 165, 0.1);
+        }
+
+        .status-chip.is-refining,
+        .status-chip.is-listening {
+            color: var(--warning);
+            border-color: rgba(255, 178, 87, 0.34);
+            background: rgba(255, 178, 87, 0.1);
+        }
+
+        .pair-label,
+        .pair-original-label,
+        .pair-translation-label,
+        .history-count {
+            color: var(--text-faint);
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+        }
+
+        .pair-original-label,
+        .pair-translation-label {
+            margin-bottom: 8px;
+        }
+
+        .pair-copy {
+            margin: 0;
+            word-break: break-word;
+            white-space: pre-wrap;
+        }
+
+        .pair-copy.original {
+            color: var(--text-soft);
+            font-size: clamp(15px, 1.3vw, 18px);
+            line-height: 1.55;
+            margin-bottom: 18px;
+        }
+
+        .pair-copy.translation {
+            color: var(--text);
+            font-size: clamp(24px, 3vw, 40px);
+            font-weight: 700;
+            line-height: 1.14;
+            letter-spacing: -0.02em;
+        }
+
+        .pair.previous .pair-copy.translation,
+        .history-item .pair-copy.translation {
+            font-size: clamp(20px, 2vw, 28px);
+        }
+
+        .history-item {
+            padding: 16px 18px;
+            border-radius: 18px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            background: rgba(255, 255, 255, 0.025);
+        }
+
+        .history-item .pair {
+            padding: 0;
+            border: 0;
+            border-radius: 0;
+            background: transparent;
+            box-shadow: none;
+        }
+
+        .history-item .pair-meta,
+        .history-item .pair-copy.original {
+            margin-bottom: 14px;
+        }
+
+        #recordingBanner {
+            position: sticky;
+            top: 0;
+            margin: -24px -16px 18px;
+            height: 42px;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(90deg, rgba(255, 157, 47, 0.92), rgba(255, 107, 107, 0.92));
+            color: #0f1115;
+            font-weight: 800;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            z-index: 200;
+            animation: recordingPulse 1.4s ease-in-out infinite;
+        }
+
+        #recordingBanner.visible {
+            display: flex;
+        }
+
+        @keyframes recordingPulse {
+
+            0%,
+            100% {
+                filter: saturate(1);
+            }
+
+            50% {
+                filter: saturate(1.18);
+            }
+        }
+
+        .history-panel summary {
+            padding: 18px 20px;
+        }
+
+        .history-body {
+            padding-top: 0;
+        }
+
+        #exportOverlay {
+            position: fixed;
+            inset: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            background: rgba(2, 6, 10, 0.7);
+            backdrop-filter: blur(6px);
+            z-index: 300;
+        }
+
+        #exportOverlay.visible {
+            display: flex;
+        }
+
+        .export-card {
+            width: min(560px, calc(100vw - 32px));
+            border-radius: 24px;
+            padding: 24px;
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.015)), var(--panel);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: var(--shadow);
+        }
+
+        .export-title {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+
+        .export-stage {
+            font-size: 15px;
+            color: var(--text-soft);
+            margin-bottom: 8px;
+        }
+
+        .export-detail {
+            font-size: 13px;
+            color: var(--text-soft);
+            margin-bottom: 16px;
+            min-height: 18px;
+        }
+
+        .export-bar-wrap {
+            width: 100%;
+            height: 14px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.08);
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .export-bar {
+            height: 100%;
+            width: 0%;
+            border-radius: inherit;
+            background: linear-gradient(90deg, #28d17c, #72f5b6);
+            transition: width 240ms ease;
+        }
+
+        .export-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            margin-top: 10px;
+            font-size: 13px;
+            color: var(--text-soft);
+        }
+
+        @media (max-width: 980px) {
+            .topbar {
+                grid-template-columns: 1fr;
+            }
+
+            .controls-row {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 640px) {
+            body {
+                padding: 14px 12px 28px;
+            }
+
+            #recordingBanner {
+                margin: -14px -12px 16px;
+            }
+
+            .collapsible-panel,
+            .translation-box,
+            .history-panel {
+                border-radius: 22px;
+            }
+
+            .translation-box,
+            .collapsible-body,
+            .history-body,
+            .collapsible-panel summary,
+            .history-panel summary {
+                padding-left: 16px;
+                padding-right: 16px;
+            }
+
+            .translation-scroll {
+                min-height: auto;
+            }
+
+            .pair {
+                padding: 16px;
+            }
+
+            .pair-copy.translation {
+                font-size: clamp(22px, 7vw, 30px);
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div id="recordingBanner">conversation recording in progress</div>
+
+    <main class="app-shell">
+        <details class="collapsible-panel topbar-panel" id="topbarPanel" open>
+            <summary class="collapsible-summary">
+                <span class="collapsible-summary-main">
+                    <div class="hero-eyebrow">HPE Private Cloud AI </div>
+                </span>
+            </summary>
+            <div class="collapsible-body">
+                <div class="controls-row">
+                    <div class="field-group">
+                        <label for="roomInput">Meeting code</label>
+                        <input id="roomInput" placeholder="Paste the presenter room code" />
+                    </div>
+                    <div class="field-group">
+                        <label for="languageSelect">Translation language</label>
+                        <select id="languageSelect"></select>
+                    </div>
+                    <button id="connectBtn" class="btn-primary" type="button">Join room</button>
+                    <!-- <button id="downloadBtn" class="btn-secondary" type="button" disabled>Download</button> -->
+                </div>
+                <div class="status-grid">
+                    <span id="currentRoom" data-tone="warning">Room not joined</span>
+                    <span id="connectionStatus" data-tone="warning">Disconnected</span>
+                </div>
+            </div>
+        </details>
+
+        <section class="translation-box">
+            <div class="translation-heading">
+                <div>
+                    <div class="translation-label">Live Transcript</div>
+                    <!-- <div class="translation-subtitle">Original plus your selected translation language</div> -->
+                </div>
+            </div>
+            <div class="translation-scroll" id="center">
+                <div id="stack" class="stack"></div>
+            </div>
+        </section>
+
+        <details class="history-panel" id="historyPanel">
+            <summary>
+                <span class="history-summary-main">
+                    <span class="translation-label">History</span>
+                    <span class="history-count" id="historyCount">0 earlier turns</span>
+                </span>
+            </summary>
+            <div class="history-body">
+                <div id="historyList" class="history-list"></div>
+            </div>
+        </details>
+    </main>
+
+    <div id="exportOverlay" aria-live="polite" aria-busy="true">
+        <div class="export-card">
+            <div class="export-title">Preparing download</div>
+            <div class="export-stage" id="exportStage">Queued</div>
+            <div class="export-detail" id="exportDetail">Preparing export.</div>
+            <div class="export-bar-wrap">
+                <div class="export-bar" id="exportBar"></div>
+            </div>
+            <div class="export-meta">
+                <span id="exportPercent">0%</span>
+                <span id="exportHint">Please keep this page open.</span>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script>
+        function resolveBackendHttpBase() {
+            const params = new URLSearchParams(window.location.search);
+            const explicit = (params.get("backend") || "").trim();
+            if (explicit) return explicit.replace(/\/$/, "");
+
+            const isLocalHost = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+            if (isLocalHost && window.location.port && window.location.port !== "8000") {
+                return `${window.location.protocol}//${window.location.hostname}:8000`;
+            }
+
+            return window.location.origin;
+        }
+
+        function resolveBackendWsUrl(httpBase) {
+            const base = new URL(httpBase);
+            base.protocol = base.protocol === "https:" ? "wss:" : "ws:";
+            base.pathname = "/ws/translate";
+            base.search = "";
+            base.hash = "";
+            return base.toString();
+        }
+
+        const HTTP_BASE = resolveBackendHttpBase();
+        const WS_URL = resolveBackendWsUrl(HTTP_BASE);
+
+        const roomInputEl = document.getElementById("roomInput");
+        const languageSelectEl = document.getElementById("languageSelect");
+        const connectBtn = document.getElementById("connectBtn");
+        const downloadBtn = document.getElementById("downloadBtn");
+        const connectionStatusEl = document.getElementById("connectionStatus");
+        const recordingBannerEl = document.getElementById("recordingBanner");
+        const currentRoomEl = document.getElementById("currentRoom");
+        const heroRoomCodeEl = document.getElementById("heroRoomCode");
+        const heroRoomChipEl = document.getElementById("heroRoomChip");
+        const statusNoteEl = document.getElementById("statusNote");
+        const footerNoteEl = document.getElementById("footerNote");
+        const stackEl = document.getElementById("stack");
+        const centerEl = document.getElementById("center");
+        const historyPanelEl = document.getElementById("historyPanel");
+        const historyListEl = document.getElementById("historyList");
+        const historyCountEl = document.getElementById("historyCount");
+        const exportOverlayEl = document.getElementById("exportOverlay");
+        const exportBarEl = document.getElementById("exportBar");
+        const exportStageEl = document.getElementById("exportStage");
+        const exportDetailEl = document.getElementById("exportDetail");
+        const exportPercentEl = document.getElementById("exportPercent");
+
+        const LANGUAGE_OPTIONS = [
+            ["en", "English"], ["es", "Spanish"], ["pt", "Portuguese"], ["fr", "French"],
+            ["de", "German"], ["it", "Italian"], ["zh", "Chinese"], ["ja", "Japanese"],
+            ["ar", "Arabic"], ["hi", "Hindi"], ["vi", "Vietnamese"], ["ru", "Russian"],
+            ["da", "Danish"], ["fi", "Finnish"], ["ms", "Malay"], ["km", "Khmer"],
+            ["th", "Thai"], ["tr", "Turkish"], ["no", "Norwegian"]
+        ];
+        const languageNames = Object.fromEntries(LANGUAGE_OPTIONS);
+
+        const state = {
+            ws: null,
+            roomId: "",
+            targetLanguage: "es",
+            recordingState: "idle",
+            recordingSessionId: "",
+            canDownloadPackage: false,
+            connected: false,
+            joinRejected: false,
+            segments: []
+        };
+
+        function populateLanguages() {
+            languageSelectEl.innerHTML = LANGUAGE_OPTIONS
+                .map(([code, label]) => `<option value="${code}">${label}</option>`)
+                .join("");
+            languageSelectEl.value = state.targetLanguage;
+        }
+
+        function escapeHtml(text) {
+            return (text || "")
+                .replaceAll("&", "&amp;")
+                .replaceAll("<", "&lt;")
+                .replaceAll(">", "&gt;")
+                .replaceAll('"', "&quot;")
+                .replaceAll("'", "&#039;");
+        }
+
+        function languageName(code) {
+            const normalized = (code || "").trim().toLowerCase();
+            return languageNames[normalized] || normalized.toUpperCase() || "Unknown";
+        }
+
+        function setFooterNote(text = "") {
+            if (!footerNoteEl) return;
+            footerNoteEl.textContent = text;
+        }
+
+        function formatTurnTime(ts) {
+            if (!ts) return "";
+            return new Date(ts).toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit"
+            });
+        }
+
+        function setConnectionStatus(text, tone = "warning") {
+            connectionStatusEl.textContent = text;
+            connectionStatusEl.dataset.tone = tone;
+        }
+
+        function setExportOverlay(visible) {
+            exportOverlayEl.classList.toggle("visible", !!visible);
+        }
+
+        function updateExportProgress(progress = 0, stage = "Queued", detail = "") {
+            const pct = Math.max(0, Math.min(100, Number(progress) || 0));
+            exportBarEl.style.width = `${pct}%`;
+            exportStageEl.textContent = stage || "Working…";
+            exportDetailEl.textContent = detail || "";
+            exportPercentEl.textContent = `${Math.round(pct)}%`;
+        }
+
+        function extractFilenameFromResponse(response, fallback = "meeting_package.zip") {
+            const disposition = response.headers.get("Content-Disposition") || "";
+            const match = disposition.match(/filename="?([^";]+)"?/i);
+            return match ? match[1] : fallback;
+        }
+
+        function triggerBlobDownload(blob, filename) {
+            const url = URL.createObjectURL(blob);
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = filename;
+            document.body.appendChild(anchor);
+            anchor.click();
+            anchor.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }
+
+        function finalizedTranscriptItems() {
+            return state.segments
+                .filter((item) => item?.is_final && ((item.original || "").trim() || (item.translation || "").trim()))
+                .map((item) => ({
+                    original: item?.original || "",
+                    translation: item?.translation || "",
+                    src: item?.src || "",
+                    tgt: item?.tgt || state.targetLanguage || "",
+                    ts_ms: item?.ts_ms || null
+                }));
+        }
+
+        function canDownloadNotes() {
+            return finalizedTranscriptItems().length > 0;
+        }
+
+        function canDownloadAnything() {
+            if (state.canDownloadPackage) return true;
+            if (state.recordingSessionId) return true;
+            return false;
+        }
+
+        function isValidRoomCode(roomId) {
+            return /^[a-z0-9-]{8,64}$/i.test((roomId || "").trim());
+        }
+
+        async function ensureJoinableRoom(roomId) {
+            const normalized = (roomId || "").trim().toLowerCase();
+            if (!isValidRoomCode(normalized)) {
+                throw new Error("Enter a valid presenter room code.");
+            }
+            const response = await fetch(`${HTTP_BASE}/api/rooms/${encodeURIComponent(normalized)}`, {
+                method: "GET",
+                cache: "no-store"
+            });
+            if (response.ok) return normalized;
+            const detail = await response.text().catch(() => "");
+            throw new Error(detail || "That room does not exist. Check the presenter room code and try again.");
+        }
+
+        function setRecordingBanner(visible) {
+            if (!recordingBannerEl) return;
+            recordingBannerEl.classList.toggle("visible", !!visible);
+        }
+
+        function syncRecordingUI() {
+            setRecordingBanner(state.recordingState === "recording");
+            if (downloadBtn) downloadBtn.disabled = !canDownloadAnything();
+        }
+
+        function setRoomLabel() {
+            const roomText = state.roomId ? `Room ${state.roomId}` : "Room not joined";
+            currentRoomEl.textContent = roomText;
+            currentRoomEl.dataset.tone = state.roomId ? "ready" : "warning";
+            if (heroRoomCodeEl) heroRoomCodeEl.textContent = state.roomId || "Not joined";
+            if (heroRoomChipEl) heroRoomChipEl.dataset.tone = state.roomId ? "ready" : "warning";
+        }
+
+        function statusLabel(item) {
+            if (item?.is_final) return "Final";
+            if (item?.status === "refining") return "Refining";
+            return "Listening";
+        }
+
+        function statusToneClass(item) {
+            if (item?.is_final) return "is-final";
+            if (item?.status === "refining") return "is-refining";
+            return "is-listening";
+        }
+
+        function upsertSegment(segment) {
+            const index = state.segments.findIndex((item) => item.segment_id === segment.segment_id);
+            if (index === -1) {
+                state.segments.push(segment);
+                return;
+            }
+            state.segments[index] = { ...state.segments[index], ...segment };
+        }
+
+        function applySnapshot(segments) {
+            state.segments = Array.isArray(segments) ? segments.map((segment) => ({ ...segment })) : [];
+            renderTranscriptView();
+            syncRecordingUI();
+        }
+
+        function buildLiveCard(item, variant, turnNumber) {
+            const timeLabel = formatTurnTime(item.ts_ms);
+            const original = escapeHtml(item.original || "Awaiting source speech.");
+            const translation = escapeHtml(item.translation || "Awaiting translated output.");
+            const route = `${escapeHtml(languageName(item.src))} -> ${escapeHtml(languageName(item.tgt || state.targetLanguage))}`;
+            const suffix = timeLabel ? ` - ${escapeHtml(timeLabel)}` : "";
+            const status = escapeHtml(statusLabel(item));
+            const statusClass = statusToneClass(item);
+
+            return `
+                <article class="pair ${variant}">
+                    <div class="pair-meta">
+                        <div class="pair-tags">
+                            <span class="lang-chip">${route}</span>
+                            <span class="status-chip ${statusClass}">${status}</span>
+                        </div>
+                        <span class="pair-label">Turn ${turnNumber}${suffix}</span>
+                    </div>
+                    <div class="pair-original-label">Original</div>
+                    <p class="pair-copy original">${original}</p>
+                    <div class="pair-translation-label">Translation</div>
+                    <p class="pair-copy translation">${translation}</p>
+                </article>
+            `;
+        }
+
+        function renderPlaceholderOnce() {
+            if (state.segments.length > 0) return;
+            stackEl.innerHTML = `
+                <article class="pair placeholder latest">
+                    <div>
+                        <div class="pair-label">Waiting for conversation</div>
+                        <p class="pair-copy original">The source transcript will appear here when the presenter starts speaking.</p>
+                        <p class="pair-copy translation">Translation will appear here in ${escapeHtml(languageName(state.targetLanguage))}.</p>
+                    </div>
+                </article>
+            `;
+            historyListEl.innerHTML = "";
+            historyCountEl.textContent = "0 earlier turns";
+            historyPanelEl.open = false;
+            // footerNoteEl.textContent = state.connected
+            //     ? "Connected. New segments will appear here live."
+            // : "Waiting for room connection.";
+        }
+
+        function renderTranscriptView() {
+            if (state.segments.length === 0) {
+                renderPlaceholderOnce();
+                return;
+            }
+
+            const liveItems = state.segments.slice(-1).reverse();
+            const olderItems = state.segments.slice(0, -1).reverse();
+
+            stackEl.innerHTML = liveItems
+                .map((item, idx) => buildLiveCard(item, idx === 0 ? "latest" : "previous", state.segments.length - idx))
+                .join("");
+
+            historyListEl.innerHTML = olderItems.length === 0
+                ? ""
+                : olderItems
+                    .map((item, idx) => `
+                        <article class="history-item">
+                            ${buildLiveCard(item, "previous", state.segments.length - 1 - idx)}
+                        </article>
+                    `)
+                    .join("");
+
+            historyCountEl.textContent = `${olderItems.length} earlier turn${olderItems.length === 1 ? "" : "s"}`;
+            if (olderItems.length === 0) historyPanelEl.open = false;
+            // footerNoteEl.textContent = `${state.segments.length} segment${state.segments.length === 1 ? "" : "s"} loaded.`;
+            requestAnimationFrame(() => centerEl.scrollTo({ top: 0 }));
+        }
+
+        async function pollMeetingPackageJob(jobId) {
+            while (true) {
+                const response = await fetch(`${HTTP_BASE}/api/export-package/status/${jobId}`, {
+                    method: "GET",
+                    cache: "no-store"
+                });
+                if (!response.ok) {
+                    const detail = await response.text().catch(() => "");
+                    throw new Error(detail || `Export status failed with status ${response.status}`);
+                }
+                const payload = await response.json();
+                updateExportProgress(payload.progress || 0, payload.stage || "Working…", payload.detail || "");
+                if (payload.status === "completed") return payload;
+                if (payload.status === "failed") {
+                    throw new Error(payload.error || payload.detail || "Export failed.");
+                }
+                await new Promise((resolve) => setTimeout(resolve, 1000));
+            }
+        }
+
+        async function downloadMeetingPackageJob(jobId, fallbackName) {
+            const response = await fetch(`${HTTP_BASE}/api/export-package/download/${jobId}`, {
+                method: "GET"
+            });
+            if (!response.ok) {
+                const detail = await response.text().catch(() => "");
+                throw new Error(detail || `Export download failed with status ${response.status}`);
+            }
+            const blob = await response.blob();
+            const filename = extractFilenameFromResponse(response, fallbackName);
+            triggerBlobDownload(blob, filename);
+        }
+
+        async function fetchGeneratedDocuments() {
+            if (!state.roomId) {
+                throw new Error("No active room is available.");
+            }
+            const response = await fetch(`${HTTP_BASE}/api/rooms/${encodeURIComponent(state.roomId)}/export-documents`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ target_language: state.targetLanguage })
+            });
+            if (!response.ok) {
+                const detail = await response.text().catch(() => "");
+                throw new Error(detail || `Export failed with status ${response.status}`);
+            }
+            return await response.json();
+        }
+
+        function buildTranscriptText(which) {
+            return finalizedTranscriptItems()
+                .map((item) => {
+                    const ts = item.ts_ms ? new Date(item.ts_ms).toISOString() + " " : "";
+                    const text = (which === "original" ? item.original : item.translation) || "";
+                    return (ts + text).trim();
+                })
+                .filter(Boolean)
+                .join("\n");
+        }
+
+        function buildParallelCsv() {
+            let csv = "segment,ts,src,tgt,original,translation\n";
+            finalizedTranscriptItems().forEach((item, index) => {
+                const ts = item.ts_ms ? new Date(item.ts_ms).toISOString() : "";
+                const src = (item.src || "").replace(/"/g, '""');
+                const tgt = (item.tgt || "").replace(/"/g, '""');
+                const original = (item.original || "").replace(/"/g, '""');
+                const translation = (item.translation || "").replace(/"/g, '""');
+                csv += `${index + 1},"${ts}","${src}","${tgt}","${original}","${translation}"\n`;
+            });
+            return csv;
+        }
+
+        async function buildLightweightMeetingZip(stamp) {
+            updateExportProgress(15, "Preparing documents", "Collecting translated meeting documents for download.");
+            updateExportProgress(45, "Generating documents", "Creating transcripts, summary, and minutes from the room transcript.");
+            const generated = await fetchGeneratedDocuments();
+            const docs = generated?.documents || [];
+            if (docs.length === 0) {
+                throw new Error("Meeting documents are not available yet. Keep the conversation going for more content.");
+            }
+            updateExportProgress(80, "Building ZIP", "Packaging meeting documents for download.");
+            const zip = new JSZip();
+            docs.forEach((doc, idx) => {
+                const filename = doc.filename || `notes_${idx + 1}.txt`;
+                zip.file(filename, doc.content || "");
+            });
+            return await zip.generateAsync({ type: "blob" });
+        }
+
+        async function startDownload() {
+            if (!state.roomId || !canDownloadAnything()) return;
+            if (downloadBtn) downloadBtn.disabled = true;
+            setExportOverlay(true);
+            try {
+                if (state.canDownloadPackage || state.recordingSessionId) {
+                    const response = await fetch(`${HTTP_BASE}/api/rooms/${encodeURIComponent(state.roomId)}/export-package/start`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ target_language: state.targetLanguage })
+                    });
+                    if (!response.ok) {
+                        const detail = await response.text().catch(() => "");
+                        throw new Error(detail || `Export failed with status ${response.status}`);
+                    }
+                    const started = await response.json();
+                    updateExportProgress(6, "Queued", "Export job created. Waiting for the backend to start processing.");
+                    const finalStatus = await pollMeetingPackageJob(started.job_id);
+                    await downloadMeetingPackageJob(finalStatus.job_id || started.job_id, finalStatus.archive_name || "meeting_package.zip");
+                } else {
+                    throw new Error("Recording is required before download is available.");
+                }
+            } catch (error) {
+                console.error(error);
+                alert(`Could not download the bundle. ${error?.message || ""}`.trim());
+            } finally {
+                setTimeout(() => {
+                    setExportOverlay(false);
+                    updateExportProgress(0, "Queued", "Preparing export.");
+                }, 600);
+                syncRecordingUI();
+            }
+        }
+
+        async function connectToRoom() {
+            const roomId = roomInputEl.value.trim();
+            if (!roomId) {
+                alert("Enter a room code first.");
+                return;
+            }
+
+            if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+                state.ws.close();
+            }
+
+            state.roomId = roomId;
+            state.joinRejected = false;
+            setRoomLabel();
+            setConnectionStatus("Connecting", "warning");
+            // footerNoteEl.textContent = "Connecting to the presenter room.";
+            try {
+                const verifiedRoomId = await ensureJoinableRoom(roomId);
+                state.roomId = verifiedRoomId;
+                roomInputEl.value = verifiedRoomId;
+                setRoomLabel();
+            } catch (error) {
+                state.joinRejected = true;
+                state.connected = false;
+                setConnectionStatus("Connection failed", "error");
+                // footerNoteEl.textContent = error?.message || "Could not join the presenter room.";
+                return;
+            }
+
+            state.ws = new WebSocket(WS_URL);
+
+            state.ws.onopen = () => {
+                state.ws.send(JSON.stringify({
+                    type: "join",
+                    role: "attendee",
+                    room_id: state.roomId,
+                    target_language: state.targetLanguage
+                }));
+            };
+
+            state.ws.onmessage = (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    if (msg.type === "error") {
+                        state.connected = false;
+                        state.joinRejected = true;
+                        setConnectionStatus("Connection failed", "error");
+                        setFooterNote(msg.detail || "Could not join the presenter room.");
+                        try {
+                            state.ws?.close();
+                        } catch { }
+                        return;
+                    }
+                    if (msg.type === "joined") {
+                        state.connected = true;
+                        state.roomId = msg.room_id || state.roomId;
+                        roomInputEl.value = state.roomId;
+                        setRoomLabel();
+                        setConnectionStatus("Connected", "connected");
+                        return;
+                    }
+                    if (msg.type === "room_state") {
+                        state.recordingState = msg.recording_state || state.recordingState;
+                        state.recordingSessionId = msg.recording_session_id || "";
+                        state.canDownloadPackage = !!msg.can_download_package;
+                        if (msg.room_id) {
+                            state.roomId = msg.room_id;
+                            roomInputEl.value = msg.room_id;
+                            setRoomLabel();
+                        }
+                        syncRecordingUI();
+                        return;
+                    }
+                    if (msg.type === "snapshot") {
+                        state.roomId = msg.room_id || state.roomId;
+                        state.targetLanguage = msg.tgt || state.targetLanguage;
+                        languageSelectEl.value = state.targetLanguage;
+                        state.recordingState = msg.recording_state || state.recordingState;
+                        state.recordingSessionId = msg.recording_session_id || "";
+                        state.canDownloadPackage = !!msg.can_download_package;
+                        roomInputEl.value = state.roomId;
+                        setRoomLabel();
+                        applySnapshot(msg.segments || []);
+                        return;
+                    }
+                    if (msg.type !== "segment") return;
+                    upsertSegment({
+                        segment_id: msg.segment_id,
+                        revision: msg.revision,
+                        status: msg.status,
+                        is_final: !!msg.is_final,
+                        original: msg.original || "",
+                        translation: msg.translation || "",
+                        src: msg.src || "",
+                        tgt: msg.tgt || state.targetLanguage,
+                        ts_ms: msg.ts_ms || Date.now()
+                    });
+                    renderTranscriptView();
+                    syncRecordingUI();
+                } catch (error) {
+                    console.error(error);
+                }
+            };
+
+            state.ws.onerror = () => {
+                if (state.joinRejected) return;
+                setConnectionStatus("Connection failed", "error");
+                setFooterNote("Could not reach the presenter room.");
+            };
+            state.ws.onclose = () => {
+                state.connected = false;
+                if (state.joinRejected) return;
+                setConnectionStatus("Disconnected", "warning");
+            };
+        }
+
+        connectBtn.onclick = connectToRoom;
+        if (downloadBtn) downloadBtn.onclick = startDownload;
+        languageSelectEl.onchange = () => {
+            state.targetLanguage = languageSelectEl.value;
+            if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+                state.ws.send(JSON.stringify({
+                    type: "set_target_language",
+                    target_language: state.targetLanguage
+                }));
+            }
+            renderTranscriptView();
+        };
+
+        populateLanguages();
+        setConnectionStatus("Disconnected", "warning");
+        syncRecordingUI();
+        setRoomLabel();
+        renderPlaceholderOnce();
+
+        const params = new URLSearchParams(window.location.search);
+        const initialRoom = params.get("room") || "";
+        const initialLanguage = params.get("lang") || state.targetLanguage;
+        if (initialLanguage) {
+            state.targetLanguage = initialLanguage;
+            languageSelectEl.value = initialLanguage;
+        }
+        if (initialRoom) {
+            roomInputEl.value = initialRoom;
+            connectToRoom();
+        }
+    </script>
+</body>
+
+</html>
