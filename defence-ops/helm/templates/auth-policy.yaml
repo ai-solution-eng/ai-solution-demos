@@ -1,0 +1,20 @@
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: "{{ .Release.Name }}-{{ .Chart.Name }}-auth-policy"
+  namespace: istio-system
+  labels:
+    app: auth-policy
+    {{- include "defence-ops.labels" . | nindent 4 }}
+spec:
+  action: CUSTOM
+  provider:
+    name: oauth2-proxy
+  rules:
+    - to:
+        - operation:
+            hosts:
+              - {{ .Values.ezua.virtualService.endpoint | required ".Values.ezua.virtualService.endpoint is required !\n" }}
+  selector:
+    matchLabels:
+      istio: "ingressgateway"

@@ -1,0 +1,62 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: {{ printf "%s-%s-virtual-service" .Release.Name .Chart.Name }}
+  labels:
+    {{- include "hpe-ezua.labels" . | nindent 4 }}
+spec:
+  gateways:
+    - {{ .Values.ezua.virtualService.istioGateway }}
+  hosts:
+    - {{ .Values.ezua.virtualService.endpoint | required ".Values.ezua.virtualService.endpoint is required !\n" }}
+  http:
+    - match:
+        - uri:
+            prefix: "/api/v1/admin"
+      route:
+        - destination:
+            host: "app-ui.{{ .Release.Namespace }}.svc.cluster.local"
+            port:
+              number: 3000
+    - match:
+        - uri:
+            prefix: "/api/v1/video"
+      route:
+        - destination:
+            host: "video-service.{{ .Release.Namespace }}.svc.cluster.local"
+            port:
+              number: 8000
+    - match:
+        - uri:
+            prefix: "/api/v1/llm"
+      route:
+        - destination:
+            host: "llm-service.{{ .Release.Namespace }}.svc.cluster.local"
+            port:
+              number: 8000
+      timeout: 600s
+    - match:
+        - uri:
+            prefix: "/api/v1/models"
+      route:
+        - destination:
+            host: "llm-service.{{ .Release.Namespace }}.svc.cluster.local"
+            port:
+              number: 8000
+      timeout: 600s
+    - match:
+        - uri:
+            prefix: "/api/v1/kafka"
+      route:
+        - destination:
+            host: "kafka-service.{{ .Release.Namespace }}.svc.cluster.local"
+            port:
+              number: 8000
+    - match:
+        - uri:
+            prefix: "/"
+      route:
+        - destination:
+            host: "app-ui.{{ .Release.Namespace }}.svc.cluster.local"
+            port:
+              number: 3000
