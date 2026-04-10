@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "voice-agent.fullname" . }}
+  labels:
+    {{- include "voice-agent.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+    - port: {{ .Values.service.websocketPort }}
+      targetPort: websocket
+      protocol: TCP
+      name: websocket
+    {{- if .Values.xttsTts.enabled }}
+    - port: {{ .Values.service.ttsPort }}
+      targetPort: tts
+      protocol: TCP
+      name: tts
+    {{- end }}
+  selector:
+    {{- include "voice-agent.selectorLabels" . | nindent 4 }}

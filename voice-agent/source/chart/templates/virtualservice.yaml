@@ -1,0 +1,37 @@
+{{- if .Values.ezua.enabled }}
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: {{ include "voice-agent.fullname" . }}
+  labels:
+    {{- include "voice-agent.labels" . | nindent 4 }}
+spec:
+  hosts:
+    - {{ .Values.ezua.virtualService.endpoint | quote }}
+  gateways:
+    - {{ .Values.ezua.virtualService.istioGateway }}
+  http:
+    # WebSocket route (must come first for proper upgrade handling)
+    - match:
+        - uri:
+            prefix: /ws
+        - headers:
+            upgrade:
+              exact: websocket
+      route:
+        - destination:
+            host: {{ include "voice-agent.fullname" . }}
+            port:
+              number: {{ .Values.service.websocketPort }}
+      timeout: 3600s
+    # Main UI route
+    - match:
+        - uri:
+            prefix: /
+      route:
+        - destination:
+            host: {{ include "voice-agent.fullname" . }}
+            port:
+              number: {{ .Values.service.port }}
+      timeout: 300s
+{{- end }}
