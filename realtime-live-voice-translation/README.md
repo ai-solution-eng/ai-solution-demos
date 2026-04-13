@@ -6,11 +6,14 @@
 | PCAI Deployment Owner       | Francesco Caliva | francesco.caliva@hpe.com |
 
 
-Live voice transcription anad translation for HPE Private Cloud AI environments.
+Realtime Live Voice Transcription and Translation in HPE Private Cloud AI environments.
 
-This application captures microphone audio in the browser, detects speech with Silero VAD, transcribes it with a Whisper-compatible ASR endpoint, translates it with an OpenAI-compatible LLM endpoint, and streams the results back to the UI in real time.
+This application captures microphone audio in the browser, detects speech activity with Voice Activity Detection (using Silero available in the torch hub), transcribes audio by using Automatic Speech Recognition (ASR) by means of Whisper Large v3, translates it with an LLM, and streams the results back to the UI in real time.
 
-It also supports post-conversation exports such as transcripts, multilingual summaries, meeting minutes, and audio download when recording is enabled.
+The presenter can create a meeting room code, which attendees can join, and within the room, they can attend the meeting transcribed in the language they prefer. Presenter and attendees can dynamically change language used for transcription and translation, directly from the front end. 
+
+When recording is enabled, this app supports post-conversation exports such as transcripts, multilingual summaries, meeting minutes, and audio download.
+
 
 ## What The App Does
 
@@ -21,17 +24,7 @@ It also supports post-conversation exports such as transcripts, multilingual sum
 5. Sends the transcript to an LLM for translation.
 6. Displays the latest translated turn in the UI while keeping earlier turns in history.
 7. Optionally generates meeting documents and export packages after the conversation.
-8. Personal Meeting Rooms where attendees can follow along the conversation in their preferred language.
-
-## Key Capabilities
-
-- Real-time transcription and translation over WebSocket
-- Source/target language switching from the UI
-- Browser microphone selection
-- Recording acknowledgement flow for packaged exports
-- Transcript history plus focused latest-turn view
-- Generated summary and meeting minutes downloads
-- Full export package with transcript artifacts and audio when recording is enabled
+8. Presenter can provide personal Meeting Rooms where attendees can follow the conversation along in their preferred language.
 
 ## Supported Languages
 
@@ -56,6 +49,8 @@ The backend currently supports these language codes:
 - `vi` - Vietnamese
 - `zh` - Chinese
 
+The list of languages can be expanded as long as Whisper + the LLM support the desired language. 
+
 Default language selection:
 
 | Variable | Description | Default |
@@ -65,37 +60,70 @@ Default language selection:
 
 ## Architecture
 
-### Frontend
+### Core components Architecture
 
-- Single static page: `index.html`
-- Audio worklet helper: `pcm-worklet.js`
-- Browser APIs used: `MediaRecorder`, `AudioContext`, `WebSocket`, `getUserMedia`
-
-### Backend
-
-- FastAPI application: `server.py`
-- Speech segmentation: Silero VAD via `torch.hub`
-- ASR client: OpenAI-compatible audio transcription API
-- Translation and document generation: OpenAI-compatible chat completions API
-
-### Main Runtime Flow
+```
+┌─────────────────┐     ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│   Microphone    │────▶│   Frontend      │────▶│  FastAPI Backend │────▶│  AI Services    │
+│                 │     |   (HTML/JS)     │◀────│  (WebSocket)     │◀────│  (Whisper/LLM)  │
+└─────────────────┘     └─────────────────┘     └──────────────────┘     └─────────────────┘
+                               │                          │                                                         
+                               ▼                          ▼
+                        ┌──────────────────┐
+                        │  PostgreSQL DB   │
+                        │  (Persistence)   │
+                        └──────────────────┘
+```
 
 ```text
 Browser mic -> WebSocket -> Silero VAD -> Whisper ASR -> LLM translation -> Live UI
                                                    \-> summary/minutes/export package
 ```
 
-## Repository Layout
+### Multi-Room Architecture
 
-| Path | Purpose |
-| --- | --- |
-| `index.html` | Frontend UI |
-| `pcm-worklet.js` | Browser audio worklet for PCM streaming |
-| `server.py` | FastAPI backend and export pipeline |
-| `requirements.txt` | Python dependencies |
-| `Dockerfile` | Backend container image |
-| `Dockerfile-FE` | Frontend container image |
-| `charts/` | Helm packaging assets |
+Presenter can generate a room link, and share with meeting attendees, who can follow along in their desired language.
+If the audio is being recorded, a persisten visual banner will inform them. Once a particular language (e.g. Italian) has been used for translation, the download package (which includes recording, transcripts, translation, minutes and summary) will include content also in that language.
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                           FastAPI Application                            │
+│  ┌──────────────────────────────────────────────────────────────────┐    │
+│  │                      In-Memory ROOMS Dict                        │    │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐               │    │
+│  │  │  Room A     │  │  Room B     │  │  Room C     │               │    │
+│  │  │  src: en    │  │  src: es    │  │  src: en    │               │    │
+│  │  │  tgt: es    │  │  tgt: en    │  │  tgt: fr    │               │    │
+│  │  │  ┌─────────┐│  │  ┌─────────┐│  │  ┌─────────┐│               │    │
+│  │  │  │Presenter││  │  │Presenter││  │  │Presenter││               │    │
+│  │  │  └───┬─────┘│  │  └───┬─────┘│  │  └───┬─────┘│               │    │
+│  │  │      │ 1:N  │  │      │ 1:N  │  │      │ 1:N  │               │    │
+│  │  │  ┌───┴─────┐│  │  ┌───┴─────┐│  │  ┌───┴─────┐│               │    │
+│  │  │  │Attendees││  │  │Attendees││  │  │Attendees││               │    │
+│  │  │  │[es][es] ││  │  │[en][fr] ││  │  │[de][it] ││               │    │
+│  │  │  └─────────┘│  │  └─────────┘│  │  └─────────┘│               │    │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘               │    │
+│  └──────────────────────────────────────────────────────────────────┘    │
+│                                    │                                     │
+│                                    │ async writes                        │
+│                                    ▼                                     │
+│  ┌──────────────────────────────────────────────────────────────────┐    │
+│  │                    SQLAlchemy (asyncpg)                          │    │
+│  └──────────────────────────────────────────────────────────────────┘    │
+└──────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     │
+                            ┌────────┴────────┐
+                            │   PostgreSQL    │
+                            │   (persistence) │
+                            └─────────────────┘
+```
+
+For a detailed technical description, refer to [README_TECHNICAL.md](v.0.3.4/README_TECHNICAL.md)
+
+---
+
+# Deployment
 
 ## Requirements
 
@@ -106,6 +134,7 @@ Before running the app, make sure you have:
 - A Whisper-compatible ASR endpoint
 - An OpenAI-compatible LLM endpoint for translation and document generation
 - A Chromium-based browser recommended for microphone and recording support
+- PostgreSQL installed
 
 ## Configuration
 
@@ -125,31 +154,8 @@ LLM_MODEL=Qwen/Qwen3-30B-A3B-Instruct-2507-FP8
 # Default language pair
 SOURCE_LANGUAGE=en
 TARGET_LANGUAGE=es
+
 ```
-
-### Backend Environment Variables
-
-| Variable | Description | Default |
-| --- | --- | --- |
-| `WHISPER_BASE_URL` | Whisper-compatible API base URL | `""` |
-| `WHISPER_API_KEY` | Whisper API key | `""` |
-| `WHISPER_MODEL` | Whisper model name | `openai/whisper-large-v3-turbo` |
-| `LLM_BASE_URL` | LLM API base URL | `""` |
-| `LLM_API_KEY` | LLM API key | `""` |
-| `LLM_MODEL` | LLM model name | `Qwen/Qwen3-30B-A3B-Instruct-2507-FP8` |
-| `SOURCE_LANGUAGE` | Default source language | `en` |
-| `TARGET_LANGUAGE` | Default target language | `es` |
-| `TORCH_NUM_THREADS` | Torch intra-op threads | `1` |
-| `TORCH_NUM_INTEROP_THREADS` | Torch inter-op threads | `1` |
-| `EXPORT_CHUNK_SECONDS` | Export chunk duration | `30` |
-| `EXPORT_OVERLAP_SECONDS` | Export chunk overlap | `5` |
-| `EXPORT_MAX_ASR_CONCURRENCY` | Parallel ASR jobs during export | `6` |
-| `EXPORT_TEXT_BATCH_SEGMENTS` | Max transcript segments per LLM batch | `20` |
-| `EXPORT_TEXT_BATCH_CHARS` | Max chars per LLM batch | `5000` |
-| `EXPORT_VAD_PAD_MS` | Export VAD padding | `250` |
-| `EXPORT_VAD_MERGE_GAP_MS` | Export VAD merge gap | `400` |
-| `EXPORT_VAD_MAX_UNIT_SECONDS` | Max VAD unit duration | `15` |
-| `EXPORT_JOB_TTL_SECONDS` | Retention time for export jobs | `3600` |
 
 Note: model URL, model name, and API key can also be entered in the frontend advanced settings. Values from the backend are used as defaults.
 
@@ -178,27 +184,13 @@ Serve the static files with any simple web server, for example:
 python3 -m http.server 5173
 ```
 
-### 4. Important Local Networking Note
-
-The current frontend behavior is mixed:
-
-- the WebSocket target is hardcoded to `ws://localhost:8000/ws/translate`
-- some HTTP requests use `window.location.origin` for `/defaults` and `/api/export-*`
-
-Because of that, the cleanest production setup is a same-origin deployment behind AI Essentials, nginx, or another reverse proxy.
-
-If you are running the frontend and backend on different local ports, you may need to:
-
-- add a reverse proxy so the frontend and backend appear under one origin, or
-- adjust the frontend HTTP calls for local testing
-
 ### 5. Open The App
 
-Open the frontend in your browser and allow microphone access when prompted.
+Open the frontend in your browser at `localhost:5173` and allow microphone access when prompted.
 
 ## PCAI Deployment
 
-This project is intended to run well in HPE Private Cloud AI and AI Essentials environments.
+This project is intended to run in HPE Private Cloud AI and AI Essentials environments.
 
 ### Recommended Model Endpoints
 
@@ -228,6 +220,10 @@ Recommended example:
   - `AIOLI_PROGRESS_DEADLINE=10000s`
   - `AIOLI_DISABLE_LOGGER=1`
 
+### PostgreSQL
+To allow persistence of audio segments, one can use PostgreSQL which can be installed in PCAI using the [helm chart available here](https://github.com/ai-solution-eng/frameworks/tree/main/postgresql).
+Persistance is active only if the presenter enables `Recording`. Attendees will be prompted that recording is in progress by means of a visual banner.
+
 ### Import Into AI Essentials
 
 Use the latest packaged release available for this project, for example the chart artifact referenced in `charts/`.
@@ -242,76 +238,15 @@ env:
   LLM_BASE_URL: "LLM_OPENAI_API_COMPATIBLE_URI/v1"
   LLM_API_KEY: "LLM_MLIS_TOKEN"
   LLM_MODEL: "LLM_MODEL_NAME"
+  DATABASE_URL: "postgresql+asyncpg://realtime_voice:REPLACE_ME@postgresdb-postgresql.postgresdb.svc.cluster.local:5432/realtime_voice"
+
 ```
 
 Suggested app metadata:
 
-- Framework name: `Realtime live voice translation`
+Import using Helm chart [realtime-translation-0.3.4.tgz](realtime-translation-0.3.4.tgz).
+```
+- Framework name: `Realtime Live Voice Translation`
 - Namespace: `realtime-translation`
-- Description: `Supports transcription + translation from / to English, French, Italian, German, Spanish. Uses AI to summarize your meeting and create meeting minutes. Try it out.`
-
-## API Surface
-
-### Health And Defaults
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `GET` | `/health` | Liveness check |
-| `GET` | `/ready` | Readiness check |
-| `GET` | `/defaults` | Frontend default settings |
-
-### Export Endpoints
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `POST` | `/api/export-documents` | Generate summary/minutes documents |
-| `POST` | `/api/export-package` | Legacy package generation |
-| `POST` | `/api/export-package/start` | Start async package generation |
-| `GET` | `/api/export-package/status/{job_id}` | Poll export job status |
-| `GET` | `/api/export-package/download/{job_id}` | Download generated archive |
-
-### Streaming Endpoint
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `WS` | `/ws/translate` | Live transcription and translation stream |
-
-## Operational Notes
-
-- On first startup, Silero VAD weights are downloaded via `torch.hub` from `snakers4/silero-vad`.
-- First boot can be slower because model assets may need to be pulled and cached.
-- Recording is gated behind a browser acknowledgement flow before package export is enabled.
-- The UI is optimized for live readability and keeps the latest turn in focus while preserving full transcript data for export.
-
-## Troubleshooting
-
-### The UI Loads But Translation Does Not Work
-
-Check:
-
-- browser microphone permission
-- backend availability on port `8000`
-- Whisper and LLM endpoint reachability
-- frontend origin/proxy configuration for `/defaults`, `/api/export-*`, and `/ws/translate`
-
-### Export Fails
-
-Check:
-
-- recording was enabled if you expect a full meeting package
-- ASR and LLM credentials are valid
-- `ffmpeg` is installed and available to the backend
-
-### First Start Is Slow
-
-This is expected the first time because Torch may download and cache Silero VAD assets.
-
-## Tested Browser
-
-- Google Chrome
-
-## Summary
-
-This application is best suited for live multilingual conversations running on HPE Private Cloud AI, with backend model endpoints provided through AI Essentials or compatible OpenAI-style services.
-
-## To do 
+- Description: `Transcribe and translate meetings. Use AI to summarize your meeting and create meeting minutes. For presenters, share the room code with you attendees allowing them to follow along in their preferred language.`
+```
