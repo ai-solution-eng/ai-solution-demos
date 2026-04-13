@@ -2,6 +2,11 @@
 
 Using HPE Private Cloud AI, you can use Agentic AI workflows to build your organisation's core needs, all secure, on your own private cloud. This is one example of how you can use it to simulate company meetings with AI agents.
 
+| Owner                 | Name              | Email                              |
+| ----------------------|-------------------|------------------------------------|
+| Use Case Owner        | Erdinc Kaya       | kaya@hpe.com                       |
+| PCAI Deployment Owner | Erdinc Kaya       | kaya@hpe.com                       |
+
 ![Demo](demo.mp4)
 
 ## Overview
