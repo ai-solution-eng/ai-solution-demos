@@ -2,6 +2,11 @@
 
 A microservices-based demo application showcasing modern AI-native tactical intelligence capabilities on **HPE Private Cloud AI (PCAI)**.
 
+| Owner                 | Name              | Email                              |
+| ----------------------|-------------------|------------------------------------|
+| Use Case Owner        | Erdinc Kaya       | kaya@hpe.com                       |
+| PCAI Deployment Owner | Erdinc Kaya       | kaya@hpe.com                       |
+
 ## 🚀 Deployment on HPE PCAI 
 
 Use Import Framework wizard to load the helm chart `defence-op.<version>.tgz` and use `defence-ops.png` image as logo. Provide a namespace (you can skip the release name).
