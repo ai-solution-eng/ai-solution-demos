@@ -221,8 +221,66 @@ Recommended example:
   - `AIOLI_DISABLE_LOGGER=1`
 
 ### PostgreSQL
-To allow persistence of audio segments, one can use PostgreSQL which can be installed in PCAI using the [helm chart available here](https://github.com/ai-solution-eng/frameworks/tree/main/postgresql).
-Persistance is active only if the presenter enables `Recording`. Attendees will be prompted that recording is in progress by means of a visual banner.
+To allow persistence, one can use PostgreSQL which can be installed in PCAI using the [helm chart available here](https://github.com/ai-solution-eng/frameworks/tree/main/postgresql).
+
+After importing `PostgreSQL` use a notebook from within AI Essentials to create new user account for the project. Please follow instructions below.
+
+
+```python
+!pip install psycopg
+import psycopg
+conn = psycopg.connect(
+    host="postgresdb-postgresql.postgresdb.svc.cluster.local",
+    port=5432,
+    dbname="postgres",
+    user="postgres",
+    password=${here, use auth: postgresPassword from PostgreSQL's values.yaml file},
+    autocommit=True,
+)
+```
+Specify username (e.g. realtime_voice_user), password (e.g. realtime_voice_password) and create database (e.g. realtime_voice_db), over which realtime_voice_user would have  all priviledges.
+```python
+with conn.cursor() as cur:
+    cur.execute("CREATE USER realtime_voice_user WITH PASSWORD 'realtime_voice_password'")
+    cur.execute("CREATE DATABASE realtime_voice_db OWNER realtime_voice_user")
+    cur.execute("GRANT ALL PRIVILEGES ON DATABASE realtime_voice_db TO realtime_voice_user")
+conn.close()
+print("done")
+```
+
+`username`, `password` and `db name` need to be used when specifying the `DATABASE_URL` in the values.yaml file of the realtime live voice translation app, as follows:
+
+```yaml
+DATABASE_URL: "postgresql+asyncpg://realtime_voice_user:realtime_voice_password@postgresdb-postgresql.postgresdb.svc.cluster.local:5432/realtime_voice_db"
+```
+
+When using the app, data in the database can be retrieved by using:
+
+```python
+import psycopg
+conn = psycopg.connect(
+    host="postgresdb-postgresql.postgresdb.svc.cluster.local",
+    port=5432,
+    dbname="realtime_voice_db",
+    user="realtime_voice_user",
+    password="realtime_voice_password",
+    connect_timeout=5,
+)
+print("Connected")
+with conn.cursor() as cur:
+    cur.execute("select table_name from information_schema.tables where table_schema='public' order by table_name;")
+    print(cur.fetchall())
+    cur.execute("select id, room_id, status, recording_state, started_at from call_sessions order by started_at desc limit 10;")
+    print(cur.fetchall())
+    cur.execute("select session_id, segment_id, source_text from call_segments order by created_at desc limit 10;")
+    print(cur.fetchall())
+```
+
+
+**Note-1:** Please, consider using unique username and password.
+
+**Note-2:** Persistance is active only if the presenter enables `Recording`. Attendees will be prompted that recording is in progress by means of a visual banner.
+
 
 ### Import Into AI Essentials
 
@@ -238,7 +296,7 @@ env:
   LLM_BASE_URL: "LLM_OPENAI_API_COMPATIBLE_URI/v1"
   LLM_API_KEY: "LLM_MLIS_TOKEN"
   LLM_MODEL: "LLM_MODEL_NAME"
-  DATABASE_URL: "postgresql+asyncpg://realtime_voice:REPLACE_ME@postgresdb-postgresql.postgresdb.svc.cluster.local:5432/realtime_voice"
+  DATABASE_URL: "postgresql+asyncpg://realtime_voice_user:realtime_voice_password@postgresdb-postgresql.postgresdb.svc.cluster.local:5432/realtime_voice_db"
 
 ```
 
