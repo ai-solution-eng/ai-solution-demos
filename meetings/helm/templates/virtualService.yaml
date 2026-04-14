@@ -1,0 +1,29 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: {{ printf "%s-%s-virtual-service" .Release.Name .Chart.Name }}
+  labels:
+    {{- include "hpe-ezua.labels" . | nindent 4 }}
+spec:
+  gateways:
+    - {{ .Values.ezua.virtualService.istioGateway }}
+  hosts:
+    - {{ .Values.ezua.virtualService.endpoint | required ".Values.ezua.virtualService.endpoint is required !\n" }}
+  http:
+    - match:
+        - uri:
+            prefix: "/api/v1"
+      route:
+        - destination:
+            host: "meetings-backend.{{ .Release.Namespace }}.svc.cluster.local"
+            port:
+              number: {{ .Values.backend.port }}
+      timeout: 600s
+    - match:
+        - uri:
+            prefix: "/"
+      route:
+        - destination:
+            host: "meetings-frontend.{{ .Release.Namespace }}.svc.cluster.local"
+            port:
+              number: 80

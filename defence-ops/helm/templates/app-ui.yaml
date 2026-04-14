@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: app-ui
+    {{- include "defence-ops.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.appUi.replicas }}
+  selector:
+    matchLabels:
+      app: app-ui
+  template:
+    metadata:
+      labels:
+        app: app-ui
+    spec:
+      containers:
+      - name: app-ui
+        image: {{ .Values.appUi.image }}
+        imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+        ports:
+        - containerPort: 3000
+        env:
+        - name: ENV
+          value: {{ .Values.global.env | quote }}
+        volumeMounts:
+        - name: app-data
+          mountPath: /app/data
+      volumes:
+      - name: app-data
+        persistentVolumeClaim:
+          claimName: app-data
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: app-ui
+    {{- include "defence-ops.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: app-ui
+  ports:
+  - port: {{ .Values.appUi.service.port }}
+    targetPort: 3000
+  type: {{ .Values.appUi.service.type }}

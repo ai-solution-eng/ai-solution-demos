@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: "{{ .Release.Name }}-backend"
+  namespace: "{{ .Release.Namespace }}"
+  labels:
+    app: meetings-backend
+    {{- include "hpe-ezua.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: meetings-backend
+  template:
+    metadata:
+      labels:
+        app: meetings-backend
+    spec:
+      securityContext:
+        fsGroup: 999
+      initContainers:
+      - name: fix-permissions
+        image: busybox
+        command: ["sh", "-c", "chown -R 999:999 /app/data"]
+        volumeMounts:
+        - name: config-dir
+          mountPath: /app/data
+      containers:
+      - name: backend
+        image: "{{ .Values.backend.image }}"
+        ports:
+        - containerPort: {{ .Values.backend.port }}
+        env:
+        - name: ENV
+          value: "{{ .Values.global.env }}"
+        volumeMounts:
+        - name: config-dir
+          mountPath: /app/data
+      volumes:
+      - name: config-dir
+        persistentVolumeClaim:
+          claimName: {{ include "app.fullname" . }}-backend-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: meetings-backend
+  namespace: "{{ .Release.Namespace }}"
+  labels:
+    app: meetings-backend
+    {{- include "hpe-ezua.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: meetings-backend
+  ports:
+  - port: {{ .Values.backend.port }}
+    targetPort: {{ .Values.backend.port }}

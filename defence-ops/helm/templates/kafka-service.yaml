@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka-service
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: kafka-service
+    {{- include "defence-ops.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.kafkaService.replicas }}
+  selector:
+    matchLabels:
+      app: kafka-service
+  template:
+    metadata:
+      labels:
+        app: kafka-service
+    spec:
+      containers:
+      - name: kafka-service
+        image: {{ .Values.kafkaService.image }}
+        imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+        ports:
+        - containerPort: 8000
+        env:
+        - name: ENV
+          value: {{ .Values.global.env | quote }}
+        - name: ADMIN_SERVICE_URL
+          value: "http://app-ui.{{ .Release.Namespace }}.svc.cluster.local:3000"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-service
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: kafka-service
+    {{- include "defence-ops.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: kafka-service
+  ports:
+  - port: {{ .Values.kafkaService.service.port }}
+    targetPort: 8000
+  type: {{ .Values.kafkaService.service.type }}

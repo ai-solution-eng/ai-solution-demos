@@ -320,13 +320,16 @@ def call_vision_language_model(image_base64: str, prompt: str = "Describe this i
     global client, model_id, current_config_status_message
     if not client or not model_id:
         return f"Vision model client not configured. Status: {current_config_status_message}"
+    # Generate a unique request ID to bypass any potential backend caching
+    request_id = datetime.now().strftime("%Y%m%d%H%M%S%f")
+    
     try:
         resp = client.chat.completions.create(
             model=model_id,
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a specialized visual processing agent for analyzing images and videos. You will receive visual input and a user prompt. Please follow the user's instructions and describe or analyze the content accurately."
+                    "content": f"You are a specialized visual processing agent for analyzing images and videos. You will receive visual input and a user prompt. Please follow the user's instructions and describe or analyze the content accurately. [Request ID: {request_id}]"
                 },
                 {
                     "role": "user",
@@ -337,6 +340,7 @@ def call_vision_language_model(image_base64: str, prompt: str = "Describe this i
                 }
             ],
             temperature=0.2,
+            extra_headers={"Cache-Control": "no-cache"}
         )
         return resp.choices[0].message.content
     except Exception as e:
@@ -446,8 +450,11 @@ def normalize_video_for_gpu(input_path: str) -> str:
         return input_path
         
     temp_dir = tempfile.gettempdir()
-    # Create a stable output path based on file path hash to avoid redundant conversions
-    path_hash = hashlib.md5(input_path.encode()).hexdigest()[:8]
+    # Create a stable output path based on file path, size, and modification time to avoid redundant conversions
+    # and ensure fresh normalization if the file changes even with the same name.
+    file_stat = os.stat(input_path)
+    cache_key = f"{input_path}_{file_stat.st_mtime}_{file_stat.st_size}"
+    path_hash = hashlib.md5(cache_key.encode()).hexdigest()[:8]
     output_path = os.path.join(temp_dir, f"gpu_compat_{path_hash}.mp4")
     
     # If already normalized and exists, return it
@@ -512,12 +519,15 @@ def analyse_video_with_vllm(
         if not chosen_model:
             return "No model selected. Provide a Model ID in the configuration or in this tab.", ""
 
+        # Generate a unique request ID to bypass any potential backend caching
+        request_id = datetime.now().strftime("%Y%m%d%H%M%S%f")
+
         resp = client.chat.completions.create(
             model=chosen_model,
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a specialized visual processing agent for analyzing images and videos. You will receive visual input and a user prompt. Please follow the user's instructions and describe or analyze the content accurately."
+                    "content": f"You are a specialized visual processing agent for analyzing images and videos. You will receive visual input and a user prompt. Please follow the user's instructions and describe or analyze the content accurately. [Request ID: {request_id}]"
                 },
                 {
                     "role": "user",
@@ -528,6 +538,7 @@ def analyse_video_with_vllm(
                 }
             ],
             temperature=0.1,
+            extra_headers={"Cache-Control": "no-cache"},
             extra_body={
                 "media_io_kwargs": {
                     "video": {
@@ -832,6 +843,7 @@ def build_ui():
         file_explorer_video = gr.FileExplorer(
             glob="**/*.[mM]*",
             root_dir=active_root_dir,
+            height=200,
             file_count="single",
             label=f"Video files in {active_root_dir}",
             ignore_glob="**/.*",
@@ -840,6 +852,7 @@ def build_ui():
         file_explorer_rtsp = gr.FileExplorer(
             glob="**/*.[mM][pP]4",
             root_dir=active_root_dir,
+            height=200,
             file_count="single",
             label=f"RTSP Sample files in {active_root_dir}",
             ignore_glob="**/.*",

@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llm-service
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: llm-service
+    {{- include "defence-ops.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.llmService.replicas }}
+  selector:
+    matchLabels:
+      app: llm-service
+  template:
+    metadata:
+      labels:
+        app: llm-service
+    spec:
+      serviceAccountName: llm-service-sa
+      containers:
+      - name: llm-service
+        image: {{ .Values.llmService.image }}
+        imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+        ports:
+        - containerPort: 8000
+        env:
+        - name: ENV
+          value: {{ .Values.global.env | quote }}
+        - name: ADMIN_SERVICE_URL
+          value: "http://app-ui.{{ .Release.Namespace }}.svc.cluster.local:3000"
+        - name: CONFIG_PATH
+          value: "/app/data/config.json"
+        volumeMounts:
+        - name: app-data
+          mountPath: /app/data
+      volumes:
+      - name: app-data
+        persistentVolumeClaim:
+          claimName: app-data
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llm-service
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: llm-service
+    {{- include "defence-ops.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: llm-service
+  ports:
+  - port: {{ .Values.llmService.service.port }}
+    targetPort: 8000
+  type: {{ .Values.llmService.service.type }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: llm-service-sa
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: llm-service-cr-{{ .Release.Namespace }}
+rules:
+- apiGroups: ["serving.kserve.io"]
+  resources: ["inferenceservices"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: llm-service-crb-{{ .Release.Namespace }}
+subjects:
+- kind: ServiceAccount
+  name: llm-service-sa
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: ClusterRole
+  name: llm-service-cr-{{ .Release.Namespace }}
+  apiGroup: rbac.authorization.k8s.io
