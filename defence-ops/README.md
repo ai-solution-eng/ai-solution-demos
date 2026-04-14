@@ -51,11 +51,14 @@ First step is to set up the `system config`. Make sure you select the correct AP
 - Select a video from dropdown menu for each grid box. Depending on your network speed, videos may take a while to load (but they will be cached for future use) when you click the play icon.
 
 - Shield and Eye icons trigger pre-defined AI requests, while the chat box allows for custom queries. Shield triggers "Threat Detection" and Eye triggers "Object Identification" requests.
+  - Examples of relevant questions are shared in [**EXAMPLES.md**](EXAMPLES.md)
 
 - When using chatbox, 
     - you can change the `Assistant Instructions` to customize the model behaviour, 
     - select a specific video for `Context` or use `Smart Context` to ask questions on what is actually seen on the screen (multiple videos + kafka messages),
     - enable 'thinking' mode to let the model think before answering and show its reasoning process.
+
+More information in [**USAGE.md**](USAGE.md)
 
 ## 🛠 Microservices Architecture
 
@@ -63,6 +66,8 @@ First step is to set up the `system config`. Make sure you select the correct AP
 - **`video-service`**: FastAPI service handling MJPEG streaming, video uploads, and sequence frame extraction.
 - **`llm-service`**: FastAPI service integrating with KServe endpoints for Vision Language Model (VLM) analysis and tactical chat.
 - **`kafka-service`**: FastAPI service providing real-time telemetry streaming via SSE and tactical alert generation.
+
+More information in [**DIAGRAM.md**](DIAGRAM.md)
 
 ## 🏗 Operations & Maintenance
 
