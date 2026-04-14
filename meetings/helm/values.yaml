@@ -1,0 +1,19 @@
+ezua:
+  virtualService:
+    endpoint: "meetings.${DOMAIN_NAME}"
+    istioGateway: "istio-system/ezaf-gateway"
+
+global:
+  env: "production" # development, production
+
+backend:
+  image: erdincka/meetings-backend:latest
+  port: 8000
+  persistence:
+    size: 1Gi
+    storageClass: "nfs-csi"
+
+
+frontend:
+  image: erdincka/meetings-frontend:latest
+  port: 3000

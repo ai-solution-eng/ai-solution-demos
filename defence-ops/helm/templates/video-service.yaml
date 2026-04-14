@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: video-service
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: video-service
+    {{- include "defence-ops.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.videoService.replicas }}
+  selector:
+    matchLabels:
+      app: video-service
+  template:
+    metadata:
+      labels:
+        app: video-service
+    spec:
+      containers:
+      - name: video-service
+        image: {{ .Values.videoService.image }}
+        imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+        ports:
+        - containerPort: 8000
+        env:
+        - name: ENV
+          value: {{ .Values.global.env | quote }}
+        resources:
+          requests:
+            memory: "16Gi"
+            cpu: "4000m"
+          limits:
+            memory: "32Gi"
+            cpu: "8000m"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: video-service
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: video-service
+    {{- include "defence-ops.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: video-service
+  ports:
+  - port: {{ .Values.videoService.service.port }}
+    targetPort: 8000
+  type: {{ .Values.videoService.service.type }}

@@ -1,0 +1,44 @@
+# Byte-compiled / optimized / DLL files
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# OS / IDE files
+.DS_Store
+.idea/
+.vscode/
+
+# Local configuration
+.env
+.venv
+venv/
+env/
+.tilt_state.json
+
+# Documentation / README
+README.md
+docs/
+tests/
+
+# Docker related
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# Tilt
+Tiltfile
+
+# Helm
+helm/
+
+# Data
+data/
+config.json

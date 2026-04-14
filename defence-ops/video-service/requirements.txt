@@ -1,0 +1,7 @@
+fastapi==0.109.2
+uvicorn==0.27.1
+pydantic==2.6.1
+structlog==24.1.0
+opencv-python-headless==4.9.0.80
+numpy==1.26.4
+python-multipart==0.0.9

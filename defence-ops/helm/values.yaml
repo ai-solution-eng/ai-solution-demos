@@ -1,0 +1,37 @@
+ezua:
+  virtualService:
+    endpoint: "defence-ops.${DOMAIN_NAME}"
+    istioGateway: "istio-system/ezaf-gateway"
+
+namespace: defence-ops
+
+global:
+  imagePullPolicy: Always
+  env: "production" # development, production
+appUi:
+  image: erdincka/defence-ops-app-ui:latest
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 3000
+
+videoService:
+  image: erdincka/defence-ops-video-service:latest
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 8000
+
+llmService:
+  image: erdincka/defence-ops-llm-service:latest
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 8000
+
+kafkaService:
+  image: erdincka/defence-ops-kafka-service:latest
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 8000
