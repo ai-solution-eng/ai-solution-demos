@@ -8,6 +8,7 @@
         { code: "it", label: "Italian", nativeLabel: "Italiano", popular: true },
         { code: "zh", label: "Chinese", nativeLabel: "中文", popular: true },
         { code: "ja", label: "Japanese", nativeLabel: "日本語", popular: true },
+        { code: "ko", label: "Korean", nativeLabel: "한국어", popular: true },
         { code: "ar", label: "Arabic", nativeLabel: "العربية", popular: true, rtl: true },
         { code: "hi", label: "Hindi", nativeLabel: "हिन्दी", popular: true },
         { code: "vi", label: "Vietnamese", nativeLabel: "Tiếng Việt", popular: true },

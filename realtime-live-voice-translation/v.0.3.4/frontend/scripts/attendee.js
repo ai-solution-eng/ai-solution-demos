@@ -16,6 +16,7 @@
     };
 
     app.populateLanguages();
+    app.initializeLanguagePicker();
     app.setConnectionStatus("Disconnected", "warning");
     app.syncRecordingUI();
     app.setRoomLabel();
@@ -25,8 +26,7 @@
     const initialRoom = params.get("room") || "";
     const initialLanguage = params.get("lang") || app.state.targetLanguage;
     if (initialLanguage) {
-        app.state.targetLanguage = initialLanguage;
-        refs.languageSelectEl.value = initialLanguage;
+        app.setTargetLanguage(initialLanguage);
     }
     if (initialRoom) {
         refs.roomInputEl.value = initialRoom;

@@ -25,9 +25,28 @@
                         <label for="roomInput">Meeting code</label>
                         <input id="roomInput" placeholder="Paste the presenter room code" />
                     </div>
-                    <div class="field-group">
-                        <label for="languageSelect">Translation language</label>
-                        <select id="languageSelect"></select>
+                    <div class="field-group language-field" id="languageField">
+                        <label for="languageTrigger">Translation language</label>
+                        <input id="languageSelect" type="hidden" value="es" />
+                        <button id="languageTrigger" class="language-trigger" type="button" aria-haspopup="dialog"
+                            aria-expanded="false" aria-controls="languagePicker">
+                            <span class="language-trigger-copy">
+                                <span class="language-trigger-label" data-language-label>Spanish</span>
+                                <span class="language-trigger-meta" data-language-meta>Español · ES</span>
+                            </span>
+                            <span class="language-trigger-caret">▾</span>
+                        </button>
+                        <div id="languagePicker" class="language-picker" hidden>
+                            <div class="language-picker-head">
+                                <input id="languageSearch" class="language-search" type="text"
+                                    placeholder="Search language or code" autocomplete="off" spellcheck="false" />
+                            </div>
+                            <div class="language-picker-body">
+                                <div id="languageList" class="language-option-list" role="listbox"
+                                    aria-label="Translation languages"></div>
+                                <div id="languageEmpty" class="language-empty" hidden>No languages match that search.</div>
+                            </div>
+                        </div>
                     </div>
                     <button id="connectBtn" class="btn-primary" type="button">Join room</button>
                     <!-- <button id="downloadBtn" class="btn-secondary" type="button" disabled>Download</button> -->

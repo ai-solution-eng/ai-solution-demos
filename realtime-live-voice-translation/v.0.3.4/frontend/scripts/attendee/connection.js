@@ -77,8 +77,7 @@
                 }
                 if (msg.type === "snapshot") {
                     app.state.roomId = msg.room_id || app.state.roomId;
-                    app.state.targetLanguage = msg.tgt || app.state.targetLanguage;
-                    refs.languageSelectEl.value = app.state.targetLanguage;
+                    app.setTargetLanguage(msg.tgt || app.state.targetLanguage);
                     app.state.recordingState = msg.recording_state || app.state.recordingState;
                     app.state.recordingSessionId = msg.recording_session_id || "";
                     app.state.canDownloadPackage = !!msg.can_download_package;
