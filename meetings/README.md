@@ -7,7 +7,7 @@ Using HPE Private Cloud AI, you can use Agentic AI workflows to build your organ
 | Use Case Owner        | Erdinc Kaya       | kaya@hpe.com                       |
 | PCAI Deployment Owner | Erdinc Kaya       | kaya@hpe.com                       |
 
-![Demo Video](https://storage.googleapis.com/ai-solution-engineering-videos/public/Meeting-agentic-simulation.mp4)
+[**Demo Video**](https://storage.googleapis.com/ai-solution-engineering-videos/public/Meeting-agentic-simulation.mp4)
 
 ## Overview
 Agentic Meetings is an advanced application that simulates company meetings using agentic AI workflows. By defining scenarios, objectives, and attendee profiles, the application orchestrates AI agents to engage in collaborative discussions, solve problems, and generate comprehensive meeting outcomes.
