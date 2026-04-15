@@ -371,9 +371,9 @@
             app.state.workletNode.connect(gain).connect(app.state.audioCtx.destination);
 
             app.state.recordingActive = false;
+            refs.startBtn.disabled = true;
             syncPresenterRecordingUI();
             app.setStatus("Live");
-            refs.startBtn.disabled = true;
             updateStopButtonState();
         } catch (error) {
             console.error(error);
