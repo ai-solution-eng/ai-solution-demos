@@ -24,7 +24,7 @@ Features:
 - Diarization runs on CPU, minimizing GPU requirements
 
 Recordings:
-- [Short version, customer focused [06:51]](pending)
+- [Short version, customer focused [06:51]] - pending 
 
 ## Description
 
@@ -42,7 +42,6 @@ This demo deploys four components on PCAI that together form an end-to-end offli
 **Architecture diagram:**
 
 ![Architecture](./architecture.png)
-```
 
 ### Workflow
 
