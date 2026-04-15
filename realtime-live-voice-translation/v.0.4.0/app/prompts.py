@@ -145,39 +145,75 @@ def build_chunk_notes_prompt(transcript_text: str) -> str:
     )
 
 
-def build_fact_check_classification_prompt(text: str) -> str:
+def build_fact_check_claim_extraction_prompt(text: str) -> str:
     return (
         "You are a careful fact-checking assistant.\n"
-        "Assess whether the statement contains a concrete factual claim that should be reviewed.\n"
+        "Identify whether the utterance contains a primary concrete factual claim that can be checked.\n"
+        "Return valid JSON only with this exact structure:\n"
+        '{"has_checkable_claim":true,"claim_text":"...","speaker_stance":"asserts|endorses|rejects|reports|unclear","motivation":"..."}\n'
+        "Rules:\n"
+        "- Extract the primary factual proposition being discussed, even when the utterance includes conversational framing.\n"
+        "- Ignore wrappers such as agreement, disagreement, attribution, opinion markers, hedges, filler, or discourse phrases when extracting the claim text.\n"
+        "- Preserve the factual proposition itself, including negation, quantities, modality, and named entities.\n"
+        "- Do not flip, simplify, or rewrite the claim into its opposite.\n"
+        "- Use speaker_stance='asserts' when the speaker presents the claim directly.\n"
+        "- Use speaker_stance='endorses' when the speaker explicitly agrees with or supports the claim.\n"
+        "- Use speaker_stance='rejects' when the speaker disputes the claim but still states it.\n"
+        "- Use speaker_stance='reports' when the speaker attributes the claim to others or reports it indirectly.\n"
+        "- Use speaker_stance='unclear' when the stance cannot be determined.\n"
+        "- Return has_checkable_claim=false and an empty claim_text only when there is no concrete factual claim to check.\n"
+        "- Keep motivation to one concise sentence.\n\n"
+        f"Utterance:\n{text.strip()}"
+    )
+
+
+def build_fact_check_classification_prompt(
+    raw_text: str,
+    claim_text: str,
+    speaker_stance: str,
+) -> str:
+    return (
+        "You are a careful fact-checking assistant.\n"
+        "Assess whether the normalized claim should be reviewed for factual reliability.\n"
         "Return valid JSON only with this exact structure:\n"
         '{"factual_claim":true,"status":"clean|controversial|likely_false","motivation":"...","search_query":"..."}\n'
         "Rules:\n"
-        "- Prefer 'clean' unless the statement makes a concrete, checkable factual claim.\n"
-        "- Use 'clean' when the statement is incomplete, malformed, rhetorical, subjective, speculative, comedic, quoted without context, or lacks enough context to verify.\n"
+        "- Classify the normalized claim text, not the conversational wrapper around it.\n"
+        "- Ignore framing such as agreement, disagreement, attribution, reported speech, or opinion markers when deciding whether the claim should be reviewed.\n"
+        "- Prefer 'clean' unless the normalized claim is a concrete, checkable factual claim.\n"
+        "- Use 'clean' when the normalized claim is incomplete, malformed, rhetorical, subjective, speculative, comedic, or still lacks enough context to verify.\n"
         "- Use 'controversial' only for concrete claims that appear genuinely disputed or uncertain after a cautious first pass.\n"
-        "- Use 'likely_false' only when the wording itself already strongly suggests the claim is probably false or clearly misleading.\n"
+        "- Use 'likely_false' only when the claim wording itself already strongly suggests the claim is probably false or clearly misleading.\n"
         "- Keep motivation to one concise sentence.\n"
         "- search_query should be a short web search query only when evidence would help. Otherwise return an empty string.\n\n"
-        f"Statement:\n{text.strip()}"
+        f"Raw utterance:\n{raw_text.strip()}\n\n"
+        f"Normalized claim:\n{claim_text.strip()}\n\n"
+        f"Speaker stance:\n{speaker_stance.strip()}"
     )
 
 
 def build_fact_check_evidence_prompt(
-    text: str,
+    raw_text: str,
+    claim_text: str,
+    speaker_stance: str,
     sources: list[dict[str, str]],
 ) -> str:
     return (
         "You are a careful fact-checking assistant.\n"
-        "Use the evidence below to classify the statement.\n"
+        "Use the evidence below to classify the normalized claim.\n"
         "Return valid JSON only with this exact structure:\n"
         '{"status":"clean|controversial|likely_false","motivation":"..."}\n'
         "Rules:\n"
-        "- Prefer 'clean' when the evidence is weak, mixed, incomplete, or the statement is too vague to verify confidently.\n"
-        "- Use 'clean' when the evidence supports the statement or the statement is not a concrete factual claim.\n"
+        "- Evaluate the normalized claim text, not the conversational wrapper around it.\n"
+        "- Ignore framing such as agreement, disagreement, attribution, reported speech, or opinion markers when weighing the evidence.\n"
+        "- Prefer 'clean' when the evidence is weak, mixed, incomplete, or the normalized claim is too vague to verify confidently.\n"
+        "- Use 'clean' when the evidence supports the claim or the claim is not a concrete factual claim.\n"
         "- Use 'controversial' only when credible evidence shows a real dispute or context-dependent disagreement around the claim.\n"
         "- Use 'likely_false' only when multiple credible sources strongly contradict the statement.\n"
         "- Keep motivation to one concise sentence that mentions the evidence quality.\n"
         "- Do not invent sources beyond those provided.\n\n"
-        f"Statement:\n{text.strip()}\n\n"
+        f"Raw utterance:\n{raw_text.strip()}\n\n"
+        f"Normalized claim:\n{claim_text.strip()}\n\n"
+        f"Speaker stance:\n{speaker_stance.strip()}\n\n"
         f"Evidence JSON:\n{json.dumps(sources, ensure_ascii=False)}"
     )

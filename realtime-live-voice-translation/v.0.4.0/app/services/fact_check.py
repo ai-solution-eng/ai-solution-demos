@@ -7,6 +7,7 @@ import httpx
 from openai import AsyncOpenAI
 
 from app.prompts import (
+    build_fact_check_claim_extraction_prompt,
     build_fact_check_classification_prompt,
     build_fact_check_evidence_prompt,
 )
@@ -15,6 +16,7 @@ from app.schemas.api import FactCheckResult, FactCheckSource
 SEARCH_FACT_CHECK_STATUSES = {"controversial", "likely_false"}
 VISIBLE_FACT_CHECK_STATUSES = {"likely_false"}
 FACT_CHECK_STATUSES = {"clean", "controversial", "likely_false", "error"}
+CLAIM_STANCES = {"asserts", "endorses", "rejects", "reports", "unclear"}
 _JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 
@@ -57,6 +59,24 @@ def normalize_fact_check_result(payload: dict[str, Any] | None, *, claim_text: s
         sources=sources,
     )
     return result.model_dump()
+
+
+def normalize_claim_extraction_result(payload: dict[str, Any] | None) -> dict[str, Any]:
+    data = payload or {}
+    has_checkable_claim = bool(data.get("has_checkable_claim"))
+    claim_text = " ".join(str(data.get("claim_text") or "").split())
+    speaker_stance = str(data.get("speaker_stance") or "unclear").strip().lower()
+    if speaker_stance not in CLAIM_STANCES:
+        speaker_stance = "unclear"
+    motivation = str(data.get("motivation") or "").strip()
+    if not claim_text:
+        has_checkable_claim = False
+    return {
+        "has_checkable_claim": has_checkable_claim,
+        "claim_text": claim_text,
+        "speaker_stance": speaker_stance,
+        "motivation": motivation,
+    }
 
 
 def _extract_json_payload(text: str) -> dict[str, Any]:
@@ -151,10 +171,39 @@ async def fact_check_text(
             claim_text=cleaned,
         )
 
+    extracted = normalize_claim_extraction_result(
+        await _run_json_prompt(
+            llm_client=llm_client,
+            llm_model=llm_model,
+            prompt=build_fact_check_claim_extraction_prompt(cleaned),
+            max_tokens=180,
+        )
+    )
+    claim_text = extracted.get("claim_text") or ""
+    speaker_stance = extracted.get("speaker_stance") or "unclear"
+    extraction_motivation = extracted.get("motivation") or ""
+
+    if not extracted.get("has_checkable_claim") or not claim_text:
+        return normalize_fact_check_result(
+            {
+                "status": "clean",
+                "motivation": extraction_motivation or "No concrete factual claim detected.",
+                "provider": "llm",
+                "claim_text": "",
+                "checked_at": checked_at,
+                "sources": [],
+            },
+            claim_text="",
+        )
+
     initial = await _run_json_prompt(
         llm_client=llm_client,
         llm_model=llm_model,
-        prompt=build_fact_check_classification_prompt(cleaned),
+        prompt=build_fact_check_classification_prompt(
+            cleaned,
+            claim_text,
+            speaker_stance,
+        ),
         max_tokens=220,
     )
     factual_claim = bool(initial.get("factual_claim"))
@@ -170,23 +219,28 @@ async def fact_check_text(
         "status": status if status in FACT_CHECK_STATUSES else "clean",
         "motivation": motivation,
         "provider": "llm",
-        "claim_text": cleaned,
+        "claim_text": claim_text,
         "checked_at": checked_at,
         "sources": [],
     }
 
     if result["status"] not in SEARCH_FACT_CHECK_STATUSES or not tavily_api_key:
-        return normalize_fact_check_result(result, claim_text=cleaned)
+        return normalize_fact_check_result(result, claim_text=claim_text)
 
-    query = search_query or cleaned
+    query = search_query or claim_text
     sources = await search_tavily(query=query, api_key=tavily_api_key, max_sources=max_sources)
     if not sources:
-        return normalize_fact_check_result(result, claim_text=cleaned)
+        return normalize_fact_check_result(result, claim_text=claim_text)
 
     evidence_result = await _run_json_prompt(
         llm_client=llm_client,
         llm_model=llm_model,
-        prompt=build_fact_check_evidence_prompt(cleaned, sources),
+        prompt=build_fact_check_evidence_prompt(
+            cleaned,
+            claim_text,
+            speaker_stance,
+            sources,
+        ),
         max_tokens=180,
     )
     result.update(
@@ -197,4 +251,4 @@ async def fact_check_text(
             "sources": sources,
         }
     )
-    return normalize_fact_check_result(result, claim_text=cleaned)
+    return normalize_fact_check_result(result, claim_text=claim_text)
