@@ -12,8 +12,7 @@ Organizations generate vast amounts of audio from meetings, court hearings, comp
 The pipeline combines two AI capabilities: speech-to-text (OpenAI Whisper large-v3-turbo), and speaker diarization (pyannote.audio community-1). These are deployed as independent, reusable services on PCAI and connected through a single chat-based interface via OpenWebUI.
 
 - Accelerates meeting documentation from hours of manual work to minutes of automated processing
-- Provides speaker-attributed transcripts with word-level timestamps and confidence scores
-- Enables structured meeting minutes generation (key points, decisions, action items) via LLM summarization
+- Provides speaker-attributed transcripts 
 - Keeps all audio data on-premises — no external API calls, suitable for legal, compliance, and government use cases
 
 Features:
