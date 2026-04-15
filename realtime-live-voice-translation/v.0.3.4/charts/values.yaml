@@ -42,7 +42,7 @@ images:
   frontend:
     repository: "fcaliva/realtime-voice-translation-fe"
     pullPolicy: "IfNotPresent"
-    tag: "0.3.5"
+    tag: "0.3.4"
 
 resources:
   backend:
