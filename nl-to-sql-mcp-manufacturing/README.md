@@ -195,7 +195,7 @@ Now we need to as well add the MCP Server Connection. Therefore navigate in Open
 - Add a new Tool Server
 - Change the type to MCP Streamable HTTP 
 - Add the URL of your ezPresto MCP Server, for AIE 1.12 and above this can be retrieved from Data Engineering >> Data Sources >> MCP Server when you opened that menu click on copy endpoint. (if you don't have that button you might have an AIE version where MCP is not an official feature yet. For demo and non production use you can import it as custom framework still. If you are interested in that reach out to me.)
-![MCP Server Endpoint URL](https://github.com/ai-solution-eng/ai-solution-demos/blob/nl2sql/nl-to-sql-mcp-manufacturing/images/MCPServer.png)
+![MCP Server Endpoint URL](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/nl-to-sql-mcp-manufacturing/images/MCPServer.png)
 - Add the JWT token of the user you want to have the Presto Connections of. The AI gets access to all datasources this user has access to.
 - Provide the ID and Name PrestoMCP
 ![OpenWebUI Add Presto MCP Server to Open WebUI](https://github.com/ai-solution-eng/ai-solution-demos/blob/nl2sql/nl-to-sql-mcp-manufacturing/images/OpenWebUI_PrestoMCP.png)
