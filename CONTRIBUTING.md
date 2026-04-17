@@ -2,6 +2,7 @@
 
 We welcome all contributions to the repository. If you have updates/fixes to existing demos or net new PCAI validated use case demos you would like to submit, please create a PR. 
 Once a PR is created, **we will reach out to you to review your changes**. 
+
 For new demos, we prefer that you have it up-and-running in an environment, and ready to show for the review.
 Otherwise, we will import it before (if demo setup is long) or during the review (if demo setup is short).
 
@@ -13,8 +14,15 @@ New demos' file and folder structure is up to you, as long as the following is r
 - **All the files required to set up and run the demo must be available** in the folder, except for:
   - Frameworks helm charts that are available in [our frameworks repo](https://github.com/ai-solution-eng/frameworks): this does not apply to helm charts you created for custom applications, we need those in the demo folder.
     - If you are using a helm chart of a non-custom application, that is missing from the frameworks repository, please open a PR to add this helm chart to that repo.  
-  - Datasets large enough to be unfit for a Git repository: if such a dataset is needed for the demo, we may ask you to send it to us during the review. It will be copied into our cloud storage, and the link to it should be added to the README.
-  - Demo video recording: demo recording is optional, but the video itself shouldn't be hosted on GitHub, so if you have one, we'll ask to send it to us during the review. It will be copied into our cloud storage, and the link to it should be added to the README.
+  - Datasets large enough to be unfit for a Git repository: if such a dataset is needed for the demo, we may ask you to send it to us during the review. It will be copied into our cloud storage, and the link to it will be added to the README.
+  - Demo video recording: demo recording is optional, but the video itself shouldn't be hosted on GitHub, so if you have one, we'll ask to send it to us during the review. It will be copied into our cloud storage, and the link to it will be added to the README.
+- You must know **whether you want to be the demo owner or not**. We will add the following ownership chart to the README if missing:
+
+| Owner                 | Name              | Email                              |
+| ----------------------|-------------------|------------------------------------|
+| Use Case Owner        | John Doe          | john.doe@hpe.com                   |
+| PCAI Deployment Owner | Jane Doe          | jane.doe@hpe.com                   |
+
 
 The following section provides more detailed guidelines to follow for an ideal contribution. Following them is recommended, but not mandatory, we may merge PRs that do not perfectly follow them. 
 
@@ -24,7 +32,7 @@ Here are the guidelines that contributors should preferably follow to add new de
 
 - Each demo has its own folder. The name of the folder must be **max 32 characters long**
 
-- The README.md file should preferably have the same structure as (**README-template.md**)[README-template.md].
+- The README.md file should preferably have the same structure as [**README-template.md**](README-template.md).
 
 - The demo's folder **must not contain** any temporary file. Examples of files and folders that must be avoided are:
     - node_modules
