@@ -123,6 +123,7 @@
                     src,
                     tgt,
                     ts_ms,
+                    finalized_at_ms: msg.finalized_at_ms ?? null,
                     fact_check: msg.fact_check || {}
                 });
 

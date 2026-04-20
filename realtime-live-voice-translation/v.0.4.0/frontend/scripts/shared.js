@@ -1,4 +1,5 @@
 (() => {
+    const DEFAULT_TRANSCRIPT_FINAL_HOLD_MS = 3000;
     const LANGUAGE_OPTIONS = [
         { code: "en", label: "English", nativeLabel: "English", popular: true },
         { code: "es", label: "Spanish", nativeLabel: "Español", popular: true },
@@ -53,6 +54,12 @@
             .replaceAll(">", "&gt;")
             .replaceAll('"', "&quot;")
             .replaceAll("'", "&#039;");
+    }
+
+    function parseTranscriptFinalHoldMs(value, fallback = DEFAULT_TRANSCRIPT_FINAL_HOLD_MS) {
+        const parsed = Number.parseInt(value, 10);
+        if (!Number.isFinite(parsed)) return fallback;
+        return Math.max(0, parsed);
     }
 
     function languageName(code) {
@@ -124,6 +131,7 @@
     }
 
     window.RealtimeTranslationShared = Object.freeze({
+        DEFAULT_TRANSCRIPT_FINAL_HOLD_MS,
         LANGUAGE_OPTIONS,
         escapeHtml,
         factCheckIsFlagged,
@@ -133,6 +141,7 @@
         formatTurnTime,
         isValidRoomCode,
         languageName,
+        parseTranscriptFinalHoldMs,
         resolveBackendHttpBase,
         resolveBackendWsUrl,
         statusLabel,

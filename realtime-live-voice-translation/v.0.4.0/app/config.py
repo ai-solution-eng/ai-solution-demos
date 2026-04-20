@@ -18,6 +18,16 @@ def env_flag(name: str, default: bool) -> bool:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
+
+def env_non_negative_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return default
+
 TORCH_NUM_THREADS = max(1, int(os.getenv("TORCH_NUM_THREADS", "1")))
 TORCH_NUM_INTEROP_THREADS = max(1, int(os.getenv("TORCH_NUM_INTEROP_THREADS", "1")))
 
@@ -124,6 +134,7 @@ LIVE_MIN_PARTIAL_AUDIO_MS = max(
     MIN_AUDIO_MS, int(os.getenv("LIVE_MIN_PARTIAL_AUDIO_MS", "700"))
 )
 LIVE_CONTEXT_TURNS = max(0, int(os.getenv("LIVE_CONTEXT_TURNS", "3")))
+TRANSCRIPT_FINAL_HOLD_MS = env_non_negative_int("TRANSCRIPT_FINAL_HOLD_MS", 3000)
 
 
 def build_default_runtime_config() -> dict[str, object]:
@@ -145,6 +156,9 @@ def build_default_runtime_config() -> dict[str, object]:
             "model": FACT_CHECK_MODEL,
             "max_sources": FACT_CHECK_MAX_SOURCES,
             "tavily_api_key": TAVILY_API_KEY,
+        },
+        "ui": {
+            "transcript_final_hold_ms": TRANSCRIPT_FINAL_HOLD_MS,
         },
     }
 
@@ -176,5 +190,8 @@ def build_defaults_payload() -> dict[str, object]:
             "vad_pad_ms": EXPORT_VAD_PAD_MS,
             "vad_merge_gap_ms": EXPORT_VAD_MERGE_GAP_MS,
             "vad_max_unit_seconds": EXPORT_VAD_MAX_UNIT_SECONDS,
+        },
+        "ui": {
+            "transcript_final_hold_ms": TRANSCRIPT_FINAL_HOLD_MS,
         },
     }

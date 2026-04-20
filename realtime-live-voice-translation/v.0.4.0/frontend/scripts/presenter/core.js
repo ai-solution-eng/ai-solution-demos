@@ -103,7 +103,16 @@
             roomId: "",
             previousRoomId: "",
             joined: false,
-            factCheckToastTimer: null
+            factCheckToastTimer: null,
+            transcriptFinalHoldMs: shared.DEFAULT_TRANSCRIPT_FINAL_HOLD_MS,
+            transcriptHoldTimer: null
+        }
+    };
+
+    app.clearTranscriptHoldTimer = function clearTranscriptHoldTimer() {
+        if (app.state.transcriptHoldTimer) {
+            clearTimeout(app.state.transcriptHoldTimer);
+            app.state.transcriptHoldTimer = null;
         }
     };
 
@@ -265,6 +274,14 @@
 
             if (defaults.whisper?.has_api_key) refs.whisperApiKeyEl.placeholder = "WHISPER_API_KEY (set on server)";
             if (defaults.llm?.has_api_key) refs.llmApiKeyEl.placeholder = "LLM_API_KEY (set on server)";
+
+            app.state.transcriptFinalHoldMs = shared.parseTranscriptFinalHoldMs(
+                defaults.ui?.transcript_final_hold_ms,
+                app.state.transcriptFinalHoldMs
+            );
+            if (typeof app.renderTranscriptView === "function") {
+                app.renderTranscriptView();
+            }
         } catch (error) {
             console.warn("Could not load defaults:", error);
         }

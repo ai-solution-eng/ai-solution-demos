@@ -27,6 +27,39 @@
         return list[index];
     }
 
+    function resolveVisibleTranscriptItems(items = [], finalHoldMs = 0, nowMs = Date.now()) {
+        if (items.length === 0 || finalHoldMs <= 0) {
+            return { visibleItems: items, refreshAtMs: null };
+        }
+
+        const latestItem = items[items.length - 1];
+        if (latestItem?.is_final) {
+            return { visibleItems: items, refreshAtMs: null };
+        }
+
+        for (let index = items.length - 2; index >= 0; index -= 1) {
+            const candidate = items[index];
+            if (!candidate?.is_final) continue;
+
+            const finalizedAtMs = Number(candidate.finalized_at_ms || 0);
+            if (!finalizedAtMs) {
+                return { visibleItems: items, refreshAtMs: null };
+            }
+
+            const refreshAtMs = finalizedAtMs + finalHoldMs;
+            if (refreshAtMs > nowMs) {
+                return {
+                    visibleItems: items.slice(0, index + 1),
+                    refreshAtMs
+                };
+            }
+
+            return { visibleItems: items, refreshAtMs: null };
+        }
+
+        return { visibleItems: items, refreshAtMs: null };
+    }
+
     function replaceSegments(target, segments = []) {
         target.length = 0;
         segments.forEach((segment) => target.push({ ...segment }));
@@ -152,8 +185,18 @@
         return typeof value === "function" ? value(targetLanguage) : (value || "");
     }
 
-    function renderTranscriptPanels({ items = [], refs, targetLanguage = "", placeholder, timeSeparator = " - " }) {
-        if (items.length === 0) {
+    function renderTranscriptPanels({
+        items = [],
+        refs,
+        targetLanguage = "",
+        placeholder,
+        timeSeparator = " - ",
+        finalHoldMs = 0
+    }) {
+        const renderState = resolveVisibleTranscriptItems(items, finalHoldMs);
+        const visibleItems = renderState.visibleItems;
+
+        if (visibleItems.length === 0) {
             refs.stackEl.innerHTML = `
                 <article class="pair placeholder latest">
                     <div>
@@ -166,16 +209,16 @@
             refs.historyListEl.innerHTML = "";
             refs.historyCountEl.textContent = "0 earlier turns";
             refs.historyPanelEl.open = false;
-            return;
+            return renderState;
         }
 
-        const liveItems = items.slice(-1).reverse();
-        const olderItems = items.slice(0, -1).reverse();
+        const liveItems = visibleItems.slice(-1).reverse();
+        const olderItems = visibleItems.slice(0, -1).reverse();
 
         refs.stackEl.innerHTML = liveItems
             .map((item, index) => buildLiveCard(item, {
                 variant: index === 0 ? "latest" : "previous",
-                turnNumber: items.length - index,
+                turnNumber: visibleItems.length - index,
                 targetLanguage,
                 timeSeparator
             }))
@@ -187,7 +230,7 @@
                 <article class="history-item">
                     ${buildLiveCard(item, {
                         variant: "previous",
-                        turnNumber: items.length - 1 - index,
+                        turnNumber: visibleItems.length - 1 - index,
                         targetLanguage,
                         timeSeparator
                     })}
@@ -197,6 +240,7 @@
         refs.historyCountEl.textContent = `${olderItems.length} earlier turn${olderItems.length === 1 ? "" : "s"}`;
         if (olderItems.length === 0) refs.historyPanelEl.open = false;
         requestAnimationFrame(() => refs.centerEl.scrollTo({ top: 0 }));
+        return renderState;
     }
 
     function buildTranscriptText(items, which) {
@@ -228,6 +272,7 @@
         buildTranscriptText,
         finalizedTranscriptItems,
         flaggedFactCheckItems,
+        resolveVisibleTranscriptItems,
         renderTranscriptPanels,
         renderFactCheckPanel,
         replaceSegments,

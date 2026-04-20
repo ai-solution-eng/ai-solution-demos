@@ -52,7 +52,16 @@
             connected: false,
             joinRejected: false,
             segments: [],
-            factCheckToastTimer: null
+            factCheckToastTimer: null,
+            transcriptFinalHoldMs: shared.DEFAULT_TRANSCRIPT_FINAL_HOLD_MS,
+            transcriptHoldTimer: null
+        }
+    };
+
+    app.clearTranscriptHoldTimer = function clearTranscriptHoldTimer() {
+        if (app.state.transcriptHoldTimer) {
+            clearTimeout(app.state.transcriptHoldTimer);
+            app.state.transcriptHoldTimer = null;
         }
     };
 
@@ -283,6 +292,23 @@
         if (app.state.canDownloadPackage) return true;
         if (app.state.recordingSessionId) return true;
         return false;
+    };
+
+    app.loadDefaultsFromBackend = async function loadDefaultsFromBackend() {
+        try {
+            const response = await fetch(`${HTTP_BASE}/defaults`);
+            if (!response.ok) return;
+            const defaults = await response.json();
+            app.state.transcriptFinalHoldMs = shared.parseTranscriptFinalHoldMs(
+                defaults.ui?.transcript_final_hold_ms,
+                app.state.transcriptFinalHoldMs
+            );
+            if (typeof app.renderTranscriptView === "function") {
+                app.renderTranscriptView();
+            }
+        } catch (error) {
+            console.warn("Could not load defaults:", error);
+        }
     };
 
     app.ensureJoinableRoom = async function ensureJoinableRoom(roomId) {

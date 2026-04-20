@@ -44,6 +44,7 @@ async def build_room_snapshot(
                     "original": segment.get("original") or "",
                     "src": segment.get("src") or room.get("src") or DEFAULT_SOURCE_LANGUAGE,
                     "ts_ms": segment.get("ts_ms"),
+                    "finalized_at_ms": segment.get("finalized_at_ms"),
                     "translations": dict(segment.get("translations") or {}),
                     "fact_check": dict(segment.get("fact_check") or {}),
                 }
@@ -82,6 +83,7 @@ async def build_room_snapshot(
                 "src": segment["src"],
                 "tgt": requested_target,
                 "ts_ms": segment["ts_ms"],
+                "finalized_at_ms": segment.get("finalized_at_ms"),
                 "fact_check": dict(segment.get("fact_check") or {}),
             }
         )

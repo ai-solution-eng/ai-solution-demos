@@ -21,6 +21,7 @@
     app.syncRecordingUI();
     app.setRoomLabel();
     app.renderPlaceholderOnce();
+    app.loadDefaultsFromBackend();
 
     const params = new URLSearchParams(window.location.search);
     const initialRoom = params.get("room") || "";

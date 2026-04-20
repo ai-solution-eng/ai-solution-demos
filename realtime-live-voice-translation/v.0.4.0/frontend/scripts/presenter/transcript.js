@@ -7,6 +7,16 @@
         return transcriptUi.finalizedTranscriptItems(app.transcript);
     }
 
+    function syncTranscriptHoldRefresh(refreshAtMs = null) {
+        app.clearTranscriptHoldTimer();
+        if (!refreshAtMs) return;
+        const delayMs = Math.max(0, refreshAtMs - Date.now());
+        app.state.transcriptHoldTimer = window.setTimeout(() => {
+            app.state.transcriptHoldTimer = null;
+            renderTranscriptView();
+        }, delayMs);
+    }
+
     function canDownloadNotes() {
         return finalizedTranscriptItems().length > 0;
     }
@@ -63,6 +73,7 @@
     function renderPlaceholderOnce() {
         if (app.transcript.length > 0) return;
         transcriptUi.renderTranscriptPanels({
+            finalHoldMs: 0,
             items: [],
             refs,
             placeholder: {
@@ -72,13 +83,15 @@
             },
             timeSeparator: " • "
         });
+        syncTranscriptHoldRefresh(null);
         renderFactCheckView();
     }
 
     function renderTranscriptView() {
-        transcriptUi.renderTranscriptPanels({
+        const renderState = transcriptUi.renderTranscriptPanels({
             items: app.transcript,
             refs,
+            finalHoldMs: app.state.transcriptFinalHoldMs,
             placeholder: {
                 label: "Awaiting live session",
                 original: "Start the session to see real-time source transcript appear here.",
@@ -86,6 +99,7 @@
             },
             timeSeparator: " • "
         });
+        syncTranscriptHoldRefresh(renderState?.refreshAtMs || null);
         renderFactCheckView();
     }
 
@@ -114,6 +128,7 @@
     function resetUIAndContext() {
         app.transcript.length = 0;
         app.recordedTranscript.length = 0;
+        app.clearTranscriptHoldTimer();
         renderTranscriptView();
         app.hideFactCheckToast();
         syncDownloadAvailability();

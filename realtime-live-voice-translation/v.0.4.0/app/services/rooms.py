@@ -106,6 +106,7 @@ async def update_room_segment(
     ts_ms: int,
     tgt: str,
     translation: str,
+    finalized_at_ms: int | None = None,
 ) -> dict[str, Any]:
     normalized = normalize_room_id(room_id)
     async with ROOMS_LOCK:
@@ -123,6 +124,7 @@ async def update_room_segment(
                 "original": original,
                 "src": src,
                 "ts_ms": ts_ms,
+                "finalized_at_ms": finalized_at_ms if is_final else None,
                 "translations": {},
                 "fact_check": {},
             }
@@ -143,6 +145,7 @@ async def update_room_segment(
                     or room.get("src")
                     or DEFAULT_SOURCE_LANGUAGE,
                     "ts_ms": segment.get("ts_ms"),
+                    "finalized_at_ms": segment.get("finalized_at_ms"),
                     "translations": dict(segment.get("translations") or {}),
                     "fact_check": dict(segment.get("fact_check") or {}),
                 }
@@ -157,6 +160,7 @@ async def update_room_segment(
                     "original": original,
                     "src": src,
                     "ts_ms": ts_ms,
+                    "finalized_at_ms": finalized_at_ms if is_final else segment.get("finalized_at_ms"),
                 }
             )
         cleaned_translation = (translation or "").strip()
@@ -173,6 +177,7 @@ async def update_room_segment(
             "original": segment.get("original") or "",
             "src": segment.get("src") or room.get("src") or DEFAULT_SOURCE_LANGUAGE,
             "ts_ms": segment.get("ts_ms"),
+            "finalized_at_ms": segment.get("finalized_at_ms"),
             "translations": dict(segment.get("translations") or {}),
             "fact_check": dict(segment.get("fact_check") or {}),
         }

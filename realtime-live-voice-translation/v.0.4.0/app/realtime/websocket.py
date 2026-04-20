@@ -186,6 +186,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 "src": segment.get("src") or cfg["src"],
                 "tgt": target_language,
                 "ts_ms": segment.get("ts_ms"),
+                "finalized_at_ms": segment.get("finalized_at_ms"),
                 "fact_check": dict(segment.get("fact_check") or {}),
             }
             ok = await send_room_connection_payload(connection, payload)
@@ -346,7 +347,13 @@ async def websocket_endpoint(websocket: WebSocket):
 
         segment_state = emitted_segments.setdefault(
             segment_id,
-            {"revision": 0, "original": "", "translation": "", "is_final": False},
+            {
+                "revision": 0,
+                "original": "",
+                "translation": "",
+                "is_final": False,
+                "finalized_at_ms": None,
+            },
         )
 
         previous_is_final = bool(segment_state.get("is_final"))
@@ -361,6 +368,8 @@ async def websocket_endpoint(websocket: WebSocket):
         segment_state["original"] = original
         segment_state["translation"] = translation
         segment_state["is_final"] = is_final
+        if is_final and not previous_is_final:
+            segment_state["finalized_at_ms"] = int(time.time() * 1000)
         status = "final"
         if not is_final:
             status = "listening" if segment_state["revision"] == 1 else "refining"
@@ -376,6 +385,7 @@ async def websocket_endpoint(websocket: WebSocket):
             ts_ms=ts_ms,
             tgt=tgt,
             translation=translation,
+            finalized_at_ms=segment_state.get("finalized_at_ms"),
         )
         await broadcast_segment_to_room(room_segment)
 

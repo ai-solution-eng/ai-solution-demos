@@ -105,6 +105,7 @@
                     src: msg.src || "",
                     tgt: msg.tgt || app.state.targetLanguage,
                     ts_ms: msg.ts_ms || Date.now(),
+                    finalized_at_ms: msg.finalized_at_ms ?? null,
                     fact_check: msg.fact_check || {}
                 });
                 app.renderTranscriptView();
