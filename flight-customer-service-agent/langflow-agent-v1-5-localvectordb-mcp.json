@@ -4669,9 +4669,9 @@
                 "value": {
                   "config": {
                     "headers": {
-                      "Authorization": "Bearer eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICI3Y1ZTc3lkNzNySlltVWtkdW5QTE1JbGFSdmM1Y0UxVlM3YWdFUUItNldzIn0.eyJleHAiOjE3NzYyNDM1MzMsImlhdCI6MTc3NjI0MTczMywiYXV0aF90aW1lIjoxNzc2MjM5MzA3LCJqdGkiOiIyZGM2MmQ2MC0yNTJjLTRlMGMtYmU5ZS04OTc1NzRkOWJjNjEiLCJpc3MiOiJodHRwczovL2tleWNsb2FrLmFpLWFwcGxpY2F0aW9uLnBjYWkwMTA0LmxkNy5ocGVjb2xvLm5ldC9yZWFsbXMvVUEiLCJzdWIiOiIzNmI5YzEyOC0zNGYwLTQzOTYtODcxZi1lZjBmNTA1YzU5OGIiLCJ0eXAiOiJCZWFyZXIiLCJhenAiOiJ1YSIsIm5vbmNlIjoiem9FVmI3N0wzcXJpZGhyeXBpNmVOU0VSenB1ZXdIM2QtYTRQUUVteWhnUSIsInNlc3Npb25fc3RhdGUiOiI3MzY1NTZmNi1lYjE0LTRlYTAtOGRhNC1kYWNmYzNjOTYxMjciLCJhY3IiOiIxIiwic2NvcGUiOiJvcGVuaWQgb2ZmbGluZV9hY2Nlc3MgZW1haWwgcHJvZmlsZSBsZDdzMjAzcjEwOnVhIiwic2lkIjoiNzM2NTU2ZjYtZWIxNC00ZWEwLThkYTQtZGFjZmMzYzk2MTI3IiwidWlkIjoiMTAwMDAwMjYiLCJlbWFpbF92ZXJpZmllZCI6ZmFsc2UsImdpZCI6IjEwMDEiLCJuYW1lIjoiSXNhYmVsbGUgU3RlaW5oYXVzZXIiLCJuYW1lc3BhY2UiOiJwcm9qZWN0LXVzZXItaXNhYmVsbGUtc3RlaW5oYXVzZXIiLCJncm91cHMiOlsidWEtZW5hYmxlZCIsIm9mZmxpbmVfYWNjZXNzIiwiYWRtaW4iLCJkZWZhdWx0LXJvbGVzLXVhIiwidW1hX2F1dGhvcml6YXRpb24iXSwicHJlZmVycmVkX3VzZXJuYW1lIjoiaXNhYmVsbGUtc3RlaW5oYXVzZXIiLCJwb3NpeF91c2VybmFtZSI6ImlzYWJlbGxlLXN0ZWluaGF1c2VyIiwiZ2l2ZW5fbmFtZSI6IklzYWJlbGxlIiwiZmFtaWx5X25hbWUiOiJTdGVpbmhhdXNlciIsImVtYWlsIjoiaXNhYmVsbGUuc3RlaW5oYXVzZXJAaHBlLmNvbSJ9.n5QgiAbKFol63iNJGRROt0aC0DMeoI4GEppCILvK-xCncRu5mBz0MiUzI1H0_LHVJy5GgeGE83AFr6TyjH6ZvRZUHtHAuMb7CNVhuj0gX3VUrnACF-PCY34_qkf8IkA6l-E-ouHbEsqhfOGc5EPLEV-_hspfWsrD_JAPeTIyk39O8ajaHKbdnXYkDuH2xHsII7aa4PWwU9-3ZDc0k-ZftxSSq5BVFIOVz93hX4qioxiznAwermfXejG-kk8XPTiL4W2cDapfoR5I0PjphoojeMRxkbsFfpuT5UUFrTR5zRTo59dFcuoDZayCM4bXGgZWcsYmhyQmuzEJ69DfneooLA"
+                      "Authorization": "Bearer YOURTOKEN"
                     },
-                    "url": "https://ezprestomcp.ai-application.pcai0104.ld7.hpecolo.net/mcp",
+                    "url": "https://ezprestomcp.YOURDOMAIN/mcp",
                     "verify_ssl": true
                   },
                   "name": "ezpresto"
