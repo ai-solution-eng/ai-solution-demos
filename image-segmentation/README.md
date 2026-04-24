@@ -46,7 +46,9 @@ This demo supports single-channel segmentation, as well as semantic segmentation
 
 ## Step 1 - Use a Jupyter notebook to fine-tune models
 * **Start a Jupyter notebook** that you will use to fine tune models. When creating it:
-  * Specify the available by default **jupyter-pytorch-cuda-full** image. This image already contains all the dependencies to run the training script, you won't have to install any package afterwards.
+  * Specify the available by default **jupyter-pytorch-cuda-full** image. This demo has originally been developed using an older PyTorch version, so if the training script does not run with success, you may need to downgrade the following packages with those commands:
+    * **pip install torch==2.1.0**
+    * **pip install torchvision==0.16.0**
   * **Use 1 GPU**. More GPUs will be useless. Not mandatory, but training will be excessively slow without one.
   * Increase the default CPU/RAM. **5 CPUs / 10 Gi RAM is enough**.
 * **Prepare files in the notebook**:
@@ -77,9 +79,10 @@ This demo supports single-channel segmentation, as well as semantic segmentation
 * **Chose your own namespace to deploy the application**. The pvc holding both datasets and local checkpoints must be available to that namespace.
 * Edit framework values: **nothing required to change if you followed recommendations** (deploying in your own namespace, creating "datasets" and "checkpoints" folder directly under "user-pvc"). Otherwise:
   * pvc: Name of the PVC that contains the datasets and checkpoints folders. Should be available in deployment namespace.
-  * datasetsPath: Path to the datasets folder under pvc
-  * checkpointsPath: Path to the checkpoints folder under pvc
-  * **resources.appLimits.cpu:** number of CPUs used by the application. Default to 5. **The application will load PyTorch models and run predictions with them**, 5 CPUs for doing so is fine, increasing the number may make the predictions faster, decreasing it will for sure make the whole application slower.
+  * env.DATASETS_PATH: Path to the datasets folder under pvc
+  * env.CHECKPOINTS_PATH: Path to the checkpoints folder under pvc
+  * Proxy variables are available for you to define under env, in case you need them.
+  * **resources.appLimits.cpu:** number of CPUs used by the application. Default to 5. **The application will load PyTorch models and run predictions using CPU only**, 5 CPUs for doing so is fine, but you may experience potentially very slow predictions. Increase this number to get predictions faster (e.g. 10, 20, 30 CPUs...).
   * The other values should not be changed
 * Finish the deployment
 
