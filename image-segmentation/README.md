@@ -22,6 +22,12 @@ This customizable PCAI demo consists of:
 
 This demo supports single-channel segmentation, as well as semantic segmentation (with multiple distinct categories to segment).
 
+
+**Recording**
+* [**Demo recording**](https://storage.googleapis.com/ai-solution-engineering-videos/public/image_segmentation_demo_video.mp4)
+
+
+
 # High-level demo architecture
 
 ![Architecture](images/architecture.PNG)
