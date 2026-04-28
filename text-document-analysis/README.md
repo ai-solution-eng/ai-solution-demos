@@ -1,4 +1,4 @@
-# BAR (Batch Agreement Robot)
+# BAR (Batch Agreement Robot) for Document Analysis
 
 | Owner                       | Name                              | Email                                     |
 | ----------------------------|-----------------------------------|-------------------------------------------|
