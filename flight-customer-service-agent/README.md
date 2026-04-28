@@ -16,7 +16,7 @@
 - [Short version](https://storage.googleapis.com/ai-solution-engineering-videos/public/PCAI%20Demo%20-%20AI%20User%20(Agentic%20Workflow%20with%20OSS%20Langflow).mp4)
 - [Long version](https://hpe-my.sharepoint.com/:v:/p/hoang_phan/EUVnjGRr8wJGlCk2Hw5IwOkB8WQ0gpZ5zV9KKUXIHCSl5g?e=uexDHe&nav=eyJyZWZlcnJhbEluZm8iOnsicmVmZXJyYWxBcHAiOiJTdHJlYW1XZWJBcHAiLCJyZWZlcnJhbFZpZXciOiJTaGFyZURpYWxvZy1MaW5rIiwicmVmZXJyYWxBcHBQbGF0Zm9ybSI6IldlYiIsInJlZmVycmFsTW9kZSI6InZpZXcifX0%3D)
 
-## Qdrant installation in PCAI (only for langflow-agent-v1-4.json)
+## Qdrant installation in PCAI (only for langflow-agent-v1-4.json and langflow-agent-v1-5.json)
 
 1. [Install Qdrant within a PCAI environment using the following chart](https://github.com/ai-solution-eng/frameworks/tree/main/qdrant)
 2. [Follow these instructions to install the helm chart](https://support.hpe.com/hpesc/public/docDisplay?docId=a00aie16hen_us&docLocale=en_US&page=ManageClusters/importing-applications.html)
@@ -26,8 +26,8 @@
 1. [Install Langflow within a PCAI environment using the following chart](https://github.com/ai-solution-eng/frameworks/tree/main/langflow)
 2. [Follow these instructions to install the helm chart](https://support.hpe.com/hpesc/public/docDisplay?docId=a00aie16hen_us&docLocale=en_US&page=ManageClusters/importing-applications.html)
 
-**Note:** The latest workflow version (i.e. `langflow-agent-v1-4.json`) was tested in Langflow version `1.7.3`. Please consider installing this version to avoid conflicts or issues with it in older/newer versions.
-
+**Note:** The latest workflow version (i.e. `langflow-agent-v1-4.json` and `langflow-agent-v1-5.json`) were tested in Langflow version `1.7.3`. Please consider installing this version to avoid conflicts or issues with it in older/newer versions.
+The latest workflow `langflow-agent-v1-5.json` uses the ezPrestoMCP sever which is a feature in AIE 1.12 and above.
 ---
 
 # MLIS setup in PCAI
@@ -67,7 +67,7 @@
 
 # Fake customer data setup
 
-## EzPresto Table Setup - Adding as Data Source in PCAI (only for `langflow-agent-v1-4.json`)
+## EzPresto Table Setup - Adding as Data Source in PCAI (only for `langflow-agent-v1-4.json` and langflow-agent-v1-5.json)
 
 Upload the [provided fake customer data](data/fake_customer_info.csv) in the  `/shared` folder.
 
@@ -116,7 +116,7 @@ Once the file is uploaded, Add New Data Source in the Structured Data section
 
 # Setup before the demo
 
-## Qdrant Setup (only for `langflow-agent-v1-4.json`)
+## Qdrant Setup (only for `langflow-agent-v1-4.json` and langflow-agent-v1-5.json)
 
 1. Once Qdrant has been deployed, in AI Essentials navigate to "Tools & Frameworks", search for the Qdrant card and click "Open" to access the UI (you may need to append `/dashboard` at the end of the URL)
 2. Navigate to "Console" in the Qdrant UI
@@ -163,7 +163,7 @@ print(token)
             - If you want to skip SSL verify, set this to the predictor's internal K8s service name (e.g. `http://<model_deployment_name>.<deployment_namespace>.svc.cluster.local/v1`)
     - **`LLM_TOKEN` (Credential):**
             - Set this to your LLM model API Token created earlier during MLIS setup step
-    - **Only for `langflow-agent-v1-4.json`:**
+    - **Only for `langflow-agent-v1-4.json` and `langflow-agent-v1-5.json`:**
         - **`QDRANT_ENDPOINT` (Generic):**
             - Set this to the Qdrant endpoint URL from Qdrant setup step
             - If you want to skip SSL verify, set this to the Qdrant internal K8s service name (e.g. `http://<qdrant_service_name>.<qdrant_namespace>.svc.cluster.local`)
@@ -174,10 +174,16 @@ print(token)
             - Set this to the AstraDB endpoint URL from AstraDB setup step
         - **`ASTRA_DB_TOKEN` (Credential):**
             - Set this to the AstraDB token created earlier during AstraDB setup step
-5. Upload the [provided flow if using `Langflow 1.4.X`](langflow-agent-v1-4.json) into any project by clicking the upload button
+4. For `langflow-agent-v1-5.json` you need to configure the MCP Server connection in Langflow, remember this is only available in AIE 1.12 and above. Therefore navigate within the Langflow settings to `MCP Servers` and select `Add MCP Server`
+    - Type `Streamable HTTP/SSE`
+    - Name `ezpresto`
+    - Streamable HTTP/SSE URL > take this from AIE navigating to Data Engineering > Data Sources > MCP Server
+    - Headers `Authorization` `Bearer JWT Token` Set this JWT to your AI Essentials user token you saved in an earlier step (remember that by default these tokens expire after 30 minutes)
+5. Upload the [provided flow if using `Langflow 1.4.X`](langflow-agent-v1-4-localvectordb.json) into any project by clicking the upload button
+    - if you want to use Presto MCP server use the [`Langflow 1.5.X`](langflow-agent-v1-5-localvectordb-mcp.json)
     - If planning to use AstraDB to load the fake customer data, use either [`Langflow 1.3.X`](langflow-agent-v1-2.json) or [`Langflow 1.2.X`](langflow-agent-v1-2.json) older workflows instead
 ![alt text](imgs/flowupload.png)
-6. Upload the [provided `EzPresto Tool`](EzPresto_tool.json) by clicking the upload button
+6. Upload the [provided `EzPresto Tool`](EzPresto_tool.json) by clicking the upload button (not required for `langflow-agent-v1-5.json`)
 7. Open the flow and make sure to [re-upload the flight policy file](data/delta_refund_policy.pdf) to the `File` component
 ![alt text](imgs/fileupload_v1-4.png)
 8. Ensure you configure the necessary components' fields with the Langflow Global Environment Variables we configured earlier (**Note:** If you cannot see any of the fields mentioned before for a given component, hover over the component and click "Controls", select the fields to display them in the component and close)
@@ -198,8 +204,8 @@ print(token)
             - Port: `6333`
             - URL: Click in the Globe icon and select the `QDRANT_ENDPOINT` environment variable       
         - gRPC Port: `6334`
-    - **EzPresto tool Component**
+    - **EzPresto tool Component** (not required for `langflow-agent-v1-5.json`)
         - User Token: Set this to your AI Essentials user token you saved in an earlier step (remember that by default these tokens expire after 30 minutes)
-10. Open the playground and test the workflow with a question like:
+9. Open the playground and test the workflow with a question like:
     > "My name is John and my flight is A105, I was downgraded to coach from first class, what is my refund?"
-    - The model should return the correct answer of $90 after calling both tools included (`FlightPolicy` and `FlightPassenger`)
+    - The model should return the correct answer of $90 after calling both tools included (`FlightPolicy` and `FlightPassenger`) for `langflow-agent-v1-5.json` requesting the schema of the table before executing a query

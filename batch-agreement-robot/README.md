@@ -23,6 +23,10 @@ The BAR application features:
 - **Batch Processing**: Concurrent document processing with real-time progress tracking
 - **Result Generation**: Download consolidated results as Excel spreadsheets
 
+**Recording:**
+
+- [**Demo recording**](https://storage.googleapis.com/ai-solution-engineering-videos/public/BAR_demo_video.mp4)
+
 ## Description
 
 

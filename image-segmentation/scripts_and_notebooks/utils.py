@@ -480,7 +480,8 @@ def get_data_loaders(data_dir,
                      min_scale=0.8,
                      max_scale=1.2,
                      enable_horizontal_flip=True,
-                     return_datasets=False):
+                     return_datasets=False,
+                     num_workers=4):
     
     subfiles = os.listdir(data_dir)
     
@@ -547,13 +548,13 @@ def get_data_loaders(data_dir,
         return (train_dataset, val_dataset)
     
     train_loader = DataLoader(train_dataset, batch_size=batch_size,
-                             shuffle=True)
+                             shuffle=True, num_workers=num_workers)
     val_loader = DataLoader(val_dataset, batch_size=batch_size,
-                             shuffle=False)
+                             shuffle=False, num_workers=num_workers)
     
     if contains_test:
         test_loader = DataLoader(test_dataset, batch_size=batch_size,
-                                 shuffle=False)
+                                 shuffle=False, num_workers=num_workers)
         return (train_loader, val_loader, test_loader)
     else:
         return (train_loader, val_loader)

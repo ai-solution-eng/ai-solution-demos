@@ -6,7 +6,7 @@ metadata:
   name: {{ .Release.Name }}-deploy
   namespace: {{ .Release.Namespace }}
 spec:
-  replicas: {{ .Values.replicaCount }}
+  replicas: 1
   selector:
     matchLabels:
       app: {{ .Release.Name }}
@@ -25,19 +25,14 @@ spec:
         resources:
           limits:
             cpu: {{ .Values.resources.appLimits.cpu }}
+            memory: {{ .Values.resources.appLimits.memory }}
         ports:
         - containerPort: {{ .Values.service.appPort }}
         env:
-        - name: DATASETS_PATH
-          value: {{ .Values.datasetsPath }}
-        - name: CHECKPOINTS_PATH
-          value: {{ .Values.checkpointsPath }}
-        - name: SECRET_FILE_PATH
-          value: {{ .Values.secretFilePath }}
-        - name: MLFLOW_S3_ENDPOINT_URL
-          value: {{ .Values.mlflowS3EndpointURL }}
-        - name: TRACKING_URI
-          value: {{ .Values.trackingURI }}
+        {{- range $key, $value := .Values.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
         command: ["/bin/sh", "-c", "streamlit run /app/app.py -- --datasets-path /mnt/${DATASETS_PATH} --checkpoints-path /mnt/${CHECKPOINTS_PATH} --secret-file-path /etc/secrets/ezua/.auth_token --mlflow-s3-endpoint-url ${MLFLOW_S3_ENDPOINT_URL} --tracking-uri ${TRACKING_URI}"]
         volumeMounts:
         - mountPath: "/mnt" # should have datasets/ and checkpoints/ folders

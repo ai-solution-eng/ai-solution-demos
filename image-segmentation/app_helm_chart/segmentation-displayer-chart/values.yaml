@@ -1,19 +1,28 @@
-replicaCount: 1
-
 # Name of the PVC that contains the datasets under "datatsets/" and local model checkpoints under "checkpoints/"
 pvc: user-pvc
 
 appImage: tpomas/segmentation-display-app:0.0.12
 
-# Path to datasets and checkpoints under provided pvc
-datasetsPath: datasets
-checkpointsPath: checkpoints
+env:
+  # Path to datasets and checkpoints under provided pvc
+  DATASETS_PATH: datasets
+  CHECKPOINTS_PATH: checkpoints
+  
+  # The following should be defined if using a proxy
+  #HTTP_PROXY: ""
+  #http_proxy: ""
+  #HTTPS_PROXY: ""
+  #https_proxy: ""
+  #NO_PROXY: ".cluster.local,.svc,.svc.cluster,.svc.cluster.local,localhost"
+  #no_proxy: ".cluster.local,.svc,.svc.cluster,.svc.cluster.local,localhost"
+  
+  # The following is not expected to change
+  SECRET_FILE_PATH: "/etc/secrets/ezua/.auth_token"
+  MLFLOW_S3_ENDPOINT_URL: "http://local-s3-service.ezdata-system.svc.cluster.local:30000"
+  TRACKING_URI: "http://mlflow.mlflow.svc.cluster.local:5000"
 
 # Name of the secret containing auth token to be used for MLflow. It should contain AUTH_TOKEN value
 tokenSecret: access-token
-
-mlflowS3EndpointURL: "http://local-s3-service.ezdata-system.svc.cluster.local:30000"
-trackingURI: "http://mlflow.mlflow.svc.cluster.local:5000"
 
 service:
   appPort: 8501
@@ -21,6 +30,7 @@ service:
 resources:
   appLimits:
     cpu: 5
+    memory: 10Gi
 
 ezua:
   virtualService:
