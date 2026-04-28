@@ -7,7 +7,7 @@
         "data": {
           "sourceHandle": {
             "dataType": "ParserComponent",
-            "id": "ParserComponent-r9vBO",
+            "id": "ParserComponent-kJKde",
             "name": "parsed_text",
             "output_types": [
               "Message"
@@ -15,19 +15,19 @@
           },
           "targetHandle": {
             "fieldName": "context",
-            "id": "Prompt-5feSP",
+            "id": "Prompt-UJYPb",
             "inputTypes": [
               "Message"
             ],
             "type": "str"
           }
         },
-        "id": "reactflow__edge-ParserComponent-r9vBO{œdataTypeœ:œParserComponentœ,œidœ:œParserComponent-r9vBOœ,œnameœ:œparsed_textœ,œoutput_typesœ:[œMessageœ]}-Prompt-5feSP{œfieldNameœ:œcontextœ,œidœ:œPrompt-5feSPœ,œinputTypesœ:[œMessageœ],œtypeœ:œstrœ}",
+        "id": "reactflow__edge-ParserComponent-kJKde{œdataTypeœ:œParserComponentœ,œidœ:œParserComponent-kJKdeœ,œnameœ:œparsed_textœ,œoutput_typesœ:[œMessageœ]}-Prompt-UJYPb{œfieldNameœ:œcontextœ,œidœ:œPrompt-UJYPbœ,œinputTypesœ:[œMessageœ],œtypeœ:œstrœ}",
         "selected": false,
-        "source": "ParserComponent-r9vBO",
-        "sourceHandle": "{œdataTypeœ:œParserComponentœ,œidœ:œParserComponent-r9vBOœ,œnameœ:œparsed_textœ,œoutput_typesœ:[œMessageœ]}",
-        "target": "Prompt-5feSP",
-        "targetHandle": "{œfieldNameœ:œcontextœ,œidœ:œPrompt-5feSPœ,œinputTypesœ:[œMessageœ],œtypeœ:œstrœ}"
+        "source": "ParserComponent-kJKde",
+        "sourceHandle": "{œdataTypeœ:œParserComponentœ,œidœ:œParserComponent-kJKdeœ,œnameœ:œparsed_textœ,œoutput_typesœ:[œMessageœ]}",
+        "target": "Prompt-UJYPb",
+        "targetHandle": "{œfieldNameœ:œcontextœ,œidœ:œPrompt-UJYPbœ,œinputTypesœ:[œMessageœ],œtypeœ:œstrœ}"
       },
       {
         "animated": false,
@@ -35,7 +35,7 @@
         "data": {
           "sourceHandle": {
             "dataType": "NVIDIAEmbeddingsComponent",
-            "id": "NVIDIAEmbeddingsComponent-BwDbI",
+            "id": "NVIDIAEmbeddingsComponent-CxJ4g",
             "name": "embeddings",
             "output_types": [
               "Embeddings"
@@ -43,19 +43,19 @@
           },
           "targetHandle": {
             "fieldName": "embedding",
-            "id": "QdrantVectorStoreComponent-fdesY",
+            "id": "QdrantVectorStoreComponent-QvtZR",
             "inputTypes": [
               "Embeddings"
             ],
             "type": "other"
           }
         },
-        "id": "reactflow__edge-NVIDIAEmbeddingsComponent-BwDbI{œdataTypeœ:œNVIDIAEmbeddingsComponentœ,œidœ:œNVIDIAEmbeddingsComponent-BwDbIœ,œnameœ:œembeddingsœ,œoutput_typesœ:[œEmbeddingsœ]}-QdrantVectorStoreComponent-fdesY{œfieldNameœ:œembeddingœ,œidœ:œQdrantVectorStoreComponent-fdesYœ,œinputTypesœ:[œEmbeddingsœ],œtypeœ:œotherœ}",
+        "id": "reactflow__edge-NVIDIAEmbeddingsComponent-CxJ4g{œdataTypeœ:œNVIDIAEmbeddingsComponentœ,œidœ:œNVIDIAEmbeddingsComponent-CxJ4gœ,œnameœ:œembeddingsœ,œoutput_typesœ:[œEmbeddingsœ]}-QdrantVectorStoreComponent-QvtZR{œfieldNameœ:œembeddingœ,œidœ:œQdrantVectorStoreComponent-QvtZRœ,œinputTypesœ:[œEmbeddingsœ],œtypeœ:œotherœ}",
         "selected": false,
-        "source": "NVIDIAEmbeddingsComponent-BwDbI",
-        "sourceHandle": "{œdataTypeœ:œNVIDIAEmbeddingsComponentœ,œidœ:œNVIDIAEmbeddingsComponent-BwDbIœ,œnameœ:œembeddingsœ,œoutput_typesœ:[œEmbeddingsœ]}",
-        "target": "QdrantVectorStoreComponent-fdesY",
-        "targetHandle": "{œfieldNameœ:œembeddingœ,œidœ:œQdrantVectorStoreComponent-fdesYœ,œinputTypesœ:[œEmbeddingsœ],œtypeœ:œotherœ}"
+        "source": "NVIDIAEmbeddingsComponent-CxJ4g",
+        "sourceHandle": "{œdataTypeœ:œNVIDIAEmbeddingsComponentœ,œidœ:œNVIDIAEmbeddingsComponent-CxJ4gœ,œnameœ:œembeddingsœ,œoutput_typesœ:[œEmbeddingsœ]}",
+        "target": "QdrantVectorStoreComponent-QvtZR",
+        "targetHandle": "{œfieldNameœ:œembeddingœ,œidœ:œQdrantVectorStoreComponent-QvtZRœ,œinputTypesœ:[œEmbeddingsœ],œtypeœ:œotherœ}"
       },
       {
         "animated": false,
@@ -63,7 +63,7 @@
         "data": {
           "sourceHandle": {
             "dataType": "SplitText",
-            "id": "SplitText-0nW3P",
+            "id": "SplitText-jqGv1",
             "name": "dataframe",
             "output_types": [
               "DataFrame"
@@ -71,7 +71,7 @@
           },
           "targetHandle": {
             "fieldName": "ingest_data",
-            "id": "QdrantVectorStoreComponent-fdesY",
+            "id": "QdrantVectorStoreComponent-QvtZR",
             "inputTypes": [
               "Data",
               "DataFrame"
@@ -79,12 +79,12 @@
             "type": "other"
           }
         },
-        "id": "reactflow__edge-SplitText-0nW3P{œdataTypeœ:œSplitTextœ,œidœ:œSplitText-0nW3Pœ,œnameœ:œdataframeœ,œoutput_typesœ:[œDataFrameœ]}-QdrantVectorStoreComponent-fdesY{œfieldNameœ:œingest_dataœ,œidœ:œQdrantVectorStoreComponent-fdesYœ,œinputTypesœ:[œDataœ,œDataFrameœ],œtypeœ:œotherœ}",
+        "id": "reactflow__edge-SplitText-jqGv1{œdataTypeœ:œSplitTextœ,œidœ:œSplitText-jqGv1œ,œnameœ:œdataframeœ,œoutput_typesœ:[œDataFrameœ]}-QdrantVectorStoreComponent-QvtZR{œfieldNameœ:œingest_dataœ,œidœ:œQdrantVectorStoreComponent-QvtZRœ,œinputTypesœ:[œDataœ,œDataFrameœ],œtypeœ:œotherœ}",
         "selected": false,
-        "source": "SplitText-0nW3P",
-        "sourceHandle": "{œdataTypeœ:œSplitTextœ,œidœ:œSplitText-0nW3Pœ,œnameœ:œdataframeœ,œoutput_typesœ:[œDataFrameœ]}",
-        "target": "QdrantVectorStoreComponent-fdesY",
-        "targetHandle": "{œfieldNameœ:œingest_dataœ,œidœ:œQdrantVectorStoreComponent-fdesYœ,œinputTypesœ:[œDataœ,œDataFrameœ],œtypeœ:œotherœ}"
+        "source": "SplitText-jqGv1",
+        "sourceHandle": "{œdataTypeœ:œSplitTextœ,œidœ:œSplitText-jqGv1œ,œnameœ:œdataframeœ,œoutput_typesœ:[œDataFrameœ]}",
+        "target": "QdrantVectorStoreComponent-QvtZR",
+        "targetHandle": "{œfieldNameœ:œingest_dataœ,œidœ:œQdrantVectorStoreComponent-QvtZRœ,œinputTypesœ:[œDataœ,œDataFrameœ],œtypeœ:œotherœ}"
       },
       {
         "animated": false,
@@ -92,7 +92,7 @@
         "data": {
           "sourceHandle": {
             "dataType": "ChatInput",
-            "id": "ChatInput-C7uGg",
+            "id": "ChatInput-VMQWT",
             "name": "message",
             "output_types": [
               "Message"
@@ -100,19 +100,19 @@
           },
           "targetHandle": {
             "fieldName": "search_query",
-            "id": "QdrantVectorStoreComponent-2NNhm",
+            "id": "QdrantVectorStoreComponent-FpO5E",
             "inputTypes": [
               "Message"
             ],
             "type": "query"
           }
         },
-        "id": "reactflow__edge-ChatInput-C7uGg{œdataTypeœ:œChatInputœ,œidœ:œChatInput-C7uGgœ,œnameœ:œmessageœ,œoutput_typesœ:[œMessageœ]}-QdrantVectorStoreComponent-2NNhm{œfieldNameœ:œsearch_queryœ,œidœ:œQdrantVectorStoreComponent-2NNhmœ,œinputTypesœ:[œMessageœ],œtypeœ:œqueryœ}",
+        "id": "reactflow__edge-ChatInput-VMQWT{œdataTypeœ:œChatInputœ,œidœ:œChatInput-VMQWTœ,œnameœ:œmessageœ,œoutput_typesœ:[œMessageœ]}-QdrantVectorStoreComponent-FpO5E{œfieldNameœ:œsearch_queryœ,œidœ:œQdrantVectorStoreComponent-FpO5Eœ,œinputTypesœ:[œMessageœ],œtypeœ:œqueryœ}",
         "selected": false,
-        "source": "ChatInput-C7uGg",
-        "sourceHandle": "{œdataTypeœ:œChatInputœ,œidœ:œChatInput-C7uGgœ,œnameœ:œmessageœ,œoutput_typesœ:[œMessageœ]}",
-        "target": "QdrantVectorStoreComponent-2NNhm",
-        "targetHandle": "{œfieldNameœ:œsearch_queryœ,œidœ:œQdrantVectorStoreComponent-2NNhmœ,œinputTypesœ:[œMessageœ],œtypeœ:œqueryœ}"
+        "source": "ChatInput-VMQWT",
+        "sourceHandle": "{œdataTypeœ:œChatInputœ,œidœ:œChatInput-VMQWTœ,œnameœ:œmessageœ,œoutput_typesœ:[œMessageœ]}",
+        "target": "QdrantVectorStoreComponent-FpO5E",
+        "targetHandle": "{œfieldNameœ:œsearch_queryœ,œidœ:œQdrantVectorStoreComponent-FpO5Eœ,œinputTypesœ:[œMessageœ],œtypeœ:œqueryœ}"
       },
       {
         "animated": false,
@@ -120,7 +120,7 @@
         "data": {
           "sourceHandle": {
             "dataType": "NVIDIAEmbeddingsComponent",
-            "id": "NVIDIAEmbeddingsComponent-3Uy7F",
+            "id": "NVIDIAEmbeddingsComponent-5ocEn",
             "name": "embeddings",
             "output_types": [
               "Embeddings"
@@ -128,19 +128,19 @@
           },
           "targetHandle": {
             "fieldName": "embedding",
-            "id": "QdrantVectorStoreComponent-2NNhm",
+            "id": "QdrantVectorStoreComponent-FpO5E",
             "inputTypes": [
               "Embeddings"
             ],
             "type": "other"
           }
         },
-        "id": "reactflow__edge-NVIDIAEmbeddingsComponent-3Uy7F{œdataTypeœ:œNVIDIAEmbeddingsComponentœ,œidœ:œNVIDIAEmbeddingsComponent-3Uy7Fœ,œnameœ:œembeddingsœ,œoutput_typesœ:[œEmbeddingsœ]}-QdrantVectorStoreComponent-2NNhm{œfieldNameœ:œembeddingœ,œidœ:œQdrantVectorStoreComponent-2NNhmœ,œinputTypesœ:[œEmbeddingsœ],œtypeœ:œotherœ}",
+        "id": "reactflow__edge-NVIDIAEmbeddingsComponent-5ocEn{œdataTypeœ:œNVIDIAEmbeddingsComponentœ,œidœ:œNVIDIAEmbeddingsComponent-5ocEnœ,œnameœ:œembeddingsœ,œoutput_typesœ:[œEmbeddingsœ]}-QdrantVectorStoreComponent-FpO5E{œfieldNameœ:œembeddingœ,œidœ:œQdrantVectorStoreComponent-FpO5Eœ,œinputTypesœ:[œEmbeddingsœ],œtypeœ:œotherœ}",
         "selected": false,
-        "source": "NVIDIAEmbeddingsComponent-3Uy7F",
-        "sourceHandle": "{œdataTypeœ:œNVIDIAEmbeddingsComponentœ,œidœ:œNVIDIAEmbeddingsComponent-3Uy7Fœ,œnameœ:œembeddingsœ,œoutput_typesœ:[œEmbeddingsœ]}",
-        "target": "QdrantVectorStoreComponent-2NNhm",
-        "targetHandle": "{œfieldNameœ:œembeddingœ,œidœ:œQdrantVectorStoreComponent-2NNhmœ,œinputTypesœ:[œEmbeddingsœ],œtypeœ:œotherœ}"
+        "source": "NVIDIAEmbeddingsComponent-5ocEn",
+        "sourceHandle": "{œdataTypeœ:œNVIDIAEmbeddingsComponentœ,œidœ:œNVIDIAEmbeddingsComponent-5ocEnœ,œnameœ:œembeddingsœ,œoutput_typesœ:[œEmbeddingsœ]}",
+        "target": "QdrantVectorStoreComponent-FpO5E",
+        "targetHandle": "{œfieldNameœ:œembeddingœ,œidœ:œQdrantVectorStoreComponent-FpO5Eœ,œinputTypesœ:[œEmbeddingsœ],œtypeœ:œotherœ}"
       },
       {
         "animated": false,
@@ -148,7 +148,7 @@
         "data": {
           "sourceHandle": {
             "dataType": "Agent",
-            "id": "Agent-zgWNI",
+            "id": "Agent-OqIs9",
             "name": "response",
             "output_types": [
               "Message"
@@ -156,7 +156,7 @@
           },
           "targetHandle": {
             "fieldName": "input_value",
-            "id": "ChatOutput-GwDaB",
+            "id": "ChatOutput-uMv5K",
             "inputTypes": [
               "Data",
               "DataFrame",
@@ -165,12 +165,12 @@
             "type": "other"
           }
         },
-        "id": "reactflow__edge-Agent-zgWNI{œdataTypeœ:œAgentœ,œidœ:œAgent-zgWNIœ,œnameœ:œresponseœ,œoutput_typesœ:[œMessageœ]}-ChatOutput-GwDaB{œfieldNameœ:œinput_valueœ,œidœ:œChatOutput-GwDaBœ,œinputTypesœ:[œDataœ,œDataFrameœ,œMessageœ],œtypeœ:œotherœ}",
+        "id": "reactflow__edge-Agent-OqIs9{œdataTypeœ:œAgentœ,œidœ:œAgent-OqIs9œ,œnameœ:œresponseœ,œoutput_typesœ:[œMessageœ]}-ChatOutput-uMv5K{œfieldNameœ:œinput_valueœ,œidœ:œChatOutput-uMv5Kœ,œinputTypesœ:[œDataœ,œDataFrameœ,œMessageœ],œtypeœ:œotherœ}",
         "selected": false,
-        "source": "Agent-zgWNI",
-        "sourceHandle": "{œdataTypeœ:œAgentœ,œidœ:œAgent-zgWNIœ,œnameœ:œresponseœ,œoutput_typesœ:[œMessageœ]}",
-        "target": "ChatOutput-GwDaB",
-        "targetHandle": "{œfieldNameœ:œinput_valueœ,œidœ:œChatOutput-GwDaBœ,œinputTypesœ:[œDataœ,œDataFrameœ,œMessageœ],œtypeœ:œotherœ}"
+        "source": "Agent-OqIs9",
+        "sourceHandle": "{œdataTypeœ:œAgentœ,œidœ:œAgent-OqIs9œ,œnameœ:œresponseœ,œoutput_typesœ:[œMessageœ]}",
+        "target": "ChatOutput-uMv5K",
+        "targetHandle": "{œfieldNameœ:œinput_valueœ,œidœ:œChatOutput-uMv5Kœ,œinputTypesœ:[œDataœ,œDataFrameœ,œMessageœ],œtypeœ:œotherœ}"
       },
       {
         "animated": false,
@@ -178,7 +178,7 @@
         "data": {
           "sourceHandle": {
             "dataType": "Prompt",
-            "id": "Prompt-5feSP",
+            "id": "Prompt-UJYPb",
             "name": "component_as_tool",
             "output_types": [
               "Tool"
@@ -186,19 +186,19 @@
           },
           "targetHandle": {
             "fieldName": "tools",
-            "id": "Agent-zgWNI",
+            "id": "Agent-OqIs9",
             "inputTypes": [
               "Tool"
             ],
             "type": "other"
           }
         },
-        "id": "reactflow__edge-Prompt-5feSP{œdataTypeœ:œPromptœ,œidœ:œPrompt-5feSPœ,œnameœ:œcomponent_as_toolœ,œoutput_typesœ:[œToolœ]}-Agent-zgWNI{œfieldNameœ:œtoolsœ,œidœ:œAgent-zgWNIœ,œinputTypesœ:[œToolœ],œtypeœ:œotherœ}",
+        "id": "reactflow__edge-Prompt-UJYPb{œdataTypeœ:œPromptœ,œidœ:œPrompt-UJYPbœ,œnameœ:œcomponent_as_toolœ,œoutput_typesœ:[œToolœ]}-Agent-OqIs9{œfieldNameœ:œtoolsœ,œidœ:œAgent-OqIs9œ,œinputTypesœ:[œToolœ],œtypeœ:œotherœ}",
         "selected": false,
-        "source": "Prompt-5feSP",
-        "sourceHandle": "{œdataTypeœ:œPromptœ,œidœ:œPrompt-5feSPœ,œnameœ:œcomponent_as_toolœ,œoutput_typesœ:[œToolœ]}",
-        "target": "Agent-zgWNI",
-        "targetHandle": "{œfieldNameœ:œtoolsœ,œidœ:œAgent-zgWNIœ,œinputTypesœ:[œToolœ],œtypeœ:œotherœ}"
+        "source": "Prompt-UJYPb",
+        "sourceHandle": "{œdataTypeœ:œPromptœ,œidœ:œPrompt-UJYPbœ,œnameœ:œcomponent_as_toolœ,œoutput_typesœ:[œToolœ]}",
+        "target": "Agent-OqIs9",
+        "targetHandle": "{œfieldNameœ:œtoolsœ,œidœ:œAgent-OqIs9œ,œinputTypesœ:[œToolœ],œtypeœ:œotherœ}"
       },
       {
         "animated": false,
@@ -206,7 +206,7 @@
         "data": {
           "sourceHandle": {
             "dataType": "QdrantVectorStoreComponent",
-            "id": "QdrantVectorStoreComponent-2NNhm",
+            "id": "QdrantVectorStoreComponent-FpO5E",
             "name": "dataframe",
             "output_types": [
               "DataFrame"
@@ -214,7 +214,7 @@
           },
           "targetHandle": {
             "fieldName": "input_data",
-            "id": "ParserComponent-r9vBO",
+            "id": "ParserComponent-kJKde",
             "inputTypes": [
               "DataFrame",
               "Data"
@@ -222,12 +222,12 @@
             "type": "other"
           }
         },
-        "id": "reactflow__edge-QdrantVectorStoreComponent-2NNhm{œdataTypeœ:œQdrantVectorStoreComponentœ,œidœ:œQdrantVectorStoreComponent-2NNhmœ,œnameœ:œdataframeœ,œoutput_typesœ:[œDataFrameœ]}-ParserComponent-r9vBO{œfieldNameœ:œinput_dataœ,œidœ:œParserComponent-r9vBOœ,œinputTypesœ:[œDataFrameœ,œDataœ],œtypeœ:œotherœ}",
+        "id": "reactflow__edge-QdrantVectorStoreComponent-FpO5E{œdataTypeœ:œQdrantVectorStoreComponentœ,œidœ:œQdrantVectorStoreComponent-FpO5Eœ,œnameœ:œdataframeœ,œoutput_typesœ:[œDataFrameœ]}-ParserComponent-kJKde{œfieldNameœ:œinput_dataœ,œidœ:œParserComponent-kJKdeœ,œinputTypesœ:[œDataFrameœ,œDataœ],œtypeœ:œotherœ}",
         "selected": false,
-        "source": "QdrantVectorStoreComponent-2NNhm",
-        "sourceHandle": "{œdataTypeœ:œQdrantVectorStoreComponentœ,œidœ:œQdrantVectorStoreComponent-2NNhmœ,œnameœ:œdataframeœ,œoutput_typesœ:[œDataFrameœ]}",
-        "target": "ParserComponent-r9vBO",
-        "targetHandle": "{œfieldNameœ:œinput_dataœ,œidœ:œParserComponent-r9vBOœ,œinputTypesœ:[œDataFrameœ,œDataœ],œtypeœ:œotherœ}"
+        "source": "QdrantVectorStoreComponent-FpO5E",
+        "sourceHandle": "{œdataTypeœ:œQdrantVectorStoreComponentœ,œidœ:œQdrantVectorStoreComponent-FpO5Eœ,œnameœ:œdataframeœ,œoutput_typesœ:[œDataFrameœ]}",
+        "target": "ParserComponent-kJKde",
+        "targetHandle": "{œfieldNameœ:œinput_dataœ,œidœ:œParserComponent-kJKdeœ,œinputTypesœ:[œDataFrameœ,œDataœ],œtypeœ:œotherœ}"
       },
       {
         "animated": false,
@@ -235,7 +235,7 @@
         "data": {
           "sourceHandle": {
             "dataType": "ChatInput",
-            "id": "ChatInput-C7uGg",
+            "id": "ChatInput-VMQWT",
             "name": "message",
             "output_types": [
               "Message"
@@ -243,47 +243,19 @@
           },
           "targetHandle": {
             "fieldName": "input_value",
-            "id": "Agent-zgWNI",
+            "id": "Agent-OqIs9",
             "inputTypes": [
               "Message"
             ],
             "type": "str"
           }
         },
-        "id": "reactflow__edge-ChatInput-C7uGg{œdataTypeœ:œChatInputœ,œidœ:œChatInput-C7uGgœ,œnameœ:œmessageœ,œoutput_typesœ:[œMessageœ]}-Agent-zgWNI{œfieldNameœ:œinput_valueœ,œidœ:œAgent-zgWNIœ,œinputTypesœ:[œMessageœ],œtypeœ:œstrœ}",
+        "id": "reactflow__edge-ChatInput-VMQWT{œdataTypeœ:œChatInputœ,œidœ:œChatInput-VMQWTœ,œnameœ:œmessageœ,œoutput_typesœ:[œMessageœ]}-Agent-OqIs9{œfieldNameœ:œinput_valueœ,œidœ:œAgent-OqIs9œ,œinputTypesœ:[œMessageœ],œtypeœ:œstrœ}",
         "selected": false,
-        "source": "ChatInput-C7uGg",
-        "sourceHandle": "{œdataTypeœ:œChatInputœ,œidœ:œChatInput-C7uGgœ,œnameœ:œmessageœ,œoutput_typesœ:[œMessageœ]}",
-        "target": "Agent-zgWNI",
-        "targetHandle": "{œfieldNameœ:œinput_valueœ,œidœ:œAgent-zgWNIœ,œinputTypesœ:[œMessageœ],œtypeœ:œstrœ}"
-      },
-      {
-        "animated": false,
-        "className": "",
-        "data": {
-          "sourceHandle": {
-            "dataType": "flightpassenger",
-            "id": "flightpassenger-KVmBV",
-            "name": "component_as_tool",
-            "output_types": [
-              "Tool"
-            ]
-          },
-          "targetHandle": {
-            "fieldName": "tools",
-            "id": "Agent-zgWNI",
-            "inputTypes": [
-              "Tool"
-            ],
-            "type": "other"
-          }
-        },
-        "id": "reactflow__edge-flightpassenger-KVmBV{œdataTypeœ:œflightpassengerœ,œidœ:œflightpassenger-KVmBVœ,œnameœ:œcomponent_as_toolœ,œoutput_typesœ:[œToolœ]}-Agent-zgWNI{œfieldNameœ:œtoolsœ,œidœ:œAgent-zgWNIœ,œinputTypesœ:[œToolœ],œtypeœ:œotherœ}",
-        "selected": false,
-        "source": "flightpassenger-KVmBV",
-        "sourceHandle": "{œdataTypeœ:œflightpassengerœ,œidœ:œflightpassenger-KVmBVœ,œnameœ:œcomponent_as_toolœ,œoutput_typesœ:[œToolœ]}",
-        "target": "Agent-zgWNI",
-        "targetHandle": "{œfieldNameœ:œtoolsœ,œidœ:œAgent-zgWNIœ,œinputTypesœ:[œToolœ],œtypeœ:œotherœ}"
+        "source": "ChatInput-VMQWT",
+        "sourceHandle": "{œdataTypeœ:œChatInputœ,œidœ:œChatInput-VMQWTœ,œnameœ:œmessageœ,œoutput_typesœ:[œMessageœ]}",
+        "target": "Agent-OqIs9",
+        "targetHandle": "{œfieldNameœ:œinput_valueœ,œidœ:œAgent-OqIs9œ,œinputTypesœ:[œMessageœ],œtypeœ:œstrœ}"
       },
       {
         "animated": false,
@@ -291,7 +263,7 @@
         "data": {
           "sourceHandle": {
             "dataType": "NVIDIAModelComponent",
-            "id": "NVIDIAModelComponent-8Acfd",
+            "id": "NVIDIAModelComponent-mZAX0",
             "name": "model_output",
             "output_types": [
               "LanguageModel"
@@ -299,19 +271,19 @@
           },
           "targetHandle": {
             "fieldName": "agent_llm",
-            "id": "Agent-zgWNI",
+            "id": "Agent-OqIs9",
             "inputTypes": [
               "LanguageModel"
             ],
             "type": "str"
           }
         },
-        "id": "reactflow__edge-NVIDIAModelComponent-8Acfd{œdataTypeœ:œNVIDIAModelComponentœ,œidœ:œNVIDIAModelComponent-8Acfdœ,œnameœ:œmodel_outputœ,œoutput_typesœ:[œLanguageModelœ]}-Agent-zgWNI{œfieldNameœ:œagent_llmœ,œidœ:œAgent-zgWNIœ,œinputTypesœ:[œLanguageModelœ],œtypeœ:œstrœ}",
+        "id": "reactflow__edge-NVIDIAModelComponent-mZAX0{œdataTypeœ:œNVIDIAModelComponentœ,œidœ:œNVIDIAModelComponent-mZAX0œ,œnameœ:œmodel_outputœ,œoutput_typesœ:[œLanguageModelœ]}-Agent-OqIs9{œfieldNameœ:œagent_llmœ,œidœ:œAgent-OqIs9œ,œinputTypesœ:[œLanguageModelœ],œtypeœ:œstrœ}",
         "selected": false,
-        "source": "NVIDIAModelComponent-8Acfd",
-        "sourceHandle": "{œdataTypeœ:œNVIDIAModelComponentœ,œidœ:œNVIDIAModelComponent-8Acfdœ,œnameœ:œmodel_outputœ,œoutput_typesœ:[œLanguageModelœ]}",
-        "target": "Agent-zgWNI",
-        "targetHandle": "{œfieldNameœ:œagent_llmœ,œidœ:œAgent-zgWNIœ,œinputTypesœ:[œLanguageModelœ],œtypeœ:œstrœ}"
+        "source": "NVIDIAModelComponent-mZAX0",
+        "sourceHandle": "{œdataTypeœ:œNVIDIAModelComponentœ,œidœ:œNVIDIAModelComponent-mZAX0œ,œnameœ:œmodel_outputœ,œoutput_typesœ:[œLanguageModelœ]}",
+        "target": "Agent-OqIs9",
+        "targetHandle": "{œfieldNameœ:œagent_llmœ,œidœ:œAgent-OqIs9œ,œinputTypesœ:[œLanguageModelœ],œtypeœ:œstrœ}"
       },
       {
         "animated": false,
@@ -319,7 +291,7 @@
         "data": {
           "sourceHandle": {
             "dataType": "File",
-            "id": "File-870aH",
+            "id": "File-kxhNu",
             "name": "message",
             "output_types": [
               "Message"
@@ -327,7 +299,7 @@
           },
           "targetHandle": {
             "fieldName": "data_inputs",
-            "id": "SplitText-0nW3P",
+            "id": "SplitText-jqGv1",
             "inputTypes": [
               "Data",
               "DataFrame",
@@ -336,12 +308,40 @@
             "type": "other"
           }
         },
-        "id": "reactflow__edge-File-870aH{œdataTypeœ:œFileœ,œidœ:œFile-870aHœ,œnameœ:œmessageœ,œoutput_typesœ:[œMessageœ]}-SplitText-0nW3P{œfieldNameœ:œdata_inputsœ,œidœ:œSplitText-0nW3Pœ,œinputTypesœ:[œDataœ,œDataFrameœ,œMessageœ],œtypeœ:œotherœ}",
+        "id": "reactflow__edge-File-kxhNu{œdataTypeœ:œFileœ,œidœ:œFile-kxhNuœ,œnameœ:œmessageœ,œoutput_typesœ:[œMessageœ]}-SplitText-jqGv1{œfieldNameœ:œdata_inputsœ,œidœ:œSplitText-jqGv1œ,œinputTypesœ:[œDataœ,œDataFrameœ,œMessageœ],œtypeœ:œotherœ}",
         "selected": false,
-        "source": "File-870aH",
-        "sourceHandle": "{œdataTypeœ:œFileœ,œidœ:œFile-870aHœ,œnameœ:œmessageœ,œoutput_typesœ:[œMessageœ]}",
-        "target": "SplitText-0nW3P",
-        "targetHandle": "{œfieldNameœ:œdata_inputsœ,œidœ:œSplitText-0nW3Pœ,œinputTypesœ:[œDataœ,œDataFrameœ,œMessageœ],œtypeœ:œotherœ}"
+        "source": "File-kxhNu",
+        "sourceHandle": "{œdataTypeœ:œFileœ,œidœ:œFile-kxhNuœ,œnameœ:œmessageœ,œoutput_typesœ:[œMessageœ]}",
+        "target": "SplitText-jqGv1",
+        "targetHandle": "{œfieldNameœ:œdata_inputsœ,œidœ:œSplitText-jqGv1œ,œinputTypesœ:[œDataœ,œDataFrameœ,œMessageœ],œtypeœ:œotherœ}"
+      },
+      {
+        "animated": false,
+        "className": "",
+        "data": {
+          "sourceHandle": {
+            "dataType": "MCP",
+            "id": "MCP-rCYbx",
+            "name": "component_as_tool",
+            "output_types": [
+              "Tool"
+            ]
+          },
+          "targetHandle": {
+            "fieldName": "tools",
+            "id": "Agent-OqIs9",
+            "inputTypes": [
+              "Tool"
+            ],
+            "type": "other"
+          }
+        },
+        "id": "xy-edge__MCP-rCYbx{œdataTypeœ:œMCPœ,œidœ:œMCP-rCYbxœ,œnameœ:œcomponent_as_toolœ,œoutput_typesœ:[œToolœ]}-Agent-OqIs9{œfieldNameœ:œtoolsœ,œidœ:œAgent-OqIs9œ,œinputTypesœ:[œToolœ],œtypeœ:œotherœ}",
+        "selected": false,
+        "source": "MCP-rCYbx",
+        "sourceHandle": "{œdataTypeœ:œMCPœ,œidœ:œMCP-rCYbxœ,œnameœ:œcomponent_as_toolœ,œoutput_typesœ:[œToolœ]}",
+        "target": "Agent-OqIs9",
+        "targetHandle": "{œfieldNameœ:œtoolsœ,œidœ:œAgent-OqIs9œ,œinputTypesœ:[œToolœ],œtypeœ:œotherœ}"
       }
     ],
     "nodes": [
@@ -349,7 +349,7 @@
         "data": {
           "description": "Get chat inputs from the Playground.",
           "display_name": "Chat Input",
-          "id": "ChatInput-C7uGg",
+          "id": "ChatInput-VMQWT",
           "node": {
             "base_classes": [
               "Message"
@@ -630,7 +630,7 @@
           "showNode": false,
           "type": "ChatInput"
         },
-        "id": "ChatInput-C7uGg",
+        "id": "ChatInput-VMQWT",
         "measured": {
           "height": 48,
           "width": 192
@@ -646,7 +646,7 @@
         "data": {
           "description": "Display a chat message in the Playground.",
           "display_name": "Chat Output",
-          "id": "ChatOutput-GwDaB",
+          "id": "ChatOutput-uMv5K",
           "node": {
             "base_classes": [
               "Message"
@@ -932,7 +932,7 @@
           "showNode": false,
           "type": "ChatOutput"
         },
-        "id": "ChatOutput-GwDaB",
+        "id": "ChatOutput-uMv5K",
         "measured": {
           "height": 48,
           "width": 192
@@ -948,7 +948,7 @@
         "data": {
           "description": "Split text into chunks based on specified criteria.",
           "display_name": "Split Text",
-          "id": "SplitText-0nW3P",
+          "id": "SplitText-jqGv1",
           "node": {
             "base_classes": [
               "DataFrame"
@@ -1183,7 +1183,7 @@
           "type": "SplitText"
         },
         "dragging": false,
-        "id": "SplitText-0nW3P",
+        "id": "SplitText-jqGv1",
         "measured": {
           "height": 411,
           "width": 320
@@ -1199,7 +1199,7 @@
         "data": {
           "description": "Extracts text using a template.",
           "display_name": "Parser",
-          "id": "ParserComponent-r9vBO",
+          "id": "ParserComponent-kJKde",
           "node": {
             "base_classes": [
               "Message"
@@ -1382,7 +1382,7 @@
           "showNode": true,
           "type": "ParserComponent"
         },
-        "id": "ParserComponent-r9vBO",
+        "id": "ParserComponent-kJKde",
         "measured": {
           "height": 327,
           "width": 320
@@ -1396,7 +1396,7 @@
       },
       {
         "data": {
-          "id": "Prompt-5feSP",
+          "id": "Prompt-UJYPb",
           "node": {
             "base_classes": [
               "Message"
@@ -1423,7 +1423,7 @@
             "is_composition": null,
             "is_input": null,
             "is_output": null,
-            "last_updated": "2026-04-23T13:42:09.509Z",
+            "last_updated": "2026-04-23T13:47:15.189Z",
             "legacy": false,
             "lf_version": "1.7.3",
             "metadata": {},
@@ -1454,7 +1454,7 @@
             "priority": null,
             "template": {
               "_frontend_node_flow_id": {
-                "value": "32dab0ca-1451-4d39-bd75-b5372bb2ab63"
+                "value": "9a64fe3f-f2b2-4d26-8d80-c9b83ac2257e"
               },
               "_frontend_node_folder_id": {
                 "value": "5b70a1d3-9769-4949-b39a-6ebe89731399"
@@ -1589,7 +1589,7 @@
           "showNode": true,
           "type": "Prompt"
         },
-        "id": "Prompt-5feSP",
+        "id": "Prompt-UJYPb",
         "measured": {
           "height": 445,
           "width": 320
@@ -1603,7 +1603,7 @@
       },
       {
         "data": {
-          "id": "NVIDIAEmbeddingsComponent-3Uy7F",
+          "id": "NVIDIAEmbeddingsComponent-5ocEn",
           "node": {
             "base_classes": [
               "Embeddings"
@@ -1623,7 +1623,7 @@
             ],
             "frozen": false,
             "icon": "NVIDIA",
-            "last_updated": "2026-04-23T13:42:09.510Z",
+            "last_updated": "2026-04-23T13:47:15.189Z",
             "legacy": false,
             "lf_version": "1.7.3",
             "metadata": {
@@ -1668,7 +1668,7 @@
             "pinned": false,
             "template": {
               "_frontend_node_flow_id": {
-                "value": "32dab0ca-1451-4d39-bd75-b5372bb2ab63"
+                "value": "9a64fe3f-f2b2-4d26-8d80-c9b83ac2257e"
               },
               "_frontend_node_folder_id": {
                 "value": "5b70a1d3-9769-4949-b39a-6ebe89731399"
@@ -1791,7 +1791,7 @@
           "showNode": true,
           "type": "NVIDIAEmbeddingsComponent"
         },
-        "id": "NVIDIAEmbeddingsComponent-3Uy7F",
+        "id": "NVIDIAEmbeddingsComponent-5ocEn",
         "measured": {
           "height": 367,
           "width": 320
@@ -1807,7 +1807,7 @@
         "data": {
           "description": "Qdrant Vector Store with search capabilities",
           "display_name": "Qdrant",
-          "id": "QdrantVectorStoreComponent-fdesY",
+          "id": "QdrantVectorStoreComponent-QvtZR",
           "node": {
             "base_classes": [
               "Data",
@@ -2302,7 +2302,7 @@
           "type": "QdrantVectorStoreComponent"
         },
         "dragging": false,
-        "id": "QdrantVectorStoreComponent-fdesY",
+        "id": "QdrantVectorStoreComponent-QvtZR",
         "measured": {
           "height": 619,
           "width": 320
@@ -2316,7 +2316,7 @@
       },
       {
         "data": {
-          "id": "NVIDIAEmbeddingsComponent-BwDbI",
+          "id": "NVIDIAEmbeddingsComponent-CxJ4g",
           "node": {
             "base_classes": [
               "Embeddings"
@@ -2336,7 +2336,7 @@
             ],
             "frozen": false,
             "icon": "NVIDIA",
-            "last_updated": "2026-04-23T13:42:09.511Z",
+            "last_updated": "2026-04-23T13:47:15.190Z",
             "legacy": false,
             "lf_version": "1.7.3",
             "metadata": {
@@ -2381,7 +2381,7 @@
             "pinned": false,
             "template": {
               "_frontend_node_flow_id": {
-                "value": "32dab0ca-1451-4d39-bd75-b5372bb2ab63"
+                "value": "9a64fe3f-f2b2-4d26-8d80-c9b83ac2257e"
               },
               "_frontend_node_folder_id": {
                 "value": "5b70a1d3-9769-4949-b39a-6ebe89731399"
@@ -2505,7 +2505,7 @@
           "type": "NVIDIAEmbeddingsComponent"
         },
         "dragging": false,
-        "id": "NVIDIAEmbeddingsComponent-BwDbI",
+        "id": "NVIDIAEmbeddingsComponent-CxJ4g",
         "measured": {
           "height": 367,
           "width": 320
@@ -2521,7 +2521,7 @@
         "data": {
           "description": "Generates text using NVIDIA LLMs.",
           "display_name": "NVIDIA",
-          "id": "NVIDIAModelComponent-8Acfd",
+          "id": "NVIDIAModelComponent-mZAX0",
           "node": {
             "base_classes": [
               "LanguageModel",
@@ -2549,7 +2549,7 @@
             ],
             "frozen": false,
             "icon": "NVIDIA",
-            "last_updated": "2026-04-23T13:45:21.991Z",
+            "last_updated": "2026-04-23T13:47:15.190Z",
             "legacy": false,
             "lf_version": "1.7.3",
             "metadata": {
@@ -2617,7 +2617,7 @@
             "pinned": false,
             "template": {
               "_frontend_node_flow_id": {
-                "value": "32dab0ca-1451-4d39-bd75-b5372bb2ab63"
+                "value": "9a64fe3f-f2b2-4d26-8d80-c9b83ac2257e"
               },
               "_frontend_node_folder_id": {
                 "value": "5b70a1d3-9769-4949-b39a-6ebe89731399"
@@ -2730,7 +2730,7 @@
                 "type": "str",
                 "value": ""
               },
-              "is_refresh": true,
+              "is_refresh": false,
               "max_tokens": {
                 "_input_type": "IntInput",
                 "advanced": true,
@@ -2905,7 +2905,7 @@
           "type": "NVIDIAModelComponent"
         },
         "dragging": false,
-        "id": "NVIDIAModelComponent-8Acfd",
+        "id": "NVIDIAModelComponent-mZAX0",
         "measured": {
           "height": 573,
           "width": 320
@@ -2919,296 +2919,9 @@
       },
       {
         "data": {
-          "id": "flightpassenger-KVmBV",
-          "node": {
-            "base_classes": [
-              "Data"
-            ],
-            "beta": false,
-            "conditional_paths": [],
-            "custom_fields": {},
-            "description": "Use this tool to look up passenger flight information. The possible columns to match are name and/or flight if provided.",
-            "display_name": "EzPresto tool",
-            "documentation": "https://docs.langflow.org/components-custom-components",
-            "edited": true,
-            "field_order": [
-              "user_password",
-              "database_name",
-              "schema_name",
-              "table_name",
-              "sql_query",
-              "global_imports",
-              "sql_query_code"
-            ],
-            "frozen": false,
-            "icon": "code",
-            "last_updated": "2026-04-23T13:42:09.513Z",
-            "legacy": false,
-            "lf_version": "1.7.3",
-            "metadata": {},
-            "minimized": false,
-            "official": false,
-            "output_types": [],
-            "outputs": [
-              {
-                "allows_loop": false,
-                "cache": true,
-                "display_name": "Toolset",
-                "group_outputs": false,
-                "hidden": null,
-                "loop_types": null,
-                "method": "to_toolkit",
-                "name": "component_as_tool",
-                "options": null,
-                "required_inputs": null,
-                "selected": "Tool",
-                "tool_mode": true,
-                "types": [
-                  "Tool"
-                ],
-                "value": "__UNDEFINED__"
-              }
-            ],
-            "pinned": false,
-            "template": {
-              "_frontend_node_flow_id": {
-                "value": "32dab0ca-1451-4d39-bd75-b5372bb2ab63"
-              },
-              "_frontend_node_folder_id": {
-                "value": "5b70a1d3-9769-4949-b39a-6ebe89731399"
-              },
-              "_type": "Component",
-              "code": {
-                "advanced": true,
-                "dynamic": true,
-                "fileTypes": [],
-                "file_path": "",
-                "info": "",
-                "list": false,
-                "load_from_db": false,
-                "multiline": true,
-                "name": "code",
-                "password": false,
-                "placeholder": "",
-                "required": true,
-                "show": true,
-                "title_case": false,
-                "type": "code",
-                "value": "import re\nimport importlib\n\nfrom langchain_experimental.utilities import PythonREPL\n\nfrom langflow.custom import Component\nfrom langflow.io import MessageTextInput, CodeInput, Output, StrInput\nfrom langchain_core.tools import StructuredTool, Tool\nfrom langflow.schema import Data\n\n\nclass CustomComponent(Component):\n    display_name = \"EzPresto tool\"\n    description = \"Use this tool to look up passenger flight information. The possible columns to match are name and/or flight if provided.\"\n    documentation: str = \"https://docs.langflow.org/components-custom-components\"\n    icon = \"code\"\n    name = \"flightpassenger\"\n\n    inputs = [\n        SecretStrInput(\n            name=\"user_password\",\n            display_name=\"User Token\",\n            info=\"The user token to authorize the SQL query.\",\n            advanced=True,\n            value=\"\",\n            required=True,\n        ),\n        MessageTextInput(\n            name=\"database_name\",\n            display_name=\"DB Name\",\n            info=\"This is the name of the database in PCAI\",\n            value=\"fakecustomerinfo\",\n            tool_mode=False,\n        ),\n        MessageTextInput(\n            name=\"schema_name\",\n            display_name=\"Schema Name\",\n            info=\"This is the name of the schema for the database in PCAI\",\n            value=\"default\",\n            tool_mode=False,\n        ),\n        MessageTextInput(\n            name=\"table_name\",\n            display_name=\"Table Name\",\n            info=\"This is the name of the table within the schema for the database in PCAI\",\n            value=\"fake_customer_data\",\n            tool_mode=False,\n        ),\n        MessageTextInput(\n            name=\"sql_query\",\n            display_name=\"SQL Query\",\n            info=\"This is the SQL query which will be run on the specified database in PCAI. The columns to match are name and flight.\",\n            value=\"SELECT * FROM fake_customer_data\",\n            tool_mode=True,\n        ),\n        StrInput(\n            name=\"global_imports\",\n            display_name=\"Global Imports\",\n            info=\"A comma-separated list of modules to import globally, e.g. 'math,numpy,pandas'.\",\n            value=\"json,request,time\",\n            advanced=True,\n            required=True,\n        ),\n        CodeInput(\n            name=\"sql_query_code\",\n            display_name=\"SQL Code\",\n            info=\"The SQL code to execute.\",\n            value=\"print('Hello, World!')\",\n            tool_mode=False,\n            advanced=True,\n            required=True,\n        ),\n    ]\n\n    outputs = [\n        Output(\n            display_name=\"Results\",\n            name=\"results\",\n            type_=Data,\n            method=\"flightpassenger\",\n        ),\n    ]\n\n    def get_globals(self, global_imports: str | list[str]) -> dict:\n        \"\"\"Create a globals dictionary with only the specified allowed imports.\"\"\"\n        global_dict = {}\n\n        try:\n            if isinstance(global_imports, str):\n                modules = [module.strip() for module in global_imports.split(\",\")]\n            elif isinstance(global_imports, list):\n                modules = global_imports\n            else:\n                msg = \"global_imports must be either a string or a list\"\n                raise TypeError(msg)\n\n            for module in modules:\n                try:\n                    imported_module = importlib.import_module(module)\n                    global_dict[imported_module.__name__] = imported_module\n                except ImportError as e:\n                    msg = f\"Could not import module {module}: {e!s}\"\n                    raise ImportError(msg) from e\n\n        except Exception as e:\n            self.log(f\"Error in global imports: {e!s}\")\n            raise\n        else:\n            self.log(f\"Successfully imported modules: {list(global_dict.keys())}\")\n            return global_dict\n\n    def flightpassenger(self) -> Data:\n        try:\n            python_repl = PythonREPL()\n            new_sql_query_code = re.sub('(?<=catalog = ).+', f'\"{self.database_name}\"', self.sql_query_code)\n            new_sql_query_code = re.sub('(?<=schema = ).+', f'\"{self.schema_name}\"', new_sql_query_code)\n            new_sql_query_code = re.sub(r'(?<=FROM )\\w+', f'{self.table_name}', new_sql_query_code)\n            if 'WHERE' in self.sql_query:\n                filter_sql_query = self.sql_query.split('WHERE')[-1]\n                new_sql_query_code = re.sub(f'(?<=FROM {self.table_name})', f' WHERE {filter_sql_query}', new_sql_query_code)\n            new_sql_query_code = re.sub('auth_token = \"\"', f'auth_token = \"{self.user_password}\"', new_sql_query_code)\n            \n            result = python_repl.run(new_sql_query_code)\n            result = result.strip() if result else \"\"\n\n            self.log(\"Code execution completed successfully\")\n            return Data(data={\"result\": result})\n\n        except ImportError as e:\n            error_message = f\"Import Error: {e!s}\"\n            self.log(error_message)\n            return Data(data={\"error\": error_message})\n\n        except SyntaxError as e:\n            error_message = f\"Syntax Error: {e!s}\"\n            self.log(error_message)\n            return Data(data={\"error\": error_message})\n\n        except (NameError, TypeError, ValueError) as e:\n            error_message = f\"Error during execution: {e!s}\"\n            self.log(error_message)\n            return Data(data={\"error\": error_message})\n\n    def build_output(self) -> Data:\n        data = self.flightpassenger\n        return data\n\n"
-              },
-              "database_name": {
-                "_input_type": "MessageTextInput",
-                "advanced": false,
-                "display_name": "DB Name",
-                "dynamic": false,
-                "info": "This is the name of the database in PCAI",
-                "input_types": [
-                  "Message"
-                ],
-                "list": false,
-                "list_add_label": "Add More",
-                "load_from_db": false,
-                "name": "database_name",
-                "placeholder": "",
-                "required": false,
-                "show": true,
-                "title_case": false,
-                "tool_mode": false,
-                "trace_as_input": true,
-                "trace_as_metadata": true,
-                "type": "str",
-                "value": "fakecustomerinfo"
-              },
-              "global_imports": {
-                "_input_type": "StrInput",
-                "advanced": true,
-                "display_name": "Global Imports",
-                "dynamic": false,
-                "info": "A comma-separated list of modules to import globally, e.g. 'math,numpy,pandas'.",
-                "list": false,
-                "list_add_label": "Add More",
-                "load_from_db": false,
-                "name": "global_imports",
-                "placeholder": "",
-                "required": true,
-                "show": true,
-                "title_case": false,
-                "tool_mode": false,
-                "trace_as_metadata": true,
-                "type": "str",
-                "value": "math,pandas"
-              },
-              "is_refresh": false,
-              "schema_name": {
-                "_input_type": "MessageTextInput",
-                "advanced": false,
-                "display_name": "Schema Name",
-                "dynamic": false,
-                "info": "This is the name of the schema for the database in PCAI",
-                "input_types": [
-                  "Message"
-                ],
-                "list": false,
-                "list_add_label": "Add More",
-                "load_from_db": false,
-                "name": "schema_name",
-                "placeholder": "",
-                "required": false,
-                "show": true,
-                "title_case": false,
-                "tool_mode": false,
-                "trace_as_input": true,
-                "trace_as_metadata": true,
-                "type": "str",
-                "value": "default"
-              },
-              "sql_query": {
-                "_input_type": "MessageTextInput",
-                "advanced": false,
-                "display_name": "SQL Query",
-                "dynamic": false,
-                "info": "This is the SQL query which will be run on the specified database in PCAI. The columns to match are name and flight.",
-                "input_types": [
-                  "Message"
-                ],
-                "list": false,
-                "list_add_label": "Add More",
-                "load_from_db": false,
-                "name": "sql_query",
-                "placeholder": "",
-                "required": false,
-                "show": true,
-                "title_case": false,
-                "tool_mode": true,
-                "trace_as_input": true,
-                "trace_as_metadata": true,
-                "type": "str",
-                "value": "SELECT * FROM fakecustomerinfo WHERE name = 'John' AND flight = 'A105'"
-              },
-              "sql_query_code": {
-                "_input_type": "CodeInput",
-                "advanced": true,
-                "display_name": "SQL Code",
-                "dynamic": false,
-                "info": "The SQL code to execute.",
-                "list": false,
-                "list_add_label": "Add More",
-                "load_from_db": false,
-                "name": "sql_query_code",
-                "placeholder": "",
-                "required": true,
-                "show": true,
-                "title_case": false,
-                "tool_mode": false,
-                "trace_as_input": true,
-                "type": "code",
-                "value": "import requests\nimport time\nimport json\n\n# Presto server configuration\npresto_host = \"ezpresto-sts-mst-0.ezpresto-svc-hdl.ezpresto.svc.cluster.local\"\npresto_port = 8081\ncatalog = \"fakecustomerinfo\"\nschema = \"default\"\ntable = \"fake_customer_data\"\n\n# Query to execute  \nsql_query = \"SELECT * FROM fake_customer_data\"\n\n\nauth_token = \"\"\n\n# Headers\nheaders = {\n    \"X-Presto-User\": \"user\",\n    \"X-Presto-Catalog\": catalog,\n    \"X-Presto-Schema\": schema,\n    \"Content-Type\": \"application/json\",\n    \"Authorization\": f\"Bearer {auth_token}\"\n}\n\n# Submit query\nresponse = requests.post(f\"https://{presto_host}:{presto_port}/v1/statement\", verify=False, headers=headers, data=sql_query)\n\nif response.status_code == 200:\n    data_result = {}\n    query_result = response.json()\n    \n    # Get next results if available\n    next_uri = query_result.get('nextUri')\n    while next_uri:\n        response = requests.get(next_uri, verify=False, headers=headers)\n        query_result = response.json()\n        \n        # Process results\n        if 'data' in query_result and query_result['data']:\n            data_columns = [k['name'] for k in query_result['columns']]\n            for n, results in enumerate(query_result['data']):\n                data_result[n] = {column: result for column, result in zip(data_columns, results)}\n        \n        # Update next URL or exit loop if done\n        next_uri = query_result.get('nextUri')\n        if not next_uri:\n            break\n        \n        # Optional: Add a small delay to avoid hammering the server\n        time.sleep(0.1)\n    \n    print(data_result)\nelse:\n    print(f\"Error: {response.status_code}, {response.text}\")"
-              },
-              "table_name": {
-                "_input_type": "MessageTextInput",
-                "advanced": false,
-                "display_name": "Table Name",
-                "dynamic": false,
-                "info": "This is the name of the table within the schema for the database in PCAI",
-                "input_types": [
-                  "Message"
-                ],
-                "list": false,
-                "list_add_label": "Add More",
-                "load_from_db": false,
-                "name": "table_name",
-                "placeholder": "",
-                "required": false,
-                "show": true,
-                "title_case": false,
-                "tool_mode": false,
-                "trace_as_input": true,
-                "trace_as_metadata": true,
-                "type": "str",
-                "value": "fake_customer_data"
-              },
-              "tools_metadata": {
-                "_input_type": "ToolsInput",
-                "advanced": false,
-                "display_name": "Actions",
-                "dynamic": false,
-                "info": "Modify tool names and descriptions to help agents understand when to use each tool.",
-                "is_list": true,
-                "list_add_label": "Add More",
-                "name": "tools_metadata",
-                "override_skip": false,
-                "placeholder": "",
-                "real_time_refresh": true,
-                "required": false,
-                "show": true,
-                "title_case": false,
-                "tool_mode": false,
-                "trace_as_metadata": true,
-                "track_in_telemetry": false,
-                "type": "tools",
-                "value": [
-                  {
-                    "args": {
-                      "sql_query": {
-                        "default": "SELECT * FROM fake_customer_data",
-                        "description": "This is the SQL query which will be run on the specified database in PCAI. The columns to match are name and flight.",
-                        "title": "Sql Query",
-                        "type": "string"
-                      }
-                    },
-                    "description": "flightpassenger. flightpassenger - Use this tool to look up passenger flight information. The possible columns to match are name and/or flight if provided.",
-                    "display_description": "flightpassenger. flightpassenger - Use this tool to look up passenger flight information. The possible columns to match are name and/or flight if provided.",
-                    "display_name": "flightpassenger",
-                    "name": "flightpassenger",
-                    "readonly": false,
-                    "status": true,
-                    "tags": [
-                      "flightpassenger"
-                    ]
-                  }
-                ]
-              },
-              "user_password": {
-                "_input_type": "SecretStrInput",
-                "advanced": false,
-                "display_name": "User Token",
-                "dynamic": false,
-                "info": "The user token to authorize the SQL query.",
-                "input_types": [],
-                "load_from_db": false,
-                "name": "user_password",
-                "password": true,
-                "placeholder": "",
-                "required": true,
-                "show": true,
-                "title_case": false,
-                "type": "str",
-                "value": "eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICI3Y1ZTc3lkNzNySlltVWtkdW5QTE1JbGFSdmM1Y0UxVlM3YWdFUUItNldzIn0.eyJleHAiOjE3Nzc0NDQ3MzQsImlhdCI6MTc3NjkyNjMzNCwiYXV0aF90aW1lIjoxNzc2NjY3NzQzLCJqdGkiOiIyYzJjMTBmZC0yYmM1LTQ2MDMtYTg3OS1hOWNjMjNkZmQ2YTAiLCJpc3MiOiJodHRwczovL2tleWNsb2FrLmFpLWFwcGxpY2F0aW9uLnBjYWkwMTA0LmxkNy5ocGVjb2xvLm5ldC9yZWFsbXMvVUEiLCJzdWIiOiIzNmI5YzEyOC0zNGYwLTQzOTYtODcxZi1lZjBmNTA1YzU5OGIiLCJ0eXAiOiJCZWFyZXIiLCJhenAiOiJ1YSIsIm5vbmNlIjoiVVd0YXdZWUcxbkFQR210YmpTaU4tS3RnMGVMb2U4Tkw3R0E3MjB2M0ZyTSIsInNlc3Npb25fc3RhdGUiOiI4YmE2ZGI3Zi03ODg2LTRhOTctYjRlOS1lNGU4YmEyNTNlZjUiLCJhY3IiOiIxIiwic2NvcGUiOiJvcGVuaWQgb2ZmbGluZV9hY2Nlc3MgZW1haWwgbGQ3czIwM3IxMDp1YSBwcm9maWxlIiwic2lkIjoiOGJhNmRiN2YtNzg4Ni00YTk3LWI0ZTktZTRlOGJhMjUzZWY1IiwidWlkIjoiMTAwMDAwMjYiLCJlbWFpbF92ZXJpZmllZCI6ZmFsc2UsImdpZCI6IjEwMDEiLCJuYW1lIjoiSXNhYmVsbGUgU3RlaW5oYXVzZXIiLCJuYW1lc3BhY2UiOiJwcm9qZWN0LXVzZXItaXNhYmVsbGUtc3RlaW5oYXVzZXIiLCJncm91cHMiOlsidWEtZW5hYmxlZCIsIm9mZmxpbmVfYWNjZXNzIiwiYWRtaW4iLCJkZWZhdWx0LXJvbGVzLXVhIiwidW1hX2F1dGhvcml6YXRpb24iXSwicHJlZmVycmVkX3VzZXJuYW1lIjoiaXNhYmVsbGUtc3RlaW5oYXVzZXIiLCJwb3NpeF91c2VybmFtZSI6ImlzYWJlbGxlLXN0ZWluaGF1c2VyIiwiZ2l2ZW5fbmFtZSI6IklzYWJlbGxlIiwiZmFtaWx5X25hbWUiOiJTdGVpbmhhdXNlciIsImVtYWlsIjoiaXNhYmVsbGUuc3RlaW5oYXVzZXJAaHBlLmNvbSJ9.xJLMAvjmC26Ci7Oi2INbYGNlZIP4NKLZuyNTHcDFgRIN5v4U3te-ROYf338p1tOndXo8XeEA9i7kMrB21xC8dBg9kl_NPTRfjQp7KEbX2nFnFWMpBqpSkXA4EOnw5LuhkG2bu0uoUxCvYpUtIDpi7O1HAKrylJaUuTZ7cNxMGiLWcihNZsKAuPTL1ajtpsKqn08S0JXrZ5a3KR_tTkHIPp8aBuzXTWFrZUAMpr-4VfSJ8LoQUQLWEnxUCrH1aMSEfj1lgXX9HT6lMMCVeGfpYWkUQUUkAV0sWFcHYOdkYGo_Ib4yuBuNrgb3Mw_pO-6G9tIsDa9esb4fRFxmZ9luTQ"
-              }
-            },
-            "tool_mode": true
-          },
-          "showNode": true,
-          "type": "flightpassenger"
-        },
-        "dragging": false,
-        "id": "flightpassenger-KVmBV",
-        "measured": {
-          "height": 561,
-          "width": 320
-        },
-        "position": {
-          "x": 2337.980843255159,
-          "y": 1622.2330098295902
-        },
-        "selected": false,
-        "type": "genericNode"
-      },
-      {
-        "data": {
           "description": "Qdrant Vector Store with search capabilities",
           "display_name": "Qdrant",
-          "id": "QdrantVectorStoreComponent-2NNhm",
+          "id": "QdrantVectorStoreComponent-FpO5E",
           "node": {
             "base_classes": [
               "Data",
@@ -3703,7 +3416,7 @@
           "type": "QdrantVectorStoreComponent"
         },
         "dragging": false,
-        "id": "QdrantVectorStoreComponent-2NNhm",
+        "id": "QdrantVectorStoreComponent-FpO5E",
         "measured": {
           "height": 701,
           "width": 320
@@ -3719,7 +3432,7 @@
         "data": {
           "description": "Define the agent's instructions, then enter a task to complete using tools.",
           "display_name": "Agent",
-          "id": "Agent-zgWNI",
+          "id": "Agent-OqIs9",
           "node": {
             "base_classes": [
               "Message"
@@ -3761,7 +3474,7 @@
             ],
             "frozen": false,
             "icon": "bot",
-            "last_updated": "2026-04-23T13:42:09.602Z",
+            "last_updated": "2026-04-23T13:47:15.275Z",
             "legacy": false,
             "lf_version": "1.7.3",
             "metadata": {
@@ -3811,7 +3524,7 @@
             "template": {
               "_frontend_node_flow_id": {
                 "input_types": [],
-                "value": "32dab0ca-1451-4d39-bd75-b5372bb2ab63"
+                "value": "9a64fe3f-f2b2-4d26-8d80-c9b83ac2257e"
               },
               "_frontend_node_folder_id": {
                 "input_types": [],
@@ -4181,7 +3894,7 @@
                 "trace_as_metadata": true,
                 "track_in_telemetry": false,
                 "type": "str",
-                "value": "You are a helpful assistant that can use tools to answer questions and perform tasks. You have access to the following bills:\n\n- flightpolicy: Tool that helps determine refund calculations based on the flight policy.\n- flightpassenger: Tool that helps retrieve passenger information."
+                "value": "You are a helpful assistant that can use tools to answer questions and perform tasks. You have access to the following:\n\n- flightpolicy: Tool that helps determine refund calculations based on the flight policy.\n- ezpresto mcp: MCP server with access to customer, flights, ticket prices they paid leveraging Presto\n\nFor ezPresto MCP ALWAYS Use catalog 'fakecustomerinfo' and schema 'default' and table 'fake_customer_data'.\nNEVER end your query with a semicolon.\nTRIPLE DOT RULE when executing a query use catalog.schema.tablename \n\nretrieve the table schema and then execute a query"
               },
               "tools": {
                 "_input_type": "HandleInput",
@@ -4233,7 +3946,7 @@
           "type": "Agent"
         },
         "dragging": false,
-        "id": "Agent-zgWNI",
+        "id": "Agent-OqIs9",
         "measured": {
           "height": 427,
           "width": 320
@@ -4242,12 +3955,12 @@
           "x": 2816.5732582866544,
           "y": 730.3913542834262
         },
-        "selected": false,
+        "selected": true,
         "type": "genericNode"
       },
       {
         "data": {
-          "id": "File-870aH",
+          "id": "File-kxhNu",
           "node": {
             "base_classes": [
               "Message"
@@ -4280,7 +3993,7 @@
             ],
             "frozen": false,
             "icon": "file-text",
-            "last_updated": "2026-04-23T13:42:56.636Z",
+            "last_updated": "2026-04-23T13:47:15.192Z",
             "legacy": false,
             "lf_version": "1.7.3",
             "metadata": {
@@ -4346,7 +4059,7 @@
             "pinned": false,
             "template": {
               "_frontend_node_flow_id": {
-                "value": "32dab0ca-1451-4d39-bd75-b5372bb2ab63"
+                "value": "9a64fe3f-f2b2-4d26-8d80-c9b83ac2257e"
               },
               "_frontend_node_folder_id": {
                 "value": "5b70a1d3-9769-4949-b39a-6ebe89731399"
@@ -4798,7 +4511,7 @@
           "type": "File"
         },
         "dragging": false,
-        "id": "File-870aH",
+        "id": "File-kxhNu",
         "measured": {
           "height": 275,
           "width": 320
@@ -4812,7 +4525,7 @@
       },
       {
         "data": {
-          "id": "note-smvma",
+          "id": "note-2GbyW",
           "node": {
             "description": "## Data Ingestion\n\n### Ingest file(s) into Qdrant VectorDB using local embedding model deployed in MLIS",
             "display_name": "",
@@ -4823,7 +4536,7 @@
         },
         "dragging": false,
         "height": 324,
-        "id": "note-smvma",
+        "id": "note-2GbyW",
         "measured": {
           "height": 324,
           "width": 324
@@ -4836,17 +4549,425 @@
         "selected": false,
         "type": "noteNode",
         "width": 324
+      },
+      {
+        "data": {
+          "id": "MCP-rCYbx",
+          "node": {
+            "base_classes": [
+              "DataFrame"
+            ],
+            "beta": false,
+            "category": "MCP",
+            "conditional_paths": [],
+            "custom_fields": {},
+            "description": "MCP Server: ezpresto",
+            "display_name": "ezpresto",
+            "documentation": "https://docs.langflow.org/mcp-tools",
+            "edited": false,
+            "field_order": [
+              "mcp_server",
+              "use_cache",
+              "verify_ssl",
+              "tool",
+              "tool_placeholder"
+            ],
+            "frozen": false,
+            "icon": "Mcp",
+            "key": "mcp_ezpresto",
+            "last_updated": "2026-04-23T13:47:15.194Z",
+            "legacy": false,
+            "lf_version": "1.7.3",
+            "metadata": {
+              "code_hash": "5cea317b23ca",
+              "dependencies": {
+                "dependencies": [
+                  {
+                    "name": "langchain_core",
+                    "version": "0.3.83"
+                  },
+                  {
+                    "name": "lfx",
+                    "version": "0.2.2"
+                  },
+                  {
+                    "name": "langflow",
+                    "version": "1.7.3"
+                  }
+                ],
+                "total_dependencies": 3
+              },
+              "module": "lfx.components.models_and_agents.mcp_component.MCPToolsComponent"
+            },
+            "minimized": false,
+            "official": false,
+            "output_types": [],
+            "outputs": [
+              {
+                "allows_loop": false,
+                "cache": true,
+                "display_name": "Toolset",
+                "group_outputs": false,
+                "hidden": null,
+                "loop_types": null,
+                "method": "to_toolkit",
+                "name": "component_as_tool",
+                "options": null,
+                "required_inputs": null,
+                "selected": "Tool",
+                "tool_mode": true,
+                "types": [
+                  "Tool"
+                ],
+                "value": "__UNDEFINED__"
+              }
+            ],
+            "pinned": false,
+            "template": {
+              "_frontend_node_flow_id": {
+                "value": "9a64fe3f-f2b2-4d26-8d80-c9b83ac2257e"
+              },
+              "_frontend_node_folder_id": {
+                "value": "5b70a1d3-9769-4949-b39a-6ebe89731399"
+              },
+              "_type": "Component",
+              "code": {
+                "advanced": true,
+                "dynamic": true,
+                "fileTypes": [],
+                "file_path": "",
+                "info": "",
+                "list": false,
+                "load_from_db": false,
+                "multiline": true,
+                "name": "code",
+                "password": false,
+                "placeholder": "",
+                "required": true,
+                "show": true,
+                "title_case": false,
+                "type": "code",
+                "value": "from __future__ import annotations\n\nimport asyncio\nimport json\nimport uuid\n\nfrom langchain_core.tools import StructuredTool  # noqa: TC002\n\nfrom lfx.base.agents.utils import maybe_unflatten_dict, safe_cache_get, safe_cache_set\nfrom lfx.base.mcp.util import (\n    MCPStdioClient,\n    MCPStreamableHttpClient,\n    create_input_schema_from_json_schema,\n    update_tools,\n)\nfrom lfx.custom.custom_component.component_with_cache import ComponentWithCache\nfrom lfx.inputs.inputs import InputTypes  # noqa: TC001\nfrom lfx.io import BoolInput, DropdownInput, McpInput, MessageTextInput, Output\nfrom lfx.io.schema import flatten_schema, schema_to_langflow_inputs\nfrom lfx.log.logger import logger\nfrom lfx.schema.dataframe import DataFrame\nfrom lfx.schema.message import Message\nfrom lfx.services.deps import get_settings_service, get_storage_service, session_scope\n\n\nclass MCPToolsComponent(ComponentWithCache):\n    schema_inputs: list = []\n    tools: list[StructuredTool] = []\n    _not_load_actions: bool = False\n    _tool_cache: dict = {}\n    _last_selected_server: str | None = None  # Cache for the last selected server\n\n    def __init__(self, **data) -> None:\n        super().__init__(**data)\n        # Initialize cache keys to avoid CacheMiss when accessing them\n        self._ensure_cache_structure()\n\n        # Initialize clients with access to the component cache\n        self.stdio_client: MCPStdioClient = MCPStdioClient(component_cache=self._shared_component_cache)\n        self.streamable_http_client: MCPStreamableHttpClient = MCPStreamableHttpClient(\n            component_cache=self._shared_component_cache\n        )\n\n    def _ensure_cache_structure(self):\n        \"\"\"Ensure the cache has the required structure.\"\"\"\n        # Check if servers key exists and is not CacheMiss\n        servers_value = safe_cache_get(self._shared_component_cache, \"servers\")\n        if servers_value is None:\n            safe_cache_set(self._shared_component_cache, \"servers\", {})\n\n        # Check if last_selected_server key exists and is not CacheMiss\n        last_server_value = safe_cache_get(self._shared_component_cache, \"last_selected_server\")\n        if last_server_value is None:\n            safe_cache_set(self._shared_component_cache, \"last_selected_server\", \"\")\n\n    default_keys: list[str] = [\n        \"code\",\n        \"_type\",\n        \"tool_mode\",\n        \"tool_placeholder\",\n        \"mcp_server\",\n        \"tool\",\n        \"use_cache\",\n        \"verify_ssl\",\n    ]\n\n    display_name = \"MCP Tools\"\n    description = \"Connect to an MCP server to use its tools.\"\n    documentation: str = \"https://docs.langflow.org/mcp-tools\"\n    icon = \"Mcp\"\n    name = \"MCPTools\"\n\n    inputs = [\n        McpInput(\n            name=\"mcp_server\",\n            display_name=\"MCP Server\",\n            info=\"Select the MCP Server that will be used by this component\",\n            real_time_refresh=True,\n        ),\n        BoolInput(\n            name=\"use_cache\",\n            display_name=\"Use Cached Server\",\n            info=(\n                \"Enable caching of MCP Server and tools to improve performance. \"\n                \"Disable to always fetch fresh tools and server updates.\"\n            ),\n            value=False,\n            advanced=True,\n        ),\n        BoolInput(\n            name=\"verify_ssl\",\n            display_name=\"Verify SSL Certificate\",\n            info=(\n                \"Enable SSL certificate verification for HTTPS connections. \"\n                \"Disable only for development/testing with self-signed certificates.\"\n            ),\n            value=True,\n            advanced=True,\n        ),\n        DropdownInput(\n            name=\"tool\",\n            display_name=\"Tool\",\n            options=[],\n            value=\"\",\n            info=\"Select the tool to execute\",\n            show=False,\n            required=True,\n            real_time_refresh=True,\n        ),\n        MessageTextInput(\n            name=\"tool_placeholder\",\n            display_name=\"Tool Placeholder\",\n            info=\"Placeholder for the tool\",\n            value=\"\",\n            show=False,\n            tool_mode=False,\n        ),\n    ]\n\n    outputs = [\n        Output(display_name=\"Response\", name=\"response\", method=\"build_output\"),\n    ]\n\n    async def _validate_schema_inputs(self, tool_obj) -> list[InputTypes]:\n        \"\"\"Validate and process schema inputs for a tool.\"\"\"\n        try:\n            if not tool_obj or not hasattr(tool_obj, \"args_schema\"):\n                msg = \"Invalid tool object or missing input schema\"\n                raise ValueError(msg)\n\n            flat_schema = flatten_schema(tool_obj.args_schema.schema())\n            input_schema = create_input_schema_from_json_schema(flat_schema)\n            if not input_schema:\n                msg = f\"Empty input schema for tool '{tool_obj.name}'\"\n                raise ValueError(msg)\n\n            schema_inputs = schema_to_langflow_inputs(input_schema)\n            if not schema_inputs:\n                msg = f\"No input parameters defined for tool '{tool_obj.name}'\"\n                await logger.awarning(msg)\n                return []\n\n        except Exception as e:\n            msg = f\"Error validating schema inputs: {e!s}\"\n            await logger.aexception(msg)\n            raise ValueError(msg) from e\n        else:\n            return schema_inputs\n\n    async def update_tool_list(self, mcp_server_value=None):\n        # Accepts mcp_server_value as dict {name, config} or uses self.mcp_server\n        mcp_server = mcp_server_value if mcp_server_value is not None else getattr(self, \"mcp_server\", None)\n        server_name = None\n        server_config_from_value = None\n        if isinstance(mcp_server, dict):\n            server_name = mcp_server.get(\"name\")\n            server_config_from_value = mcp_server.get(\"config\")\n        else:\n            server_name = mcp_server\n        if not server_name:\n            self.tools = []\n            return [], {\"name\": server_name, \"config\": server_config_from_value}\n\n        # Check if caching is enabled, default to False\n        use_cache = getattr(self, \"use_cache\", False)\n\n        # Use shared cache if available and caching is enabled\n        cached = None\n        if use_cache:\n            servers_cache = safe_cache_get(self._shared_component_cache, \"servers\", {})\n            cached = servers_cache.get(server_name) if isinstance(servers_cache, dict) else None\n\n        if cached is not None:\n            try:\n                self.tools = cached[\"tools\"]\n                self.tool_names = cached[\"tool_names\"]\n                self._tool_cache = cached[\"tool_cache\"]\n                server_config_from_value = cached[\"config\"]\n            except (TypeError, KeyError, AttributeError) as e:\n                # Handle corrupted cache data by clearing it and continuing to fetch fresh tools\n                msg = f\"Unable to use cached data for MCP Server{server_name}: {e}\"\n                await logger.awarning(msg)\n                # Clear the corrupted cache entry\n                current_servers_cache = safe_cache_get(self._shared_component_cache, \"servers\", {})\n                if isinstance(current_servers_cache, dict) and server_name in current_servers_cache:\n                    current_servers_cache.pop(server_name)\n                    safe_cache_set(self._shared_component_cache, \"servers\", current_servers_cache)\n            else:\n                return self.tools, {\"name\": server_name, \"config\": server_config_from_value}\n\n        try:\n            try:\n                from langflow.api.v2.mcp import get_server\n                from langflow.services.database.models.user.crud import get_user_by_id\n            except ImportError as e:\n                msg = (\n                    \"Langflow MCP server functionality is not available. \"\n                    \"This feature requires the full Langflow installation.\"\n                )\n                raise ImportError(msg) from e\n            async with session_scope() as db:\n                if not self.user_id:\n                    msg = \"User ID is required for fetching MCP tools.\"\n                    raise ValueError(msg)\n                current_user = await get_user_by_id(db, self.user_id)\n\n                # Try to get server config from DB/API\n                server_config = await get_server(\n                    server_name,\n                    current_user,\n                    db,\n                    storage_service=get_storage_service(),\n                    settings_service=get_settings_service(),\n                )\n\n            # If get_server returns empty but we have a config, use it\n            if not server_config and server_config_from_value:\n                server_config = server_config_from_value\n\n            if not server_config:\n                self.tools = []\n                return [], {\"name\": server_name, \"config\": server_config}\n\n            # Add verify_ssl option to server config if not present\n            if \"verify_ssl\" not in server_config:\n                verify_ssl = getattr(self, \"verify_ssl\", True)\n                server_config[\"verify_ssl\"] = verify_ssl\n\n            _, tool_list, tool_cache = await update_tools(\n                server_name=server_name,\n                server_config=server_config,\n                mcp_stdio_client=self.stdio_client,\n                mcp_streamable_http_client=self.streamable_http_client,\n            )\n\n            self.tool_names = [tool.name for tool in tool_list if hasattr(tool, \"name\")]\n            self._tool_cache = tool_cache\n            self.tools = tool_list\n\n            # Cache the result only if caching is enabled\n            if use_cache:\n                cache_data = {\n                    \"tools\": tool_list,\n                    \"tool_names\": self.tool_names,\n                    \"tool_cache\": tool_cache,\n                    \"config\": server_config,\n                }\n\n                # Safely update the servers cache\n                current_servers_cache = safe_cache_get(self._shared_component_cache, \"servers\", {})\n                if isinstance(current_servers_cache, dict):\n                    current_servers_cache[server_name] = cache_data\n                    safe_cache_set(self._shared_component_cache, \"servers\", current_servers_cache)\n\n        except (TimeoutError, asyncio.TimeoutError) as e:\n            msg = f\"Timeout updating tool list: {e!s}\"\n            await logger.aexception(msg)\n            raise TimeoutError(msg) from e\n        except Exception as e:\n            msg = f\"Error updating tool list: {e!s}\"\n            await logger.aexception(msg)\n            raise ValueError(msg) from e\n        else:\n            return tool_list, {\"name\": server_name, \"config\": server_config}\n\n    async def update_build_config(self, build_config: dict, field_value: str, field_name: str | None = None) -> dict:\n        \"\"\"Toggle the visibility of connection-specific fields based on the selected mode.\"\"\"\n        try:\n            if field_name == \"tool\":\n                try:\n                    if len(self.tools) == 0:\n                        try:\n                            self.tools, build_config[\"mcp_server\"][\"value\"] = await self.update_tool_list()\n                            build_config[\"tool\"][\"options\"] = [tool.name for tool in self.tools]\n                            build_config[\"tool\"][\"placeholder\"] = \"Select a tool\"\n                        except (TimeoutError, asyncio.TimeoutError) as e:\n                            msg = f\"Timeout updating tool list: {e!s}\"\n                            await logger.aexception(msg)\n                            if not build_config[\"tools_metadata\"][\"show\"]:\n                                build_config[\"tool\"][\"show\"] = True\n                                build_config[\"tool\"][\"options\"] = []\n                                build_config[\"tool\"][\"value\"] = \"\"\n                                build_config[\"tool\"][\"placeholder\"] = \"Timeout on MCP server\"\n                            else:\n                                build_config[\"tool\"][\"show\"] = False\n                        except ValueError:\n                            if not build_config[\"tools_metadata\"][\"show\"]:\n                                build_config[\"tool\"][\"show\"] = True\n                                build_config[\"tool\"][\"options\"] = []\n                                build_config[\"tool\"][\"value\"] = \"\"\n                                build_config[\"tool\"][\"placeholder\"] = \"Error on MCP Server\"\n                            else:\n                                build_config[\"tool\"][\"show\"] = False\n\n                    if field_value == \"\":\n                        return build_config\n                    tool_obj = None\n                    for tool in self.tools:\n                        if tool.name == field_value:\n                            tool_obj = tool\n                            break\n                    if tool_obj is None:\n                        msg = f\"Tool {field_value} not found in available tools: {self.tools}\"\n                        await logger.awarning(msg)\n                        return build_config\n                    await self._update_tool_config(build_config, field_value)\n                except Exception as e:\n                    build_config[\"tool\"][\"options\"] = []\n                    msg = f\"Failed to update tools: {e!s}\"\n                    raise ValueError(msg) from e\n                else:\n                    return build_config\n            elif field_name == \"mcp_server\":\n                if not field_value:\n                    build_config[\"tool\"][\"show\"] = False\n                    build_config[\"tool\"][\"options\"] = []\n                    build_config[\"tool\"][\"value\"] = \"\"\n                    build_config[\"tool\"][\"placeholder\"] = \"\"\n                    build_config[\"tool_placeholder\"][\"tool_mode\"] = False\n                    self.remove_non_default_keys(build_config)\n                    return build_config\n\n                build_config[\"tool_placeholder\"][\"tool_mode\"] = True\n\n                current_server_name = field_value.get(\"name\") if isinstance(field_value, dict) else field_value\n                _last_selected_server = safe_cache_get(self._shared_component_cache, \"last_selected_server\", \"\")\n                server_changed = current_server_name != _last_selected_server\n\n                # Determine if \"Tool Mode\" is active by checking if the tool dropdown is hidden.\n                is_in_tool_mode = build_config[\"tools_metadata\"][\"show\"]\n\n                # Get use_cache setting to determine if we should use cached data\n                use_cache = getattr(self, \"use_cache\", False)\n\n                # Fast path: if server didn't change and we already have options, keep them as-is\n                # BUT only if caching is enabled or we're in tool mode\n                existing_options = build_config.get(\"tool\", {}).get(\"options\") or []\n                if not server_changed and existing_options:\n                    # In non-tool mode with cache disabled, skip the fast path to force refresh\n                    if not is_in_tool_mode and not use_cache:\n                        pass  # Continue to refresh logic below\n                    else:\n                        if not is_in_tool_mode:\n                            build_config[\"tool\"][\"show\"] = True\n                        return build_config\n\n                # To avoid unnecessary updates, only proceed if the server has actually changed\n                # OR if caching is disabled (to force refresh in non-tool mode)\n                if (_last_selected_server in (current_server_name, \"\")) and build_config[\"tool\"][\"show\"] and use_cache:\n                    if current_server_name:\n                        servers_cache = safe_cache_get(self._shared_component_cache, \"servers\", {})\n                        if isinstance(servers_cache, dict):\n                            cached = servers_cache.get(current_server_name)\n                            if cached is not None and cached.get(\"tool_names\"):\n                                cached_tools = cached[\"tool_names\"]\n                                current_tools = build_config[\"tool\"][\"options\"]\n                                if current_tools == cached_tools:\n                                    return build_config\n                    else:\n                        return build_config\n                safe_cache_set(self._shared_component_cache, \"last_selected_server\", current_server_name)\n\n                # Check if tools are already cached for this server before clearing\n                cached_tools = None\n                if current_server_name and use_cache:\n                    servers_cache = safe_cache_get(self._shared_component_cache, \"servers\", {})\n                    if isinstance(servers_cache, dict):\n                        cached = servers_cache.get(current_server_name)\n                        if cached is not None:\n                            try:\n                                cached_tools = cached[\"tools\"]\n                                self.tools = cached_tools\n                                self.tool_names = cached[\"tool_names\"]\n                                self._tool_cache = cached[\"tool_cache\"]\n                            except (TypeError, KeyError, AttributeError) as e:\n                                # Handle corrupted cache data by ignoring it\n                                msg = f\"Unable to use cached data for MCP Server,{current_server_name}: {e}\"\n                                await logger.awarning(msg)\n                                cached_tools = None\n\n                # Only clear tools if we don't have cached tools for the current server\n                if not cached_tools:\n                    self.tools = []  # Clear previous tools only if no cache\n\n                # Clear previous tool inputs if:\n                # 1. Server actually changed\n                # 2. Cache is disabled (meaning tool list will be refreshed)\n                if server_changed or not use_cache:\n                    self.remove_non_default_keys(build_config)\n\n                # Only show the tool dropdown if not in tool_mode\n                if not is_in_tool_mode:\n                    build_config[\"tool\"][\"show\"] = True\n                    if cached_tools:\n                        # Use cached tools to populate options immediately\n                        build_config[\"tool\"][\"options\"] = [tool.name for tool in cached_tools]\n                        build_config[\"tool\"][\"placeholder\"] = \"Select a tool\"\n                    else:\n                        # Show loading state only when we need to fetch tools\n                        build_config[\"tool\"][\"placeholder\"] = \"Loading tools...\"\n                        build_config[\"tool\"][\"options\"] = []\n                    # Force a value refresh when:\n                    # 1. Server changed\n                    # 2. We don't have cached tools\n                    # 3. Cache is disabled (to force refresh on config changes)\n                    if server_changed or not cached_tools or not use_cache:\n                        build_config[\"tool\"][\"value\"] = uuid.uuid4()\n                else:\n                    # Keep the tool dropdown hidden if in tool_mode\n                    self._not_load_actions = True\n                    build_config[\"tool\"][\"show\"] = False\n\n            elif field_name == \"tool_mode\":\n                build_config[\"tool\"][\"placeholder\"] = \"\"\n                build_config[\"tool\"][\"show\"] = not bool(field_value) and bool(build_config[\"mcp_server\"])\n                self.remove_non_default_keys(build_config)\n                self.tool = build_config[\"tool\"][\"value\"]\n                if field_value:\n                    self._not_load_actions = True\n                else:\n                    build_config[\"tool\"][\"value\"] = uuid.uuid4()\n                    build_config[\"tool\"][\"options\"] = []\n                    build_config[\"tool\"][\"show\"] = True\n                    build_config[\"tool\"][\"placeholder\"] = \"Loading tools...\"\n            elif field_name == \"tools_metadata\":\n                self._not_load_actions = False\n\n        except Exception as e:\n            msg = f\"Error in update_build_config: {e!s}\"\n            await logger.aexception(msg)\n            raise ValueError(msg) from e\n        else:\n            return build_config\n\n    def get_inputs_for_all_tools(self, tools: list) -> dict:\n        \"\"\"Get input schemas for all tools.\"\"\"\n        inputs = {}\n        for tool in tools:\n            if not tool or not hasattr(tool, \"name\"):\n                continue\n            try:\n                flat_schema = flatten_schema(tool.args_schema.schema())\n                input_schema = create_input_schema_from_json_schema(flat_schema)\n                langflow_inputs = schema_to_langflow_inputs(input_schema)\n                inputs[tool.name] = langflow_inputs\n            except (AttributeError, ValueError, TypeError, KeyError) as e:\n                msg = f\"Error getting inputs for tool {getattr(tool, 'name', 'unknown')}: {e!s}\"\n                logger.exception(msg)\n                continue\n        return inputs\n\n    def remove_non_default_keys(self, build_config: dict) -> None:\n        \"\"\"Remove non-default keys from the build config.\"\"\"\n        for key in list(build_config.keys()):\n            if key not in self.default_keys:\n                build_config.pop(key)\n\n    async def _update_tool_config(self, build_config: dict, tool_name: str) -> None:\n        \"\"\"Update tool configuration with proper error handling.\"\"\"\n        if not self.tools:\n            self.tools, build_config[\"mcp_server\"][\"value\"] = await self.update_tool_list()\n\n        if not tool_name:\n            return\n\n        tool_obj = next((tool for tool in self.tools if tool.name == tool_name), None)\n        if not tool_obj:\n            msg = f\"Tool {tool_name} not found in available tools: {self.tools}\"\n            self.remove_non_default_keys(build_config)\n            build_config[\"tool\"][\"value\"] = \"\"\n            await logger.awarning(msg)\n            return\n\n        try:\n            # Store current values before removing inputs (only for the current tool)\n            current_values = {}\n            for key, value in build_config.items():\n                if key not in self.default_keys and isinstance(value, dict) and \"value\" in value:\n                    current_values[key] = value[\"value\"]\n\n            # Remove ALL non-default keys (all previous tool inputs)\n            self.remove_non_default_keys(build_config)\n\n            # Get and validate new inputs for the selected tool\n            self.schema_inputs = await self._validate_schema_inputs(tool_obj)\n            if not self.schema_inputs:\n                msg = f\"No input parameters to configure for tool '{tool_name}'\"\n                await logger.ainfo(msg)\n                return\n\n            # Add new inputs to build config for the selected tool only\n            for schema_input in self.schema_inputs:\n                if not schema_input or not hasattr(schema_input, \"name\"):\n                    msg = \"Invalid schema input detected, skipping\"\n                    await logger.awarning(msg)\n                    continue\n\n                try:\n                    name = schema_input.name\n                    input_dict = schema_input.to_dict()\n                    input_dict.setdefault(\"value\", None)\n                    input_dict.setdefault(\"required\", True)\n\n                    build_config[name] = input_dict\n\n                    # Preserve existing value if the parameter name exists in current_values\n                    if name in current_values:\n                        build_config[name][\"value\"] = current_values[name]\n\n                except (AttributeError, KeyError, TypeError) as e:\n                    msg = f\"Error processing schema input {schema_input}: {e!s}\"\n                    await logger.aexception(msg)\n                    continue\n        except ValueError as e:\n            msg = f\"Schema validation error for tool {tool_name}: {e!s}\"\n            await logger.aexception(msg)\n            self.schema_inputs = []\n            return\n        except (AttributeError, KeyError, TypeError) as e:\n            msg = f\"Error updating tool config: {e!s}\"\n            await logger.aexception(msg)\n            raise ValueError(msg) from e\n\n    async def build_output(self) -> DataFrame:\n        \"\"\"Build output with improved error handling and validation.\"\"\"\n        try:\n            self.tools, _ = await self.update_tool_list()\n            if self.tool != \"\":\n                # Set session context for persistent MCP sessions using Langflow session ID\n                session_context = self._get_session_context()\n                if session_context:\n                    self.stdio_client.set_session_context(session_context)\n                    self.streamable_http_client.set_session_context(session_context)\n                exec_tool = self._tool_cache[self.tool]\n                tool_args = self.get_inputs_for_all_tools(self.tools)[self.tool]\n                kwargs = {}\n                for arg in tool_args:\n                    value = getattr(self, arg.name, None)\n                    if value is not None:\n                        if isinstance(value, Message):\n                            kwargs[arg.name] = value.text\n                        else:\n                            kwargs[arg.name] = value\n\n                unflattened_kwargs = maybe_unflatten_dict(kwargs)\n\n                output = await exec_tool.coroutine(**unflattened_kwargs)\n                tool_content = []\n                for item in output.content:\n                    item_dict = item.model_dump()\n                    item_dict = self.process_output_item(item_dict)\n                    tool_content.append(item_dict)\n\n                if isinstance(tool_content, list) and all(isinstance(x, dict) for x in tool_content):\n                    return DataFrame(tool_content)\n                return DataFrame(data=tool_content)\n            return DataFrame(data=[{\"error\": \"You must select a tool\"}])\n        except Exception as e:\n            msg = f\"Error in build_output: {e!s}\"\n            await logger.aexception(msg)\n            raise ValueError(msg) from e\n\n    def process_output_item(self, item_dict):\n        \"\"\"Process the output of a tool.\"\"\"\n        if item_dict.get(\"type\") == \"text\":\n            text = item_dict.get(\"text\")\n            try:\n                return json.loads(text)\n            except json.JSONDecodeError:\n                return item_dict\n        return item_dict\n\n    def _get_session_context(self) -> str | None:\n        \"\"\"Get the Langflow session ID for MCP session caching.\"\"\"\n        # Try to get session ID from the component's execution context\n        if hasattr(self, \"graph\") and hasattr(self.graph, \"session_id\"):\n            session_id = self.graph.session_id\n            # Include server name to ensure different servers get different sessions\n            server_name = \"\"\n            mcp_server = getattr(self, \"mcp_server\", None)\n            if isinstance(mcp_server, dict):\n                server_name = mcp_server.get(\"name\", \"\")\n            elif mcp_server:\n                server_name = str(mcp_server)\n            return f\"{session_id}_{server_name}\" if session_id else None\n        return None\n\n    async def _get_tools(self):\n        \"\"\"Get cached tools or update if necessary.\"\"\"\n        mcp_server = getattr(self, \"mcp_server\", None)\n        if not self._not_load_actions:\n            tools, _ = await self.update_tool_list(mcp_server)\n            return tools\n        return []\n"
+              },
+              "is_refresh": false,
+              "mcp_server": {
+                "_input_type": "McpInput",
+                "advanced": false,
+                "display_name": "MCP Server",
+                "dynamic": false,
+                "info": "Select the MCP Server that will be used by this component",
+                "name": "mcp_server",
+                "override_skip": false,
+                "placeholder": "",
+                "real_time_refresh": true,
+                "required": false,
+                "show": true,
+                "title_case": false,
+                "trace_as_metadata": true,
+                "track_in_telemetry": false,
+                "type": "mcp",
+                "value": {
+                  "config": {
+                    "headers": {
+                      "Authorization": "Bearer YOURTOKEN"
+                    },
+                    "url": "https://ezprestomcp.YOURDOMAIN/mcp",
+                    "verify_ssl": true
+                  },
+                  "name": "ezpresto"
+                }
+              },
+              "tool": {
+                "_input_type": "DropdownInput",
+                "advanced": false,
+                "combobox": false,
+                "dialog_inputs": {},
+                "display_name": "Tool",
+                "dynamic": false,
+                "external_options": {},
+                "info": "Select the tool to execute",
+                "name": "tool",
+                "options": [
+                  "execute_query",
+                  "get_table_schema",
+                  "list_catalogs",
+                  "list_schemas",
+                  "list_tables"
+                ],
+                "options_metadata": [],
+                "override_skip": false,
+                "placeholder": "",
+                "real_time_refresh": true,
+                "required": true,
+                "show": false,
+                "title_case": false,
+                "toggle": false,
+                "tool_mode": false,
+                "trace_as_metadata": true,
+                "track_in_telemetry": true,
+                "type": "str",
+                "value": ""
+              },
+              "tool_placeholder": {
+                "_input_type": "MessageTextInput",
+                "advanced": false,
+                "display_name": "Tool Placeholder",
+                "dynamic": false,
+                "info": "Placeholder for the tool",
+                "input_types": [
+                  "Message"
+                ],
+                "list": false,
+                "list_add_label": "Add More",
+                "load_from_db": false,
+                "name": "tool_placeholder",
+                "override_skip": false,
+                "placeholder": "",
+                "required": false,
+                "show": false,
+                "title_case": false,
+                "tool_mode": true,
+                "trace_as_input": true,
+                "trace_as_metadata": true,
+                "track_in_telemetry": false,
+                "type": "str",
+                "value": ""
+              },
+              "tools_metadata": {
+                "_input_type": "ToolsInput",
+                "advanced": false,
+                "display_name": "Actions",
+                "dynamic": false,
+                "info": "Modify tool names and descriptions to help agents understand when to use each tool.",
+                "is_list": true,
+                "list_add_label": "Add More",
+                "name": "tools_metadata",
+                "override_skip": false,
+                "placeholder": "",
+                "real_time_refresh": true,
+                "required": false,
+                "show": true,
+                "title_case": false,
+                "tool_mode": false,
+                "trace_as_metadata": true,
+                "track_in_telemetry": false,
+                "type": "tools",
+                "value": [
+                  {
+                    "_uniqueId": "execute_query_execute_query_0",
+                    "args": {
+                      "query": {
+                        "description": "SQL query",
+                        "title": "Query",
+                        "type": "string"
+                      }
+                    },
+                    "description": "Execute a SQL query",
+                    "display_description": "Execute a SQL query",
+                    "display_name": "execute_query",
+                    "name": "execute_query",
+                    "readonly": false,
+                    "status": true,
+                    "tags": [
+                      "execute_query"
+                    ]
+                  },
+                  {
+                    "_uniqueId": "get_table_schema_get_table_schema_1",
+                    "args": {
+                      "catalog": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null,
+                        "description": "Catalog",
+                        "title": "Catalog"
+                      },
+                      "schema": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null,
+                        "description": "Schema",
+                        "title": "Schema"
+                      },
+                      "table": {
+                        "description": "Table",
+                        "title": "Table",
+                        "type": "string"
+                      }
+                    },
+                    "description": "Get table schema",
+                    "display_description": "Get table schema",
+                    "display_name": "get_table_schema",
+                    "name": "get_table_schema",
+                    "readonly": false,
+                    "status": true,
+                    "tags": [
+                      "get_table_schema"
+                    ]
+                  },
+                  {
+                    "_uniqueId": "list_catalogs_list_catalogs_2",
+                    "args": {},
+                    "description": "List catalogs",
+                    "display_description": "List catalogs",
+                    "display_name": "list_catalogs",
+                    "name": "list_catalogs",
+                    "readonly": false,
+                    "status": false,
+                    "tags": [
+                      "list_catalogs"
+                    ]
+                  },
+                  {
+                    "_uniqueId": "list_schemas_list_schemas_3",
+                    "args": {
+                      "catalog": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null,
+                        "description": "Catalog",
+                        "title": "Catalog"
+                      }
+                    },
+                    "description": "List schemas",
+                    "display_description": "List schemas",
+                    "display_name": "list_schemas",
+                    "name": "list_schemas",
+                    "readonly": false,
+                    "status": false,
+                    "tags": [
+                      "list_schemas"
+                    ]
+                  },
+                  {
+                    "_uniqueId": "list_tables_list_tables_4",
+                    "args": {
+                      "catalog": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null,
+                        "description": "Catalog",
+                        "title": "Catalog"
+                      },
+                      "schema": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null,
+                        "description": "Schema",
+                        "title": "Schema"
+                      }
+                    },
+                    "description": "List tables",
+                    "display_description": "List tables",
+                    "display_name": "list_tables",
+                    "name": "list_tables",
+                    "readonly": false,
+                    "status": false,
+                    "tags": [
+                      "list_tables"
+                    ]
+                  }
+                ]
+              },
+              "use_cache": {
+                "_input_type": "BoolInput",
+                "advanced": true,
+                "display_name": "Use Cached Server",
+                "dynamic": false,
+                "info": "Enable caching of MCP Server and tools to improve performance. Disable to always fetch fresh tools and server updates.",
+                "list": false,
+                "list_add_label": "Add More",
+                "name": "use_cache",
+                "override_skip": false,
+                "placeholder": "",
+                "required": false,
+                "show": true,
+                "title_case": false,
+                "tool_mode": false,
+                "trace_as_metadata": true,
+                "track_in_telemetry": true,
+                "type": "bool",
+                "value": false
+              },
+              "verify_ssl": {
+                "_input_type": "BoolInput",
+                "advanced": true,
+                "display_name": "Verify SSL Certificate",
+                "dynamic": false,
+                "info": "Enable SSL certificate verification for HTTPS connections. Disable only for development/testing with self-signed certificates.",
+                "list": false,
+                "list_add_label": "Add More",
+                "name": "verify_ssl",
+                "override_skip": false,
+                "placeholder": "",
+                "required": false,
+                "show": true,
+                "title_case": false,
+                "tool_mode": false,
+                "trace_as_metadata": true,
+                "track_in_telemetry": true,
+                "type": "bool",
+                "value": true
+              }
+            },
+            "tool_mode": true
+          },
+          "showNode": true,
+          "type": "MCP"
+        },
+        "dragging": false,
+        "id": "MCP-rCYbx",
+        "measured": {
+          "height": 283,
+          "width": 320
+        },
+        "position": {
+          "x": 2493.657679249989,
+          "y": 1508.8364942688834
+        },
+        "selected": false,
+        "type": "genericNode"
       }
     ],
     "viewport": {
-      "x": -374.4298192616927,
-      "y": -67.60537994808374,
-      "zoom": 0.4875890522869887
+      "x": 176.14378790791466,
+      "y": -65.66856765716557,
+      "zoom": 0.3155056265953089
     }
   },
   "description": "Build an agent that has the refund policy accessible as well as access to a table with customer data.",
   "endpoint_name": null,
-  "id": "32dab0ca-1451-4d39-bd75-b5372bb2ab63",
+  "id": "9a64fe3f-f2b2-4d26-8d80-c9b83ac2257e",
   "is_component": false,
   "last_tested_version": "1.7.3",
   "name": "Agentic example from scratch",
