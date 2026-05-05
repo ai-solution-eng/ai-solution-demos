@@ -2,8 +2,24 @@
 
 | Owner                       | Name                                | Email                                                        |
 | ----------------------------|-------------------------------------|--------------------------------------------------------------|
-| Use Case Owner              | Alejandro Morales                   | alejandro.morales-martinez@hpe.com                           |
-| PCAI Deployment Owner       | Alejandro Morales                   | alejandro.morales-martinez@hpe.com                           |
+| Use Case Owner              | Alejandro Morales, Francesco Caliva, Isabelle Steinhauser                   | alejandro.morales-martinez@hpe.com, francesco.caliva@hpe.com, isabelle.steinhauser@hpe.com                           |
+| PCAI Deployment Owner       | Alejandro Morales, Francesco Caliva, Isabelle Steinhauser                   | alejandro.morales-martinez@hpe.com, francesco.caliva@hpe.com, isabelle.steinhauser@hpe.com                           |
+
+## Abstract
+
+This demo showcases how to build a simple AI Agent on HPEs Private Cloud AI leveraging Langflow. The agent has two tools available to itneract with a PDF (RAG) and infromation in a Table (Presto). Langflow is used as imported Framework, Qdrant as VectorDB, ezPrestoMCP Server (for AIE 1.12 and above) or custom written component to interact with the database information.
+
+The models used are:
+- Embbedding Model: NVIDIA nv-embedqa-e5-v5 as NIM
+- LLM: NVIDIA-Nemotron-3-Nano-30B-A3B-FP8 as NIM or Qwen 3 8B from HuggingFace
+
+We provide two flavors of the demo, the flight assistant agent and the citizen passport support agent. You can easily switch between those two datasets or even use your own. You will require a PDF and a CSV file.
+
+
+Recordings:
+- [Short version Flight Customer Service Agent](https://storage.googleapis.com/ai-solution-engineering-videos/public/PCAI%20Demo%20-%20AI%20User%20(Agentic%20Workflow%20with%20OSS%20Langflow).mp4)
+- [Short version Citizen Passport Support Agent](https://storage.googleapis.com/ai-solution-engineering-videos/public/Citizen%20Passport%20Support%20Agent.mp4)
+- [Long version Flight Customer Service Agent](https://hpe-my.sharepoint.com/:v:/p/hoang_phan/EUVnjGRr8wJGlCk2Hw5IwOkB8WQ0gpZ5zV9KKUXIHCSl5g?e=uexDHe&nav=eyJyZWZlcnJhbEluZm8iOnsicmVmZXJyYWxBcHAiOiJTdHJlYW1XZWJBcHAiLCJyZWZlcnJhbFZpZXciOiJTaGFyZURpYWxvZy1MaW5rIiwicmVmZXJyYWxBcHBQbGF0Zm9ybSI6IldlYiIsInJlZmVycmFsTW9kZSI6InZpZXcifX0%3D)
 
 # Summary
 - [Demo overview video](#demo-overview-video)
@@ -11,10 +27,6 @@
 - [MLIS setup in PCAI](#mlis-setup-in-pcai)
 - [Langflow setup in PCAI](#setup-before-the-demo)
 
-## Demo overview video
-
-- [Short version](https://storage.googleapis.com/ai-solution-engineering-videos/public/PCAI%20Demo%20-%20AI%20User%20(Agentic%20Workflow%20with%20OSS%20Langflow).mp4)
-- [Long version](https://hpe-my.sharepoint.com/:v:/p/hoang_phan/EUVnjGRr8wJGlCk2Hw5IwOkB8WQ0gpZ5zV9KKUXIHCSl5g?e=uexDHe&nav=eyJyZWZlcnJhbEluZm8iOnsicmVmZXJyYWxBcHAiOiJTdHJlYW1XZWJBcHAiLCJyZWZlcnJhbFZpZXciOiJTaGFyZURpYWxvZy1MaW5rIiwicmVmZXJyYWxBcHBQbGF0Zm9ybSI6IldlYiIsInJlZmVycmFsTW9kZSI6InZpZXcifX0%3D)
 
 ## Qdrant installation in PCAI
 
@@ -69,7 +81,7 @@ The latest workflow `langflow-agent-v1-5.json` uses the ezPrestoMCP sever which 
 
 ## EzPresto Table Setup - Adding as Data Source in PCAI 
 
-Upload the [provided fake customer data](data/fake_customer_info.csv) in the  `/shared` folder.
+Upload the [flight fake customer data](data/flight/fake_customer_info.csv) or [passport fake customer data](data/passport/fake_passport_requests.csv) in the  `/shared` folder.
 
 ### Option 1: Upload via Jupyter Notebook
 - Launch a Jupyter Notebook and navigate to `/shared`
@@ -111,9 +123,9 @@ Once the file is uploaded, Add New Data Source in the Structured Data section
 
 1. Once Qdrant has been deployed, in AI Essentials navigate to "Tools & Frameworks", search for the Qdrant card and click "Open" to access the UI (you may need to append `/dashboard` at the end of the URL)
 2. Navigate to "Console" in the Qdrant UI
-3. Copy paste the following code and click the "RUN" button above it to create a new Collection named `deltaflight`
+3. Copy paste the following code and click the "RUN" button above it to create a new Collection named `anywhere`
     ```
-    PUT /collections/deltaflight
+    PUT /collections/anywhere
     {
       "vectors": {
         "size": 1024,
@@ -158,17 +170,17 @@ print(token)
             - Set this to the Qdrant endpoint URL from Qdrant setup step
             - If you want to skip SSL verify, set this to the Qdrant internal K8s service name (e.g. `http://<qdrant_service_name>.<qdrant_namespace>.svc.cluster.local`)
     - **`QDRANT_COLLECTION` (Generic):**
-            - Set this to the name of the collection we created during Qdrant setup step (i.e. `deltaflight`)
+            - Set this to the name of the collection we created during Qdrant setup step (i.e. `anywhere`)
 4. For `langflow-agent-v1-5.json` you need to configure the MCP Server connection in Langflow, remember this is only available in AIE 1.12 and above. Therefore navigate within the Langflow settings to `MCP Servers` and select `Add MCP Server`
     - Type `Streamable HTTP/SSE`
     - Name `ezpresto`
     - Streamable HTTP/SSE URL > take this from AIE navigating to Data Engineering > Data Sources > MCP Server
     - Headers `Authorization` `Bearer JWT Token` Set this JWT to your AI Essentials user token you saved in an earlier step (remember that by default these tokens expire after 30 minutes)
 5. Upload the [provided flow if using `Langflow 1.4.X`](langflow-agent-v1-4-localvectordb.json) into any project by clicking the upload button
-    - if you want to use Presto MCP server use the [`Langflow 1.5.X`](langflow-agent-v1-5-localvectordb-mcp.json)
+    - if you want to use Presto MCP server use the Langflow 1.5.X either with [`passport`](langflow-agent-v1-5-passport-localvectordb-mcp.json) or  [`flight data`](langflow-agent-v1-5-localvectordb-mcp.json). 
 ![alt text](imgs/flowupload.png)
 6. Upload the [provided `EzPresto Tool`](EzPresto_tool.json) by clicking the upload button (not required for `langflow-agent-v1-5.json`)
-7. Open the flow and make sure to [re-upload the flight policy file](data/delta_refund_policy.pdf) to the `File` component
+7. Open the flow and make sure to re-upload the PDF file either the [refund policy](data/flight/anywhere_airlines_refund_policy.pdf) or the [passport information](data/passport/passports_anywhere.pdf) to the `File` component
 ![alt text](imgs/fileupload_v1-4.png)
 8. Ensure you configure the necessary components' fields with the Langflow Global Environment Variables we configured earlier (**Note:** If you cannot see any of the fields mentioned before for a given component, hover over the component and click "Controls", select the fields to display them in the component and close)
     - **NVIDIA Embeddings Component** (there are two of these)
@@ -191,5 +203,9 @@ print(token)
     - **EzPresto tool Component** (not required for `langflow-agent-v1-5.json`)
         - User Token: Set this to your AI Essentials user token you saved in an earlier step (remember that by default these tokens expire after 30 minutes)
 9. Open the playground and test the workflow with a question like:
-    > "My name is John and my flight is A105, I was downgraded to coach from first class, what is my refund?"
-    - The model should return the correct answer of $90 after calling both tools included (`FlightPolicy` and `FlightPassenger`) for `langflow-agent-v1-5.json` requesting the schema of the table before executing a query
+    > "My name is John and my flight is A105, I was downgraded to coach from first class, what is my refund?"     
+    - The agent should return the correct answer of $90 after calling both tools included (`FlightPolicy` and `ezprestomcp`) for `langflow-agent-v1-5.json` requesting the schema of the table before executing a query
+    or for the passport use case
+    > "Hi there my name is Isabelle and I requested a passport. Where can I pick it up and how much does it cost?"
+     - The agent should return the correct answer of 37.50€ for a below 24 years old standard passport with the pickup at Anywhere2 after calling both tools included (`Passport` and `ezprestomcp`) for `langflow-agent-v1-5.json` requesting the schema of the table before executing a query
+
