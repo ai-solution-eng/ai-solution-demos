@@ -1,5 +1,5 @@
 env:
-  DATABASE_URL: "postgresql+asyncpg://realtime_voice:REPLACE_ME@postgresdb-postgresql.postgresdb.svc.cluster.local:5432/realtime_voice"
+  DATABASE_URL: "postgresql+asyncpg://realtime_voice_user:realtime_voice_password@postgresql.postgresql.svc.cluster.local:5432/realtime_voice_db"
   SESSION_STORAGE_ROOT: /data/realtime-sessions
   SESSION_TTL_HOURS: "12"
   # ============================================================
@@ -42,7 +42,7 @@ images:
   frontend:
     repository: "fcaliva/realtime-voice-translation-fe"
     pullPolicy: "IfNotPresent"
-    tag: "0.3.5"
+    tag: "0.3.4"
 
 resources:
   backend:
