@@ -17,9 +17,9 @@ We provide two flavors of the demo, the flight assistant agent and the citizen p
 
 
 Recordings:
-- [Short version Flight Customer Service Agent](https://storage.googleapis.com/ai-solution-engineering-videos/public/PCAI%20Demo%20-%20AI%20User%20(Agentic%20Workflow%20with%20OSS%20Langflow).mp4)
+- [Short version Flight Customer Service Agent [almost 3 min]](https://storage.googleapis.com/ai-solution-engineering-videos/public/Customer%20Flight%20Support%20Agent%20short.mp4)
 - [Short version Citizen Passport Support Agent [4 min]](https://storage.googleapis.com/ai-solution-engineering-videos/public/Citizen%20Passport%20Support%20Agent.mp4)
-- [Long version Flight Customer Service Agent](https://hpe-my.sharepoint.com/:v:/p/hoang_phan/EUVnjGRr8wJGlCk2Hw5IwOkB8WQ0gpZ5zV9KKUXIHCSl5g?e=uexDHe&nav=eyJyZWZlcnJhbEluZm8iOnsicmVmZXJyYWxBcHAiOiJTdHJlYW1XZWJBcHAiLCJyZWZlcnJhbFZpZXciOiJTaGFyZURpYWxvZy1MaW5rIiwicmVmZXJyYWxBcHBQbGF0Zm9ybSI6IldlYiIsInJlZmVycmFsTW9kZSI6InZpZXcifX0%3D)
+- [Long version Flight Customer Service Agent [almost 8 min]](https://storage.googleapis.com/ai-solution-engineering-videos/public/Customer%20Flight%20Support%20Agent%20Long.mp4)
 
 # Summary
 - [Demo overview video](#demo-overview-video)
