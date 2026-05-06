@@ -251,7 +251,7 @@ print("done")
 `username`, `password` and `db name` need to be used when specifying the `DATABASE_URL` in the values.yaml file of the realtime live voice translation app, as follows:
 
 ```yaml
-DATABASE_URL: "postgresql+asyncpg://realtime_voice_user:realtime_voice_password@postgresdb-postgresql.postgresdb.svc.cluster.local:5432/realtime_voice_db"
+DATABASE_URL: "postgresql+asyncpg://realtime_voice_user:realtime_voice_password@postgresql.postgresql.svc.cluster.local:5432/realtime_voice_db"
 ```
 
 When using the app, data in the database can be retrieved by using:
@@ -306,5 +306,5 @@ Import using Helm chart [realtime-translation-0.3.4.tgz](realtime-translation-0.
 ```
 - Framework name: `Realtime Live Voice Translation`
 - Namespace: `realtime-translation`
-- Description: `Transcribe and translate meetings. Use AI to summarize your meeting and create meeting minutes. For presenters, share the room code with you attendees allowing them to follow along in their preferred language.`
+- Description: `Transcribe and translate meetings. Use AI to summarize your meeting and create meeting minutes. Presenters can share a room code with attendees allowing them to follow along in their preferred language.`
 ```
