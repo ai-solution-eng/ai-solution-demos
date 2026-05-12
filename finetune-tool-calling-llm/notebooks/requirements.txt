@@ -1,0 +1,6 @@
+nemo-microservices
+huggingface_hub
+datasets
+jsonschema
+jinja2>=3.1.0
+openai
