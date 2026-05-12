@@ -27,7 +27,7 @@ This demo uses:
 This demo consists in setting up OpenCode in a VS Code server and using it for arbitrary code writing/completion/analysis/troubleshooting. It does not include specific applications to import, nor prompts to test OpenCode with. Demo users are expected to provide their own code, or have OpenCode write code from scratch.
 
 ### Architecture Diagram
-![demo_architecture](images/demo-architecture.PNG)
+![demo_architecture](images/demo-architecture.png)
 
 
 ### Workflow
@@ -63,7 +63,8 @@ curl -X 'GET' \
 
 1. **Create a VS Code server**
 Go to Tools & Frameworks, Kubeflow, Notebooks -> Click on + New Notebook, and chose "1 VisualStudio Code", rather than JupyterLab:
-![vscode-creation](images/vscode-creation.PNG)
+
+![vscode-creation](images/vscode-creation.png)
 
 While most of the computing resources required for this demo comes from the LLM deployed on MLIS, which has dedicated resources for it (one or multiple GPUs), **you may still need to increase the CPU/Memory requirements of your VScode server**: this will be useful if you need to download files, libraries or run the code that OpenCode will write for you. 
 
@@ -72,27 +73,34 @@ While most of the computing resources required for this demo comes from the LLM 
 By default, notebooks and VS Code servers mount two PVC: your personal user-pvc, only accessible to your user, and the kubeflow-shared-pvc, accessible to everyone. While Opencode cannot access by default files outside the folder it is started on, and its permissions can be restricted, a poorly defined Opencode setup may grant it access to content from your user-pvc, or the kubeflow-shared-pvc.
 
 If this a source of concern, you may want to remove the volumes listed under "Data Volumes" when creating your VS Code server:
-![vscode-creation](images/no-data-volume.PNG)
+
+![vscode-creation](images/no-data-volume.png)
 
 
 2. **Open VS Code server, set up demo folder and install Opencode**
 
 * **Open VS Code and find the terminal:** Once your VS Code server created, open it. You should be able to access a terminal by highlighting a line towards the bottom of the interface, and dragging that line upwards:
-![terminal-location](images/terminal-location.PNG)
+
+![terminal-location](images/terminal-location.png)
 
 * **Create the demo folder:** Using the terminal create a folder you will use for this demo, using mkdir. For example `mkdir main-demo-folder`
 
 * **Open the demo folder:** Once the demo folder created, open it using the search bar at the top of the interface. This is to ensure the explorer content on the left matches the demo folder content (empty for now):
-![open-demo-folder](images/open-demo-folder.PNG)
+
+![open-demo-folder](images/open-demo-folder.png)
 
 * **Install Opencode:** On the terminal execute the command `curl -fsSL https://opencode.ai/install | bash` The `opencode` command used to start Opencode won't work until a new terminal is started:
-![opencode-install-command-fail](images/opencode-install-command-fail.PNG)
+
+![opencode-install-command-fail](images/opencode-install-command-fail.png)
 
 * **Restart a terminal and start Opencode:** Click on the bin icon to kill the current terminal, it should hide the bottom panel where the terminal was located. Next time you reopen that panel, a new terminal should be started. Alternatively, you can also create a new terminal by clicking on the "+" icon:
-![kill-terminal](images/kill-terminal.PNG)
+
+![kill-terminal](images/kill-terminal.png)
 
 Once done, go to your demo folder, and execute the command `opencode`, the following should appear:
-![opencode-after-restart](images/opencode-after-restart.PNG)
+
+![opencode-after-restart](images/opencode-after-restart.png)
+
 You can exit this interface with ctrl-C or ctrl-D.
 
 3. **Create Opencode config file**
@@ -102,7 +110,9 @@ In order for Opencode to use the model deployed using MLIS, a custom configurati
 Opencode configuration file can be placed at different locations (see [Opencode documentation](https://opencode.ai/docs/config/#locations) for more details). In this demo, we will create the config file at the "global configuration" location:
   * Create an empty file at the location `~/.config/opencode/opencode.json`, for example using the `touch` command on the terminal: `touch ~/.config/opencode/opencode.json`
   * Open this file on the editor, typing its location on the search bar:
+
   ![create-opencode-config](images/create-opencode-config.png)
+  
   * Copy-paste the following content in that file:
   ```
   {
@@ -171,7 +181,9 @@ Opencode configuration file can be placed at different locations (see [Opencode 
     * The provided set of permission should be fairly safe, but may feel tedious at times when Opencode repetedly asks for your approval. Change permissions at your discretion.
     * More details on permissions in the [Opencode documentation](https://opencode.ai/docs/permissions/)
   * Restart Opencode and select your model using the `/models` command. Your model should be listed alongside the default models Opencode provide:
+
   ![opencode-change-model](images/opencode-change-model.png)
+  
   * Once your model deployed on MLIS selected, its name should appear on the Opencode interface with "MLIS" if you left this as your provider name, as visible on the screenshot above.
 
 4. **Use Opencode**
