@@ -24,7 +24,7 @@ Features:
 - Diarization runs on CPU, minimizing GPU requirements
 
 Recordings:
-- [Short version, customer focused [06:51]] - pending 
+- [Demo - 6m51s](https://storage.googleapis.com/ai-solution-engineering-videos/public/Offline_meeting_transcription.mp4)
 
 ## Description
 

@@ -13,13 +13,14 @@ Note: This repository superseds the [archived one](https://github.com/ai-solutio
 
 ![Workflow](./finetune-tool-call-llm.png)
 
-[Demo - 08m:28s](https://storage.googleapis.com/ai-solution-engineering-videos/public/Finetune_llm_tool_call_short.mp4)
-[Demo - 30m:23s](https://storage.googleapis.com/ai-solution-engineering-videos/public/Finetune_llm_tool_call_long.mp4)
+[Demo - 8m28s](https://storage.googleapis.com/ai-solution-engineering-videos/public/Finetune_llm_tool_call_short.mp4)
+
+[Demo - 30m23s](https://storage.googleapis.com/ai-solution-engineering-videos/public/Finetune_llm_tool_call_long.mp4)
 
 ## Prerequisites
 
 - NeMo Microservices 25.12.1 deployed on PCAI (namespace: `nemo-microservices-25121`)
-- H200 GPUs available in the cluster
+- At least 01 GPU (L40S, H100, or H200) is available in the cluster
 - HuggingFace account with access to [xLAM dataset](https://huggingface.co/datasets/Salesforce/xlam-function-calling-60k)
 - Jupyter notebook environment on PCAI
 - **Outbound HTTPS access from worker nodes** to `api.ngc.nvidia.com`, `nvcr.io`, `huggingface.co`, `cdn-lfs.hf.co`
@@ -47,7 +48,6 @@ In each notebook, run the first two cells:
 | `1_data_preparation.ipynb` | Download xLAM from HuggingFace, convert to OpenAI format, split train/val/test |
 | `2_finetuning_and_inference.ipynb` | Upload data, create namespace, LoRA fine-tune, test inference |
 | `3_model_evaluation.ipynb` | Evaluate base vs fine-tuned model accuracy |
-| `4_adding_safety_guardrails.ipynb` | Add content safety guardrails, test safe/unsafe queries |
 
 ## PCAI-Specific Adaptations
 
