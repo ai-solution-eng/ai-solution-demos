@@ -48,7 +48,9 @@ Open the **AI Essentials WebUI > Notebooks** tab.
 Follow the steps outlined in the image below to create the notebook with a custom image. Use the following custom image:
 
 ```bash
-docker.io/chandanmadhani/pcai-pytorch-parabricks-jupyter:latest
+AIE 1.8: “docker.io/chandanmadhani/pcai-pytorch-parabricks-jupyter:latest"
+AIE 1.10: “docker.io/chandanmadhani/pcai-parabricks-jupyter-aie-1-10:aie-1.10”
+AIE 1.12: “docker.io/chandanmadhani/pcai-parabricks-jupyter-aie-1-12:aie-1.12”
 ```
 
 ![Alt text](images/New_notebook_server.png)
