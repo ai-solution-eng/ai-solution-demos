@@ -1,4 +1,4 @@
-# Agentic FineTuning LLMs on PCAI
+# Agentic Finetune LLMs on PCAI
 
 | Owner                 | Name     | Email              |
 | --------------------- | -------- | ------------------ |
