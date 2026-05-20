@@ -1,0 +1,59 @@
+{{- if .Values.ezua.virtualService.enabled }}
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: {{ include "agentic-finetune.fullname" . }}
+  labels:
+    {{- include "agentic-finetune.labels" . | nindent 4 }}
+spec:
+  hosts:
+    - {{ .Values.ezua.virtualService.endpoint | quote }}
+  gateways:
+    - {{ .Values.ezua.virtualService.istioGateway | quote }}
+  http:
+    # Match order: more-specific prefixes MUST come before less-specific ones.
+    # Istio applies the first matching rule, so /mcp and /openapi need to be
+    # listed before the catch-all / route.
+
+    {{- if .Values.mcpo.enabled }}
+    # mcpo OpenAPI surface — Open-WebUI Tool Servers UI hits /openapi.json
+    - match:
+        - uri:
+            prefix: /openapi.json
+        - uri:
+            prefix: /docs
+      route:
+        - destination:
+            host: {{ include "agentic-finetune.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
+            port:
+              number: {{ .Values.mcpo.port }}
+      timeout: {{ .Values.ezua.virtualService.timeout }}
+    {{- end }}
+
+    # MCP Streamable HTTP — direct MCP clients (POST only)
+    - match:
+        - uri:
+            prefix: /mcp
+        - uri:
+            prefix: /messages
+        - uri:
+            prefix: /sse
+      route:
+        - destination:
+            host: {{ include "agentic-finetune.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
+            port:
+              number: {{ .Values.service.port }}
+      timeout: {{ .Values.ezua.virtualService.timeout }}
+
+    # Catch-all — orchestrator REST surface, including / for platform readiness.
+    # Returning 200 OK at / is what flips the AIE tile from "Unknown" to "Ready".
+    - match:
+        - uri:
+            prefix: /
+      route:
+        - destination:
+            host: {{ include "agentic-finetune.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
+            port:
+              number: {{ .Values.orchestrator.port }}
+      timeout: {{ .Values.ezua.virtualService.timeout }}
+{{- end }}

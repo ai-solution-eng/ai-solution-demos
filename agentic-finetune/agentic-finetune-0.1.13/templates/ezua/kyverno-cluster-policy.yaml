@@ -1,0 +1,38 @@
+{{- if .Values.ezua.kyverno.enabled }}
+# Per the official AIE Importing Frameworks documentation, every BYOA chart
+# should include a pre-install Kyverno ClusterPolicy that mutates all pods in
+# the release namespace to add the hpe-ezua/type=vendor-service label. This is
+# how the AIE platform identifies imported framework pods for lifecycle
+# management, monitoring, and tile metadata. See:
+#   https://docs.ezmeral.hpe.com/.../ManageClusters/importing-applications.html
+#
+# The hook-weight: -5 places this BEFORE the PVC wait-job (weight 5).
+# hook-delete-policy: before-hook-creation removes the previous policy on
+# reinstall so we never have stale ClusterPolicy objects.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: {{ printf "add-vendor-app-labels-%s-%s" .Release.Name .Chart.Name }}
+  annotations:
+    "helm.sh/hook": pre-install
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+  labels:
+    {{- include "agentic-finetune.labels" . | nindent 4 }}
+spec:
+  background: false
+  rules:
+    - name: add-vendor-app-labels
+      match:
+        any:
+          - resources:
+              namespaces:
+                - {{ .Release.Namespace }}
+              kinds:
+                - Pod
+      mutate:
+        patchStrategicMerge:
+          metadata:
+            labels:
+              hpe-ezua/type: vendor-service
+{{- end }}

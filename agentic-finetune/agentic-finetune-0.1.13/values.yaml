@@ -1,0 +1,289 @@
+# Default values for agentic-finetune.
+# Every value here is intentional. Comments call out PCAI-specific constraints.
+
+# Naming
+
+# Override the chart name in resource names. Leave empty for chart defaults.
+nameOverride: ""
+fullnameOverride: ""
+
+# Images
+#
+# Two sidecar containers in the agentic-finetune pod, plus the LlamaFactory
+# image which is referenced (not deployed) and pulled by each training Job.
+
+images:
+  orchestrator:
+    repository: docker.io/caovd/agentic-finetune-orchestrator
+    tag: "0.1.3"
+    pullPolicy: IfNotPresent
+  mcpServer:
+    repository: docker.io/caovd/agentic-finetune-mcp-server
+    tag: "0.1.1"
+    pullPolicy: IfNotPresent
+  # The LlamaFactory image is used by each spawned training Job, not by this
+  # chart's own pods. It must be pullable from the cluster.
+  llamaFactory:
+    repository: hiyouga/llamafactory
+    tag: "latest"
+    pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+# - name: regcred
+
+# Service account & RBAC
+#
+# The orchestrator needs to create Jobs and read Pod logs in its own namespace.
+# We default to creating a dedicated SA + Role + RoleBinding.
+
+serviceAccount:
+  create: true
+  name: ""   # generated from fullname if empty
+  annotations: {}
+
+rbac:
+  create: true
+
+# Workspace PVC
+#
+# Mounted at /workspace by all containers in this pod and by every training
+# Job spawned at runtime. Job pods may land on different nodes than the
+# orchestrator pod, so the StorageClass must support ReadWriteMany.
+#
+# PCAI: gl4f-filesystem (VAST CSI over NFS) supports RWX. Always set
+# storageClassName explicitly — never rely on the cluster default.
+
+workspace:
+  pvc:
+    create: true
+    name: ""   # generated from fullname if empty
+    # The StorageClass must support ReadWriteMany. The orchestrator pod and
+    # each training Job pod attach this volume from different nodes; RWO
+    # causes Multi-Attach errors. To verify on a new cluster, trial-bind
+    # a small RWX PVC against the class.
+    storageClassName: gl4f-filesystem
+    accessMode: ReadWriteMany
+    size: 50Gi
+    # When true, the PVC carries a helm.sh/resource-policy=keep annotation
+    # so uninstalling the framework via the AIE UI leaves the volume in
+    # place. This preserves the HuggingFace model cache (~6GB for
+    # Qwen2.5-3B) and any registered adapters across reinstalls. To start
+    # fresh, set this to false before uninstall, or run
+    # `kubectl delete pvc agentic-finetune-workspace -n <ns>` after.
+    #
+    # Upgrading from chart < 0.1.13: accessMode changes from RWO to RWX.
+    # PVC spec is immutable for bound claims, so the existing PVC must be
+    # deleted before reinstall. Uninstall via the AIE UI, then if the PVC
+    # remains, delete it with kubectl. See porting.md §14.
+    keepOnUninstall: true
+    # Pre-install hook that mounts the PVC and waits for it to bind. Default
+    # off: gl4f-filesystem on AIE 1.10 binds fast enough that this Job exceeds
+    # the AIE wizard's install timeout. Flip on if you see the main Deployment
+    # hang in ContainerCreating with PVC attach errors.
+    waitJob:
+      enabled: false
+      image:
+        repository: busybox
+        tag: "1.36"
+        pullPolicy: IfNotPresent
+      activeDeadlineSeconds: 300
+  # Post-install Job that copies LlamaFactory's bundled datasets (alpaca_demo,
+  # glaive_toolcall_en_demo, etc.) into /workspace/data/. Without this,
+  # list_datasets returns an empty array on a fresh install and the agent
+  # has nothing to fine-tune on. Disable if you intend to mount your own
+  # datasets manually before first use.
+  preSeed:
+    enabled: true
+    activeDeadlineSeconds: 600
+    ttlSecondsAfterFinished: 300
+
+# Orchestrator container
+
+orchestrator:
+  port: 8080
+  # Default base model + LoRA hyperparameters. The agent can override per call.
+  defaults:
+    baseModel: "Qwen/Qwen2.5-3B-Instruct"
+    loraRank: 8
+    maxSteps: 50
+    learningRate: 0.0001
+    cutoffLen: 2048
+    perDeviceTrainBatchSize: 2
+    gradientAccumulationSteps: 4
+  # Extra env passed into the orchestrator container.
+  #
+  # EVAL_MODE=stub is the demo-safe default. Real eval spawns a second GPU
+  # Job that reloads the base model + adapter (3-5 minutes per call) and is
+  # subject to the same HF egress constraints as training. Stub returns
+  # synthetic 3/3 pass results instantly, which is appropriate for D0 demos.
+  # Flip to "real" once you've validated egress and have a benchmark suite.
+  env:
+    - name: EVAL_MODE
+      value: "stub"
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "512Mi"
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"
+  # PCAI / Kyverno: requires non-privileged contexts. These are good defaults.
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+    readOnlyRootFilesystem: true
+    seccompProfile:
+      type: RuntimeDefault
+
+# MCP server container
+
+mcpServer:
+  port: 8765
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+    readOnlyRootFilesystem: true
+    seccompProfile:
+      type: RuntimeDefault
+
+# mcpo container — MCP-to-OpenAPI bridge required by Open-WebUI's
+# Tool Servers UI. The bridge wraps our MCP server and re-exposes the
+# same six tools as an OpenAPI endpoint Open-WebUI can register.
+# Open-WebUI URL: http://agentic-finetune.<ns>.svc.cluster.local:<port>/openapi.json
+
+mcpo:
+  enabled: true
+  image:
+    repository: ghcr.io/open-webui/mcpo
+    tag: "main"
+    pullPolicy: IfNotPresent
+  port: 8000
+  # mcpo connects upstream to our MCP server via localhost streamable-http.
+  upstreamUrl: "http://localhost:8765/mcp"
+  # Optional API key — leave empty for in-cluster service-to-service only.
+  apiKey: ""
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+    readOnlyRootFilesystem: true
+    seccompProfile:
+      type: RuntimeDefault
+
+# Training Job defaults (spawned by orchestrator at runtime)
+#
+# These values are loaded into a ConfigMap and consumed by the orchestrator
+# when it renders each Job. The orchestrator can override fields per request.
+#
+# PCAI / Kyverno: GPU resources MUST have requests == limits exactly. Setting
+# only one or having them differ fails admission. We set both to gpu.count.
+
+trainingJob:
+  gpu:
+    count: 1
+    # Optional: nodeSelector / tolerations for GPU nodes. Defaults match
+    # most PCAI clusters using the nvidia.com/gpu device plugin.
+    resourceName: "nvidia.com/gpu"
+    nodeSelector: {}
+    tolerations: []
+  ttlSecondsAfterFinished: 3600
+  backoffLimit: 0
+  activeDeadlineSeconds: 7200    # 2 hours hard cap per training run
+  resources:
+    cpu:
+      request: "2"
+      limit: "4"
+    memory:
+      request: "8Gi"
+      limit: "16Gi"
+  # extra env passed into each Job container
+  #
+  # PCAI clusters typically require outbound traffic to go through the HPE
+  # corporate proxy (registered as a cluster-wide Istio ServiceEntry pointing
+  # at hpeproxy.its.hpecorp.net). Without these vars, the trainer container's
+  # huggingface_hub client gets "Errno 101 Network is unreachable" when it
+  # tries to download a base model.
+  #
+  # NO_PROXY is critical — it lists in-cluster destinations that must bypass
+  # the proxy. Without it, localhost/cluster-internal calls would also be
+  # routed through the corp proxy, breaking everything.
+  env:
+    - name: HTTPS_PROXY
+      value: "http://hpeproxy.its.hpecorp.net:8080"
+    - name: HTTP_PROXY
+      value: "http://hpeproxy.its.hpecorp.net:8080"
+    - name: https_proxy
+      value: "http://hpeproxy.its.hpecorp.net:8080"
+    - name: http_proxy
+      value: "http://hpeproxy.its.hpecorp.net:8080"
+    - name: NO_PROXY
+      value: "localhost,127.0.0.1,.svc.cluster.local,.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+    - name: no_proxy
+      value: "localhost,127.0.0.1,.svc.cluster.local,.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+
+# Service
+
+service:
+  type: ClusterIP
+  # The Service exposes the MCP SSE port externally to Open-WebUI.
+  # The orchestrator REST port is NOT exposed externally — only reachable
+  # via localhost from the MCP server sidecar.
+  port: 8765
+
+# PCAI / EzUA Integration (Istio + Kyverno)
+#
+# This block follows the convention from frameworks/llama-factory and the
+# BYOA tutorials. The AIE Import Framework flow looks for these keys:
+#   ezua.virtualService.{enabled,endpoint,istioGateway}
+#
+# The ${DOMAIN_NAME} placeholder in the endpoint is substituted by the AIE
+# platform at install time with the cluster's actual domain — you do NOT
+# need to hand-replace it.
+
+ezua:
+  virtualService:
+    enabled: true
+    # IMPORTANT — ${DOMAIN_NAME} is substituted by the AIE platform at install time.
+    endpoint: "agentic-finetune.${DOMAIN_NAME}"
+    istioGateway: "istio-system/ezaf-gateway"
+    # MCP SSE is a long-poll stream; match LlamaFactory's chart and use a long timeout.
+    timeout: "86400s"
+
+  kyverno:
+    enabled: true
+    # Labels automatically applied to the Deployment so Istio sidecar injection happens.
+    labels:
+      sidecar.istio.io/inject: "true"
+
+# Pod-level scheduling
+
+podAnnotations: {}
+podLabels: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+priorityClassName: ""

@@ -1,0 +1,270 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agentic-finetune.fullname" . }}
+  labels:
+    {{- include "agentic-finetune.labels" . | nindent 4 }}
+spec:
+  # Single-replica intentionally — both containers share /workspace PVC (RWO),
+  # and the agent loop is single-user in D0. Scale-out is a post-D3 concern.
+  replicas: 1
+  strategy:
+    type: Recreate     # avoid two replicas contending for the RWO PVC
+  selector:
+    matchLabels:
+      {{- include "agentic-finetune.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agentic-finetune.labels" . | nindent 8 }}
+        {{- if .Values.ezua.kyverno.enabled }}
+        {{- with .Values.ezua.kyverno.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- end }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        # Restart the pod when the orchestrator config changes.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap-orchestrator.yaml") . | sha256sum }}
+        checksum/job-template: {{ include (print $.Template.BasePath "/configmap-job-template.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "agentic-finetune.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      {{- if .Values.workspace.preSeed.enabled }}
+      initContainers:
+        # Seed the workspace PVC with LlamaFactory's bundled datasets so
+        # list_datasets returns something on first use. Runs as root because
+        # the LF image's /app/data is owned by root and we need to chown
+        # the copies to uid 1000 for the orchestrator to read them.
+        # Idempotent: skips if dataset_info.json already present (reinstalls).
+        - name: seed
+          image: {{ include "agentic-finetune.image.llamaFactory" . | quote }}
+          imagePullPolicy: {{ .Values.images.llamaFactory.pullPolicy }}
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              SRC=/app/data
+              DST=/workspace/data
+              if [ -f "$DST/dataset_info.json" ] && [ -f "$DST/alpaca_en_demo.json" ]; then
+                echo "Workspace already seeded — skipping"
+                exit 0
+              fi
+              if [ ! -d "$SRC" ]; then
+                echo "ERROR: LF image's /app/data not found"
+                ls -la /app
+                exit 1
+              fi
+              mkdir -p "$DST"
+              cp -r "$SRC"/* "$DST/"
+              chown -R 1000:1000 "$DST"
+              echo "Seeded $(ls "$DST" | wc -l) files into $DST"
+          # initContainer needs root for the chown step. Other containers
+          # in this pod still run as 1000 — securityContext is per-container.
+          securityContext:
+            runAsNonRoot: false
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+      {{- end }}
+      containers:
+        # orchestrator — FastAPI, REST endpoints, owns the K8s client
+        - name: orchestrator
+          image: {{ include "agentic-finetune.image.orchestrator" . | quote }}
+          imagePullPolicy: {{ .Values.images.orchestrator.pullPolicy }}
+          ports:
+            - name: rest
+              containerPort: {{ .Values.orchestrator.port }}
+              protocol: TCP
+          env:
+            - name: ORCHESTRATOR_PORT
+              value: {{ .Values.orchestrator.port | quote }}
+            - name: ORCHESTRATOR_CONFIG_PATH
+              value: /etc/agentic-finetune/config.yaml
+            - name: WORKSPACE_DIR
+              value: /workspace
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            {{- with .Values.orchestrator.env }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+            - name: config
+              mountPath: /etc/agentic-finetune
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: rest
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: rest
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.orchestrator.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.orchestrator.securityContext | nindent 12 }}
+        # mcp-server — FastMCP over SSE, talks to orchestrator on localhost
+        - name: mcp-server
+          image: {{ include "agentic-finetune.image.mcpServer" . | quote }}
+          imagePullPolicy: {{ .Values.images.mcpServer.pullPolicy }}
+          ports:
+            - name: mcp
+              containerPort: {{ .Values.mcpServer.port }}
+              protocol: TCP
+          env:
+            - name: MCP_PORT
+              value: {{ .Values.mcpServer.port | quote }}
+            # Internal traffic stays on localhost — no Istio sidecar interception
+            # between mcp-server and orchestrator.
+            - name: ORCHESTRATOR_URL
+              value: "http://localhost:{{ .Values.orchestrator.port }}"
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: mcp
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: mcp
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.mcpServer.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.mcpServer.securityContext | nindent 12 }}
+        {{- if .Values.mcpo.enabled }}
+        # mcpo — MCP-to-OpenAPI bridge for Open-WebUI's Tool Servers UI.
+        # Wraps our mcp-server (localhost) and re-exposes the six tools
+        # as OpenAPI at port 8000.
+        - name: mcpo
+          image: "{{ .Values.mcpo.image.repository }}:{{ .Values.mcpo.image.tag }}"
+          imagePullPolicy: {{ .Values.mcpo.image.pullPolicy }}
+          ports:
+            - name: openapi
+              containerPort: {{ .Values.mcpo.port }}
+              protocol: TCP
+          args:
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - {{ .Values.mcpo.port | quote }}
+            {{- if .Values.mcpo.apiKey }}
+            - "--api-key"
+            - {{ .Values.mcpo.apiKey | quote }}
+            {{- end }}
+            - "--server-type"
+            - "streamable-http"
+            - "--"
+            - {{ .Values.mcpo.upstreamUrl | quote }}
+          readinessProbe:
+            httpGet:
+              path: /openapi.json
+              port: openapi
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /openapi.json
+              port: openapi
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.mcpo.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.mcpo.securityContext | nindent 12 }}
+        {{- end }}
+      volumes:
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: {{ include "agentic-finetune.workspacePvcName" . }}
+        - name: config
+          projected:
+            sources:
+              - configMap:
+                  name: {{ include "agentic-finetune.fullname" . }}-config
+                  items:
+                    - key: config.yaml
+                      path: config.yaml
+              - configMap:
+                  name: {{ include "agentic-finetune.jobTemplateConfigMapName" . }}
+                  items:
+                    - key: job-template.yaml
+                      path: job-template.yaml
+                    - key: lf-config-template.yaml
+                      path: lf-config-template.yaml
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

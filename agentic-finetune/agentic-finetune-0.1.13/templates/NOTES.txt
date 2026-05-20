@@ -1,0 +1,63 @@
+agentic-finetune has been installed in namespace {{ .Release.Namespace }}.
+
+What's running:
+
+  Deployment: {{ include "agentic-finetune.fullname" . }}
+    └── three containers:
+        ├── orchestrator (FastAPI on :{{ .Values.orchestrator.port }} — pod-local)
+        ├── mcp-server   (MCP Streamable HTTP on :{{ .Values.mcpServer.port }})
+        └── mcpo         (MCP→OpenAPI bridge on :{{ .Values.mcpo.port }})
+
+  PVC: {{ include "agentic-finetune.workspacePvcName" . }}
+    storageClass: {{ .Values.workspace.pvc.storageClassName }}
+    size:         {{ .Values.workspace.pvc.size }}
+
+  Service:
+    kubectl -n {{ .Release.Namespace }} get svc {{ include "agentic-finetune.fullname" . }}
+
+{{- if .Values.ezua.virtualService.enabled }}
+  External (Istio VirtualService):
+    https://{{ .Values.ezua.virtualService.endpoint }}/mcp
+
+  In-cluster registration URL for Open-WebUI:
+    Open-WebUI → Admin Settings → Integrations → Manage Tool Servers → "+"
+    URL:        http://{{ include "agentic-finetune.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.mcpo.port }}/openapi.json
+    Type:       OpenAPI
+    Auth:       None
+{{- else }}
+  Ingress is NOT enabled. Use port-forward to test:
+    kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "agentic-finetune.fullname" . }} {{ .Values.mcpo.port }}:{{ .Values.mcpo.port }}
+{{- end }}
+
+To verify the agent loop, ask in Open-WebUI:
+
+  "What datasets are available for fine-tuning? Pick a small one and fine-tune
+   Qwen2.5-3B on it. Tell me the result."
+
+The agent should call list_datasets → dataset_prep → launch_training →
+get_job_status (until done) → run_eval → register_model, then report back.
+
+Recommended system prompt for the agent model (Workspace → Models → ...
+→ System Prompt) covering two patterns we learned the hard way:
+
+  1. POLLING CAP. Each call to get_job_status represents roughly 30 seconds
+     of wall-clock time. Instruct the model to "call it at most 5 times in
+     a single response. If the job is still running after 5 checks, write
+     a brief status update and stop. Wait for the user before checking
+     again." Without this, models tend to fire 20+ polls in one turn until
+     Open-WebUI's internal tool-call cap stops them.
+
+  2. QUESTION-VS-ACTION. Tell the model: "When the user asks an exploratory
+     question (what datasets are available, which models, show me X), call
+     the appropriate tool, summarize the result, then STOP. Do not chain
+     into training, eval, or registration unless the user gives an
+     unambiguous action instruction."
+
+Real eval is disabled by default (orchestrator.env.EVAL_MODE=stub). The
+stub returns synthetic 3/3 pass results instantly so demos complete in
+~5 minutes instead of ~10. Flip to "real" once you have a benchmark suite
+and have validated HF egress works from your cluster.
+
+For real eval to work, the orchestrator pod must have HF egress (via the
+trainingJob.env proxy vars, which the chart propagates to the eval Job).
+

@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "agentic-finetune.fullname" . }}-config
+  labels:
+    {{- include "agentic-finetune.labels" . | nindent 4 }}
+data:
+  # Runtime configuration the orchestrator loads at startup.
+  config.yaml: |
+    workspace_dir: /workspace
+    job_template_path: /etc/agentic-finetune/job-template.yaml
+    lf_config_template_path: /etc/agentic-finetune/lf-config-template.yaml
+
+    defaults:
+      base_model: {{ .Values.orchestrator.defaults.baseModel | quote }}
+      lora_rank: {{ .Values.orchestrator.defaults.loraRank }}
+      max_steps: {{ .Values.orchestrator.defaults.maxSteps }}
+      learning_rate: {{ .Values.orchestrator.defaults.learningRate }}
+      cutoff_len: {{ .Values.orchestrator.defaults.cutoffLen }}
+      per_device_train_batch_size: {{ .Values.orchestrator.defaults.perDeviceTrainBatchSize }}
+      gradient_accumulation_steps: {{ .Values.orchestrator.defaults.gradientAccumulationSteps }}
+
+    job_template:
+      namespace: {{ .Release.Namespace | quote }}
+      service_account: {{ include "agentic-finetune.serviceAccountName" . | quote }}
+      pvc_name: {{ include "agentic-finetune.workspacePvcName" . | quote }}

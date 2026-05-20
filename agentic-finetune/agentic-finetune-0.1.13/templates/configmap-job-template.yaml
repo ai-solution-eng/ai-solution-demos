@@ -1,0 +1,119 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "agentic-finetune.jobTemplateConfigMapName" . }}
+  labels:
+    {{- include "agentic-finetune.labels" . | nindent 4 }}
+data:
+  # The orchestrator reads this template, substitutes {{ "{{" }} placeholders {{ "}}" }},
+  # and creates a Job via the Kubernetes Python client. We use $((PLACEHOLDER))
+  # syntax here so Helm's Go templating doesn't try to interpret them.
+
+  job-template.yaml: |
+    apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: $((JOB_NAME))
+      labels:
+        {{- include "agentic-finetune.labels" . | nindent 8 }}
+        agentic-finetune/component: trainer
+        agentic-finetune/job-id: "$((JOB_ID))"
+      annotations:
+        agentic-finetune/dataset: "$((DATASET))"
+        agentic-finetune/base-model: "$((BASE_MODEL))"
+    spec:
+      ttlSecondsAfterFinished: {{ .Values.trainingJob.ttlSecondsAfterFinished }}
+      backoffLimit: {{ .Values.trainingJob.backoffLimit }}
+      activeDeadlineSeconds: {{ .Values.trainingJob.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            {{- include "agentic-finetune.selectorLabels" . | nindent 12 }}
+            agentic-finetune/component: trainer
+            agentic-finetune/job-id: "$((JOB_ID))"
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "agentic-finetune.serviceAccountName" . }}
+          {{- with .Values.trainingJob.gpu.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.trainingJob.gpu.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            runAsNonRoot: false   # LF image runs as root by default
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: trainer
+              image: "{{ include "agentic-finetune.image.llamaFactory" . }}"
+              imagePullPolicy: {{ .Values.images.llamaFactory.pullPolicy }}
+              command:
+                - llamafactory-cli
+                - train
+                - /workspace/jobs/$((JOB_ID))/config.yaml
+              env:
+                - name: HF_HOME
+                  value: /workspace/.cache/huggingface
+                - name: TRANSFORMERS_CACHE
+                  value: /workspace/.cache/huggingface/hub
+                {{- with .Values.trainingJob.env }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+              resources:
+                # PCAI / Kyverno: GPU requests MUST equal limits exactly.
+                requests:
+                  cpu: {{ .Values.trainingJob.resources.cpu.request | quote }}
+                  memory: {{ .Values.trainingJob.resources.memory.request | quote }}
+                  {{ .Values.trainingJob.gpu.resourceName }}: {{ .Values.trainingJob.gpu.count }}
+                limits:
+                  cpu: {{ .Values.trainingJob.resources.cpu.limit | quote }}
+                  memory: {{ .Values.trainingJob.resources.memory.limit | quote }}
+                  {{ .Values.trainingJob.gpu.resourceName }}: {{ .Values.trainingJob.gpu.count }}
+              volumeMounts:
+                - name: workspace
+                  mountPath: /workspace
+          volumes:
+            - name: workspace
+              persistentVolumeClaim:
+                claimName: {{ include "agentic-finetune.workspacePvcName" . }}
+
+  # Per-Job LF training config. The orchestrator substitutes $(( )) placeholders
+  # before writing this to /workspace/jobs/{job_id}/config.yaml.
+  lf-config-template.yaml: |
+    ### model
+    model_name_or_path: $((BASE_MODEL))
+
+    ### method
+    stage: sft
+    do_train: true
+    finetuning_type: lora
+    lora_rank: $((LORA_RANK))
+    lora_target: all
+
+    ### dataset
+    dataset: $((DATASET))
+    template: $((TEMPLATE))
+    cutoff_len: $((CUTOFF_LEN))
+    overwrite_cache: true
+    preprocessing_num_workers: 4
+
+    ### output
+    output_dir: /workspace/jobs/$((JOB_ID))/output
+    logging_steps: 5
+    save_steps: 999999      # save only at end for D0
+    plot_loss: true
+    overwrite_output_dir: true
+    report_to: none
+
+    ### train
+    per_device_train_batch_size: $((PER_DEVICE_TRAIN_BATCH_SIZE))
+    gradient_accumulation_steps: $((GRADIENT_ACCUMULATION_STEPS))
+    learning_rate: $((LEARNING_RATE))
+    max_steps: $((MAX_STEPS))
+    lr_scheduler_type: cosine
+    warmup_ratio: 0.1
+    bf16: true
+    ddp_timeout: 180000000

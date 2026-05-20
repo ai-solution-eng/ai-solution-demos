@@ -1,0 +1,74 @@
+{{- if and .Values.workspace.pvc.create .Values.workspace.pvc.waitJob.enabled -}}
+# A pre-install Helm hook that blocks until the workspace PVC is Bound.
+# This is the documented workaround for the PVC race condition Daniel keeps
+# hitting on PCAI with the gl4f-filesystem dynamic provisioner: without this
+# wait, the main Deployment can come up before provisioning finishes and the
+# pod hangs in ContainerCreating with a confusing "unable to attach volume"
+# error.
+#
+# Helm hook ordering:
+#   pre-install: runs before any non-hook resource
+#   hook-weight: lower runs first; PVC has no weight (created normally),
+#                this Job is +5 so it definitely sees the PVC object exist
+#   hook-delete-policy: clean up Job after success and before reinstall
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "agentic-finetune.fullname" . }}-pvc-wait
+  labels:
+    {{- include "agentic-finetune.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: {{ .Values.workspace.pvc.waitJob.activeDeadlineSeconds }}
+  ttlSecondsAfterFinished: 60
+  template:
+    metadata:
+      labels:
+        {{- include "agentic-finetune.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: pvc-wait
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "agentic-finetune.serviceAccountName" . }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: wait
+          image: "{{ .Values.workspace.pvc.waitJob.image.repository }}:{{ .Values.workspace.pvc.waitJob.image.tag }}"
+          imagePullPolicy: {{ .Values.workspace.pvc.waitJob.image.pullPolicy }}
+          # Mount the PVC. The mount itself will block until the PVC is Bound,
+          # which is exactly the synchronization we want.
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -eu
+              echo "PVC is bound and mounted at /workspace."
+              mkdir -p /workspace/jobs /workspace/registry /workspace/data
+              ls -la /workspace
+              echo "Workspace initialized."
+          resources:
+            requests:
+              cpu: "10m"
+              memory: "16Mi"
+            limits:
+              cpu: "100m"
+              memory: "64Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+      volumes:
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: {{ include "agentic-finetune.workspacePvcName" . }}
+{{- end }}

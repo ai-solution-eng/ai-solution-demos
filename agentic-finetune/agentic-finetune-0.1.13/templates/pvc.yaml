@@ -1,0 +1,24 @@
+{{- if .Values.workspace.pvc.create -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "agentic-finetune.workspacePvcName" . }}
+  labels:
+    {{- include "agentic-finetune.labels" . | nindent 4 }}
+  {{- if .Values.workspace.pvc.keepOnUninstall }}
+  annotations:
+    # Preserve the workspace volume on helm uninstall so the HF model cache
+    # and any registered adapters survive across reinstalls. Operators who
+    # explicitly want a clean slate must `kubectl delete pvc` separately,
+    # or set workspace.pvc.keepOnUninstall=false before uninstall.
+    "helm.sh/resource-policy": keep
+  {{- end }}
+spec:
+  accessModes:
+    - {{ .Values.workspace.pvc.accessMode | quote }}
+  resources:
+    requests:
+      storage: {{ .Values.workspace.pvc.size | quote }}
+  # Explicit StorageClass — never rely on the default.
+  storageClassName: {{ .Values.workspace.pvc.storageClassName | quote }}
+{{- end }}

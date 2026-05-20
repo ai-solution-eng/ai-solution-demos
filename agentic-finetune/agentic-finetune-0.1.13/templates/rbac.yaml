@@ -1,0 +1,37 @@
+{{- if .Values.rbac.create -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "agentic-finetune.fullname" . }}
+  labels:
+    {{- include "agentic-finetune.labels" . | nindent 4 }}
+rules:
+  # Job lifecycle: orchestrator creates Jobs and watches them to completion.
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  # Pod listing + log reading: orchestrator parses LF stdout for loss values.
+  # No exec or attach — we do not need to stream commands into running pods.
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+  # Events are useful for surfacing scheduling problems to the agent.
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "agentic-finetune.fullname" . }}
+  labels:
+    {{- include "agentic-finetune.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "agentic-finetune.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "agentic-finetune.fullname" . }}
+{{- end }}

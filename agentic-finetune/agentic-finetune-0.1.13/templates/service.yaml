@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agentic-finetune.fullname" . }}
+  labels:
+    {{- include "agentic-finetune.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    # Orchestrator REST — what the AIE platform probes for tile status,
+    # also routed externally at / for human discovery.
+    - port: {{ .Values.orchestrator.port }}
+      targetPort: rest
+      protocol: TCP
+      name: http
+    # MCP port — kept for direct MCP clients
+    - port: {{ .Values.service.port }}
+      targetPort: mcp
+      protocol: TCP
+      name: mcp
+    {{- if .Values.mcpo.enabled }}
+    # OpenAPI port (mcpo) — what Open-WebUI's Tool Servers UI registers
+    - port: {{ .Values.mcpo.port }}
+      targetPort: openapi
+      protocol: TCP
+      name: openapi
+    {{- end }}
+  selector:
+    {{- include "agentic-finetune.selectorLabels" . | nindent 4 }}
