@@ -1,4 +1,4 @@
-# Agentic Fine-Tuning
+# Agentic FineTuning LLMs on PCAI
 
 | Owner                 | Name     | Email              |
 | --------------------- | -------- | ------------------ |
@@ -26,7 +26,7 @@ Features:
 
 Recordings:
 
-- *To be added after recording.*
+[Demo - 9m23s](https://storage.googleapis.com/ai-solution-engineering-videos/public/Agentic-Finetune.mp4)
 
 ## Description
 
