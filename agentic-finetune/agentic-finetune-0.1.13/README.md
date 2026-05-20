@@ -1,4 +1,4 @@
-# agentic-finetune
+# Agentic Finetune
 
 An agent layer in front of LlamaFactory. Drive a complete fine-tuning loop
 (discover datasets → train a LoRA → evaluate → register) from Open-WebUI by
