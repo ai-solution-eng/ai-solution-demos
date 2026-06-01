@@ -21,7 +21,7 @@ Recordings:
 - [Short version Flight Customer Service Agent leveraging MCP [4 min]](https://storage.googleapis.com/ai-solution-engineering-videos/public/MCP%20Customer%20Flight%20Support%20Agent%20Short.mp4)
 - [Short version Citizen Passport Support Agent [4 min]](https://storage.googleapis.com/ai-solution-engineering-videos/public/Citizen%20Passport%20Support%20Agent.mp4)
 - [Long version Flight Customer Service Agent [almost 8 min]](https://storage.googleapis.com/ai-solution-engineering-videos/public/Customer%20Flight%20Support%20Agent%20Long.mp4)
-- [Long version Flight Customer Service Agent leveraging MCP [6 min]](https://storage.googleapis.com/ai-solution-engineering-videos/public/MCP%20Customer%20Flight%20Support%20Agent%20Short.mp4)
+- [Long version Flight Customer Service Agent leveraging MCP [6 min]](https://storage.googleapis.com/ai-solution-engineering-videos/public/MCP%20Customer%20Flight%20Support%20Agent%20Long.mp4)
 
 # Summary
 - [Demo overview video](#demo-overview-video)
