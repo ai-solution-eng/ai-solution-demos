@@ -15,7 +15,7 @@ These are the following:
 | --------------------------------------------------------------|----------------------------|
 | [Basic Agent Langflow](basic-agent-langflow)              | A **Langflow** setup defining a basic agentic flow to answer questions requiring informations from both local files, using RAG, and data from a SQL database. Relies on **MLIS** for model deployment. **MCP server** usage optional.           |
 | [Base Code Assistant - Opencode](basic-code-assistant-opencode)                          | An explanation on how to setup and use **Opencode**, an open source AI coding agent, in a **VS Code server**, leveraging models deployed using **MLIS**.            |
-| [Coding Assistant](coding-assistant)                          | A setup using **MLIS** for model deployment, **Open WebUI** to define a custom pipeline using that model, and the **VScode extension Continue.dev** using that pipeline to act as code assistant.            |
+| [Finetune Tool Calling LLM](finetune-tool-calling-llm)                | **Notebooks**, using **Nemo microservices** to fine-tune an LLM to improve its tool-calling capabilities.           |
 | [Image Segmentation](image-segmentation)                      | Python scripts to fine-tune CNNs for segmentation tasks on provided datasets, expected to be executed in a **Jupyter notebook**, with experiment tracking on **MLflow**. Also includes a streamlit application to display segmentation results from any checkpoint saved, on any dataset image.           |
 | [NL to SQL](nl-to-sql)                        | An **Open WebUI** setup to allow chatting with SQL data, leveraging tools from an **MCP server** to interact with data from a Postgres database. Relies on **MLIS** for model deployment.           |
 | [Offline Meeting Transcription](offline-meeting-transcription)                | A transcription pipeline converting raw audio recordings into speaker-attributed transcripts and structured meeting minutes, using Whisper (for ASR, deployed on **MLIS**) and **Pyannote** (for speaker diarization) connected to **Open WebUI**.|
@@ -31,15 +31,13 @@ The remaining demos are split between two folders:
 ## Upcoming changes
 
 The following demos will be updated:
-- **Coding Assistant**
-- **Flight CS Agent**
+- **Finetune Tool Calling LLM**
 - **Voice Agent**
 
 New demos are being considered:
 - **Model Monitoring**
 - **Object Detection**
 - **RAG**
-- **Model training / LLM finetuning**
 
 ## Contributions
 
