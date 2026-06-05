@@ -9,8 +9,6 @@ Fine-tunes `meta/llama-3.2-1b-instruct` for tool-calling using LoRA on HPE PCAI,
 
 Adapted from [NVIDIA GenerativeAIExamples](https://github.com/NVIDIA/GenerativeAIExamples/tree/main/nemo/data-flywheel/tool-calling) for HPE AI Essentials (AIE) / PCAI.
 
-Note: This repository superseds the [archived one](https://github.com/ai-solution-eng/ai-solution-demos/tree/main/archived-demos/finetune-tool-calling-llm) built with NeMo Microservices 25.8.0.
-
 ![Workflow](./finetune-tool-call-llm.png)
 
 [Demo - 8m28s](https://storage.googleapis.com/ai-solution-engineering-videos/public/Finetune_llm_tool_call_short.mp4)
