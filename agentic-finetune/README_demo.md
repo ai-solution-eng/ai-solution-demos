@@ -26,7 +26,11 @@ Features:
 
 Recordings:
 
+1. MVP - Single model finetuning
 [Demo - 9m23s](https://storage.googleapis.com/ai-solution-engineering-videos/public/Agentic-Finetune.mp4)
+
+2. Version 2 - Multi models (concurrent finetuning) and plot comparison 
+[Demo - 3m21s](https://storage.googleapis.com/ai-solution-engineering-videos/public/Agentic-Finetune-Multi-Models-Plot-Compare.mp4)
 
 ## Description
 
