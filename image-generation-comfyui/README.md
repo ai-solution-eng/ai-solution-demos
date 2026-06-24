@@ -35,7 +35,7 @@ This demo consists in importing ComfyUI on PCAI and using it for arbitrary image
 ### Workflow
 
 Once the demo has been set up, the workflow is straightforward:
-* Open ComfyUI from the Tools & Frameworks page
+* Open ComfyUI from the Tools & Frameworks page.
 * On the left side, click on "Workflows" to open the list of all workflows you have saved during the demo setup, open the ones you are willing to show, then change some of their inputs (usually prompt and image inputs) and run them.
 * Optionally, click on "Apps" to access the apps you have created from the workflows during the demo setup, and run them after changing their inputs values.
 
@@ -61,7 +61,7 @@ ComfyUI can be imported like any other application to PCAI: using an helm chart.
 Like for any framework you want to import to PCAI: 
 * Go to Tools & Frameworks
 * Click on "Import Framework", and follow the steps, using our [custom helm chart](https://github.com/ai-solution-eng/frameworks/blob/main/comfyui/comfyui-0.1.0.tgz) from our [frameworks repository](https://github.com/ai-solution-eng/frameworks/tree/main/comfyui)
-* Review the values, default ones should be good for a simple demo, but PVC sizes and resources may be increased if needed.
+* Review the values, default ones should be good for a simple demo, but PVC sizes and resources requests and limits may be increased if needed.
 
 Then, wait for the application to be accessible from the PCAI interface.
 
@@ -96,7 +96,7 @@ This node is needed as trying to download models directly from the UI will downl
 While it is possible to create a flow from scratch, dragging-and-dropping nodes to the center of ComfyUI interface, and linking the nodes together, this approach requires extensive knowledge and/or trial and error before getting a working flow.
 Thankfully, ComfyUI provides dozens of templates, that, once selected, immediately open into ComfyUI as a new workflow, so **building your own workflow by yourself is not needed**:
 * On the left side, click on "Templates"
-* Templates can be browsed by popularity, use case, generation type, and so...
+* Templates can be browsed by popularity, use case, generation type, and so on...
 * You may want to filter out templates that do not run on ComfyUI (to exclude flows relying on cloud hosted models), by ticking ComfyUI on the "Runs on" filter:
 ![template-filter](images/template-filter.png)
 
@@ -125,11 +125,11 @@ To download the models, a workflow composed of a single "HF Download" node will 
 * Fill the first three "HF Download" required fields **repo_id, filename and local_path**:
   * First, look at the errors displayed on the flow you want to run. Each missing model should be displayed that way:
 ![error-detail](images/error-detail.png)
-  * The text in red corresponds to the folder where the model is being looked for: set this as the local_path value required by the HF Download node
+  * The text in red corresponds to the folder where the model is being looked for: set this as the **local_path** value required by the HF Download node
   * Click on "Copy URL", and paste it on your browser address bar to open it. It should open an HuggingFace page, like this one:
 ![hf-page](images/hf-page.png)
-  * Click on the little squares icon immediately at the right of the model name (Comfy-Org/flux2-dev in this example) to copy it, and paste it in the repo_id field of the HF Download node
-  * Do the same thing with the file name (split_files/diffusion_models/flux2_dev_fp8mixed.safetensors in this example), and paste it to the filename field of the HF Download node
+  * Click on the little squares icon immediately at the right of the model name (Comfy-Org/flux2-dev in this example) to copy it, and paste it in the **repo_id** field of the HF Download node
+  * Do the same thing with the file name (split_files/diffusion_models/flux2_dev_fp8mixed.safetensors in this example), and paste it to the **filename** field of the HF Download node
   * For this example, the HF Download node will be populated with the following values:
 ![hf-download-filled](images/hf-download-filled.png)
 
@@ -166,6 +166,7 @@ In the following example, the "Load Diffusion Model" node has been replaced with
 
 Workflows can be converted into ComfyUI apps for easier interaction:
 * Click either on the Graph icon next to "Graph" or on "Graph" itself allows you to "Edit app":
+
 ![edit-app](images/edit-app.png)
 * Editing the app requires you to select which parameter from which nodes are expected to be the input, and which node is the output:
 ![build-app](images/build-app.png)
@@ -173,8 +174,7 @@ Workflows can be converted into ComfyUI apps for easier interaction:
 ![save-as-location](images/save-as-location.png)
 * This will allow you to save the application as an actual application, not just a default workflow view (it will appear in the "Apps" tab):
 ![save-as-app](images/save-as-app.png)
-
-From the "Apps" tab, you will be able to open your newly saved app, and use it:
+* From the "Apps" tab, you will be able to open your newly saved app, and use it:
 ![app-run](images/app-run.png)
 
 
@@ -188,10 +188,10 @@ From the "Apps" tab, you will be able to open your newly saved app, and use it:
 
 ## References
 
-* Official ComfyUI repo: https://github.com/comfy-org/comfyui
-* ComfyUI-Docker repo, that served in building the image for the helm chart: https://github.com/Kaouthia/ComfyUI-Docker
-* ComfyUI-Manager repo, allowing to download custom nodes from ComfyUI (included in the Docker image): https://github.com/Comfy-Org/ComfyUI-Manager
-* ComfyUI Model Downloader repo: https://github.com/ciri/comfyui-model-downloader
-* ComfyUI MultiGPU repo: https://github.com/pollockjj/ComfyUI-MultiGPU
-* Custom ComfyUI on PCAI helm chart: https://github.com/ai-solution-eng/frameworks/tree/main/comfyui
+* [Official ComfyUI repo](https://github.com/comfy-org/comfyui)
+* [ComfyUI-Docker repo](https://github.com/Kaouthia/ComfyUI-Docker), that served in building the image for the helm chart
+* [ComfyUI-Manager repo](https://github.com/Comfy-Org/ComfyUI-Manager), allowing to download custom nodes from ComfyUI (included in the Docker image)
+* [ComfyUI Model Downloader repo](https://github.com/ciri/comfyui-model-downloader)
+* [ComfyUI MultiGPU repo](https://github.com/pollockjj/ComfyUI-MultiGPU)
+* [Custom ComfyUI on PCAI helm chart](https://github.com/ai-solution-eng/frameworks/tree/main/comfyui)
 
