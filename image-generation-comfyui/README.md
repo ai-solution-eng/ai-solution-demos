@@ -19,7 +19,7 @@ This demo only uses:
 
 **Recording:**
 
-- Coming soon
+- [**Demo recording**](https://storage.googleapis.com/ai-solution-engineering-videos/public/comfyui-demo.mp4)
 
 ## Description
 
