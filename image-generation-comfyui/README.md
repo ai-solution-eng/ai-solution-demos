@@ -76,8 +76,10 @@ Then on the "Custom Nodes Manager" button, on the center column of the ComfyUI M
 Search for "downloader", and install [ComfyUI Model Downloader](https://github.com/ciri/comfyui-model-downloader):
 ![downloader-location](images/downloader-location.png)
 
-Once installed, click on the bottom left red button for restarting ComfyUI, and refresh your browser: it may take a couple of minutes before the UI is back.
-Do not click on the restart button available at the bottom of the center column of the ComfyUI Manager menu.
+Once installed, click on the bottom left red button for restarting ComfyUI (not the one at the bottom of the center column of the ComfyUI Manager menu), and refresh your browser: 
+![correct-restart](images/correct-restart.png)
+
+It may take a couple of minutes before the UI is back.
 
 **Optional:** If you plan to use ComfyUI with multiple GPUs, also search for and install [ComfyUI-MultiGPU](https://github.com/pollockjj/ComfyUI-MultiGPU)
 
