@@ -1,0 +1,117 @@
+env:
+  DEVICE: "cpu"
+  HF_TOKEN: hf_TOKEN
+
+# ============================================================
+# Application images
+# ============================================================
+images:
+  backend:
+    repository: "fcaliva/biomed-mammal"
+    pullPolicy: "IfNotPresent"
+    tag: "latest"
+
+  frontend:
+    repository: "fcaliva/biomed-ui"
+    pullPolicy: "IfNotPresent"
+    tag: "latest"
+
+# ============================================================
+# Resource limits & requests
+# ============================================================
+resources:
+  backend:
+    requests:
+      cpu: "4"
+      memory: "8Gi"
+    limits:
+      cpu: "8"
+      memory: "16Gi"
+
+  frontend:
+    requests:
+      cpu: "50m"
+      memory: "256Mi"
+    limits:
+      cpu: "200m"
+      memory: "512Mi"
+
+# ============================================================
+# Service ports
+# ============================================================
+service:
+  backendPort: 3000
+  backendTargetPort: 3000
+  frontendPort: 8080
+  frontendTargetPort: 8080
+  # Override MODEL_URL for the frontend (e.g. "http://host.docker.internal:3000" for local testing).
+  # If empty, auto-generates from the backend K8s service name.
+  modelUrlOverride: ""
+
+# ============================================================
+# EZUA settings
+# ============================================================
+ezua:
+  domainName: "${DOMAIN_NAME}"
+  virtualService:
+    endpoint: "biomed-mammal.${DOMAIN_NAME}"
+    istioGateway: "istio-system/ezaf-gateway"
+
+# ============================================================
+# SSL certificates policy
+# ============================================================
+certificatesPolicy:
+  enabled: true
+
+  env:
+    - name: SSL_CERT_DIR
+      value: /etc/ssl/certs
+    - name: REQUESTS_CA_BUNDLE
+      value: /tmp/certs/ca-certificates.crt
+    - name: SSL_CERT_FILE
+      value: /tmp/certs/ca-certificates.crt
+    - name: AIOHTTP_CLIENT_SESSION_SSL
+      value: /tmp/certs/ca-certificates.crt
+    - name: CURL_CA_BUNDLE
+      value: /tmp/certs/ca-certificates.crt
+
+  initContainer:
+    image: alpine:3.20
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        if [ -f /etc/ssl/certs/ca-certificates.crt ]; then
+          cp /etc/ssl/certs/ca-certificates.crt /work/ca-certificates.crt
+        elif [ -f /etc/ssl/certs/ca-bundle.crt ]; then
+          cp /etc/ssl/certs/ca-bundle.crt /work/ca-certificates.crt
+        else
+          echo "No base CA bundle found in init container"
+          exit 1
+        fi
+        cat /config/ezaf-root-ca.crt >> /work/ca-certificates.crt
+        echo "" >> /work/ca-certificates.crt
+
+  initVolumeMounts:
+    - name: combined-certs
+      mountPath: /work
+    - name: ezaf-root-ca
+      mountPath: /config/ezaf-root-ca.crt
+      subPath: ca-certificates.crt
+      readOnly: true
+
+  volumeMounts:
+    - name: combined-certs
+      mountPath: /tmp/certs
+      readOnly: false
+
+  volumes:
+    - name: combined-certs
+      emptyDir: {}
+    - name: ezaf-root-ca
+      configMap:
+        name: ezaf-root-ca
+        items:
+          - key: ezaf-root-ca.crt
+            path: ca-certificates.crt

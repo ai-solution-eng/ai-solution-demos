@@ -1,0 +1,11 @@
+torch>=2.0,<3.0
+transformers<5.0.0
+fuse-med-ml==0.4.1
+peft
+tabulate
+hydra-core
+pytorch-lightning
+pytest
+hf-transfer
+bentoml
+biomed-multi-alignment==0.2.4

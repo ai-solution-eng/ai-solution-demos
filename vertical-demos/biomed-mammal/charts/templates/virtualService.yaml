@@ -1,0 +1,20 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: biomed-mammal-serve
+  labels:
+    hpe-ezua/type: app-service-user
+spec:
+  hosts:
+    - {{ .Values.ezua.virtualService.endpoint | required "\nValid .Values.ezua.virtualService.endpoint is required !" }}
+  gateways:
+    - {{ .Values.ezua.virtualService.istioGateway }}
+  http:
+    - match:
+        - uri:
+            prefix: /
+      route:
+        - destination:
+            host: {{ include "biomed-mammal-serve.fullname" . }}-frontend
+            port:
+              number: {{ .Values.service.frontendPort }}

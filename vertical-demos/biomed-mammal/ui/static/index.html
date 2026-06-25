@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BiomedMammal — Inference Interface</title>
+<style>
+  :root {
+    --hpe: #01A982;
+    --hpe-hover: #018f6e;
+    --dark: #1a1a2e;
+    --gray: #6b7280;
+    --light: #f3f4f6;
+    --border: #e5e7eb;
+    --bg: #f8f9fa;
+    --white: #fff;
+    --error: #dc2626;
+    --success: #059669;
+    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--dark);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Header ─────────────────────────────────── */
+  header {
+    background: var(--white);
+    border-bottom: 2px solid var(--hpe);
+    padding: 0 32px;
+    height: 64px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.06);
+    flex-shrink: 0;
+  }
+  header img { height: 32px; }
+  header h1 {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--dark);
+  }
+  header span {
+    font-size: 13px;
+    color: var(--gray);
+    margin-left: auto;
+  }
+
+  /* ── Tabs ───────────────────────────────────── */
+  nav.tabs {
+    display: flex;
+    background: var(--white);
+    border-bottom: 1px solid var(--border);
+    padding: 0 32px;
+    flex-shrink: 0;
+    overflow-x: auto;
+  }
+  .tab {
+    padding: 14px 24px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--gray);
+    cursor: pointer;
+    border-bottom: 3px solid transparent;
+    transition: all .15s;
+    white-space: nowrap;
+    user-select: none;
+  }
+  .tab:hover { color: var(--dark); }
+  .tab.active {
+    color: var(--hpe);
+    border-bottom-color: var(--hpe);
+  }
+
+  /* ── Main ───────────────────────────────────── */
+  main {
+    flex: 1;
+    padding: 32px;
+    max-width: 960px;
+    width: 100%;
+    margin: 0 auto;
+  }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  /* ── Card ───────────────────────────────────── */
+  .card {
+    background: var(--white);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 28px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.04);
+  }
+  .card h2 {
+    font-size: 20px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .card .subtitle {
+    font-size: 13px;
+    color: var(--gray);
+    margin-bottom: 24px;
+  }
+
+  /* ── Form ───────────────────────────────────── */
+  .field { margin-bottom: 18px; }
+  .field label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--dark);
+    margin-bottom: 6px;
+  }
+  .field textarea {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    line-height: 1.5;
+    resize: vertical;
+    transition: border-color .15s;
+  }
+  .field textarea:focus {
+    outline: none;
+    border-color: var(--hpe);
+    box-shadow: 0 0 0 3px rgba(1,169,130,.1);
+  }
+  .field .reset {
+    display: inline-block;
+    font-size: 12px;
+    color: var(--hpe);
+    cursor: pointer;
+    margin-top: 4px;
+  }
+  .field .reset:hover { text-decoration: underline; }
+
+  /* ── Button ─────────────────────────────────── */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 28px;
+    background: var(--hpe);
+    color: var(--white);
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s;
+  }
+  .btn:hover { background: var(--hpe-hover); }
+  .btn:disabled {
+    opacity: .6;
+    cursor: not-allowed;
+  }
+  .spinner {
+    display: inline-block;
+    width: 16px; height: 16px;
+    border: 2px solid rgba(255,255,255,.3);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin .6s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Result ─────────────────────────────────── */
+  .result {
+    margin-top: 24px;
+    padding: 16px 20px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: #fafbfc;
+    display: none;
+  }
+  .result.visible { display: block; }
+  .result h3 {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--gray);
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    margin-bottom: 10px;
+  }
+  .result .kv {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 16px;
+    font-size: 14px;
+  }
+  .result .kv dt { font-weight: 600; color: var(--dark); }
+  .result .kv dd { color: var(--gray); word-break: break-all; }
+  .result.error { border-color: var(--error); background: #fef2f2; }
+  .result.error .kv dd { color: var(--error); }
+
+  /* ── Footer ─────────────────────────────────── */
+  footer {
+    flex-shrink: 0;
+    border-top: 1px solid var(--border);
+    padding: 16px 32px;
+    font-size: 12px;
+    color: var(--gray);
+    text-align: center;
+    background: var(--white);
+  }
+  footer a { color: var(--hpe); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+
+  /* ── Responsive ─────────────────────────────── */
+  @media (max-width: 640px) {
+    header { padding: 0 16px; }
+    nav.tabs { padding: 0 16px; }
+    main { padding: 16px; }
+    .card { padding: 20px; }
+    .tab { padding: 12px 16px; font-size: 13px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <img src="/static/hpe-logo.jpg" alt="HPE">
+  <h1>BiomedMammal</h1>
+  <span>Inference Interface</span>
+</header>
+
+<nav class="tabs" id="tabs">
+  <div class="tab active" data-tab="ppi">Protein-Protein Interaction</div>
+  <div class="tab" data-tab="dti">Drug-Target Binding</div>
+  <div class="tab" data-tab="sol">Protein Solubility</div>
+  <div class="tab" data-tab="tcr">TCR-Epitope Binding</div>
+</nav>
+
+<main>
+
+<!-- ── PPI ─────────────────────────────────────── -->
+<div class="panel active" id="panel-ppi">
+<div class="card">
+<h2>Protein-Protein Interaction</h2>
+<p class="subtitle">Predict binding affinity between two protein sequences.</p>
+
+<div class="field">
+<label>Sequence A</label>
+<textarea id="ppi-seq-a" rows="4">MADQLTEEQIAEFKEAFSLFDKDGDGTITTKELGTVMRSLGQNPTEAELQDMISELDQDGFIDKEDLHDGDGKISFEEFLNLVNKEMTADVDGDGQVNYEEFVTMMTSK</textarea>
+<div class="reset" onclick="resetDemo('ppi-seq-a','MADQLTEEQIAEFKEAFSLFDKDGDGTITTKELGTVMRSLGQNPTEAELQDMISELDQDGFIDKEDLHDGDGKISFEEFLNLVNKEMTADVDGDGQVNYEEFVTMMTSK')">↺ Reset to demo</div>
+</div>
+
+<div class="field">
+<label>Sequence B</label>
+<textarea id="ppi-seq-b" rows="4">MSSKLLLAGLDIERVLAEKNFYKEWDTWIIEAMNVGDEEVDRIKEFKEDEIFEEAKTLGTAEMQEYKKQKLEEAIEGAFDIFDKDGNGYISAAELRHVMTNLGEKLTDEEVDEMIRQMWDQNGDWDRIKELKFGEIKKLSAKDTRGTIFIKVFENLGTGVDSEYEDVSKYMLKHQ</textarea>
+<div class="reset" onclick="resetDemo('ppi-seq-b','MSSKLLLAGLDIERVLAEKNFYKEWDTWIIEAMNVGDEEVDRIKEFKEDEIFEEAKTLGTAEMQEYKKQKLEEAIEGAFDIFDKDGNGYISAAELRHVMTNLGEKLTDEEVDEMIRQMWDQNGDWDRIKELKFGEIKKLSAKDTRGTIFIKVFENLGTGVDSEYEDVSKYMLKHQ')">↺ Reset to demo</div>
+</div>
+
+<button class="btn" onclick="predict()"><span id="ppi-btn">🔬 Run Prediction</span></button>
+<div class="result" id="result-ppi"><h3>Result</h3><div class="kv" id="result-ppi-body"></div></div>
+</div></div>
+
+<!-- ── DTI ─────────────────────────────────────── -->
+<div class="panel" id="panel-dti">
+<div class="card">
+<h2>Drug-Target Binding Affinity</h2>
+<p class="subtitle">Predict binding affinity (pKd) between a target protein and a drug molecule.</p>
+
+<div class="field">
+<label>Target Sequence (protein)</label>
+<textarea id="dti-target" rows="3">NLMKRCTRGFRKLGKCTTLEEEKCKTLYPRGQCTCSDSKMNTHSCDCKSC</textarea>
+<div class="reset" onclick="resetDemo('dti-target','NLMKRCTRGFRKLGKCTTLEEEKCKTLYPRGQCTCSDSKMNTHSCDCKSC')">↺ Reset to demo</div>
+</div>
+
+<div class="field">
+<label>Drug SMILES</label>
+<textarea id="dti-smiles" rows="2">CC(=O)NCCC1=CNc2c1cc(OC)cc2</textarea>
+<div class="reset" onclick="resetDemo('dti-smiles','CC(=O)NCCC1=CNc2c1cc(OC)cc2')">↺ Reset to demo</div>
+</div>
+
+<button class="btn" onclick="predict()"><span id="dti-btn">🔬 Run Prediction</span></button>
+<div class="result" id="result-dti"><h3>Result</h3><div class="kv" id="result-dti-body"></div></div>
+</div></div>
+
+<!-- ── Solubility ───────────────────────────────── -->
+<div class="panel" id="panel-sol">
+<div class="card">
+<h2>Protein Solubility</h2>
+<p class="subtitle">Classify a protein as soluble or insoluble from its amino acid sequence.</p>
+
+<div class="field">
+<label>Protein Sequence</label>
+<textarea id="sol-seq" rows="3">NLMKRCTRGFRKLGKCTTLEEEKCKTLYPRGQCTCSDSKMNTHSCDCKSC</textarea>
+<div class="reset" onclick="resetDemo('sol-seq','NLMKRCTRGFRKLGKCTTLEEEKCKTLYPRGQCTCSDSKMNTHSCDCKSC')">↺ Reset to demo</div>
+</div>
+
+<button class="btn" onclick="predict()"><span id="sol-btn">🔬 Run Prediction</span></button>
+<div class="result" id="result-sol"><h3>Result</h3><div class="kv" id="result-sol-body"></div></div>
+</div></div>
+
+<!-- ── TCR ─────────────────────────────────────── -->
+<div class="panel" id="panel-tcr">
+<div class="card">
+<h2>TCR-Epitope Binding</h2>
+<p class="subtitle">Predict binding between a T-cell receptor beta chain and an epitope peptide.</p>
+
+<div class="field">
+<label>TCR Beta Sequence</label>
+<textarea id="tcr-beta" rows="4">NAGVTQTPKFQVLKTGQSMTLQCAQDMNHEYMSWYRQDPGMGLRLIHYSVGAGITDQGEVPNGYNVSRSTTEDFPLRLLSAAPSQTSVYFCASSYSWDRVLEQYFGPGTRLTVT</textarea>
+<div class="reset" onclick="resetDemo('tcr-beta','NAGVTQTPKFQVLKTGQSMTLQCAQDMNHEYMSWYRQDPGMGLRLIHYSVGAGITDQGEVPNGYNVSRSTTEDFPLRLLSAAPSQTSVYFCASSYSWDRVLEQYFGPGTRLTVT')">↺ Reset to demo</div>
+</div>
+
+<div class="field">
+<label>Epitope Sequence</label>
+<textarea id="tcr-epi" rows="2">LLQTGIHVRVSQPSL</textarea>
+<div class="reset" onclick="resetDemo('tcr-epi','LLQTGIHVRVSQPSL')">↺ Reset to demo</div>
+</div>
+
+<button class="btn" onclick="predict()"><span id="tcr-btn">🔬 Run Prediction</span></button>
+<div class="result" id="result-tcr"><h3>Result</h3><div class="kv" id="result-tcr-body"></div></div>
+</div></div>
+
+</main>
+
+<footer>
+  Model: <a href="https://huggingface.co/ibm-research/biomed.omics.bl.sm.ma-ted-458m" target="_blank">ibm-research/biomed.omics.bl.sm.ma-ted-458m</a>
+  &middot; IBM Research &middot; Apache 2.0
+</footer>
+
+<script>
+// ── Tab switching ──────────────────────────────────
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+  });
+});
+
+// ── Reset demo ─────────────────────────────────────
+function resetDemo(id, val) {
+  document.getElementById(id).value = val;
+}
+
+// ── Build payload ──────────────────────────────────
+function buildPayload() {
+  const active = document.querySelector('.tab.active');
+  const tab = active.dataset.tab;
+  switch (tab) {
+    case 'ppi':
+      return { task: 'protein_protein_interaction', inputs: { sequence_a: document.getElementById('ppi-seq-a').value, sequence_b: document.getElementById('ppi-seq-b').value } };
+    case 'dti':
+      return { task: 'drug_target_binding', inputs: { target_sequence: document.getElementById('dti-target').value, drug_smiles: document.getElementById('dti-smiles').value } };
+    case 'sol':
+      return { task: 'protein_solubility', inputs: { protein_sequence: document.getElementById('sol-seq').value } };
+    case 'tcr':
+      return { task: 'tcr_epitope_binding', inputs: { tcr_beta_sequence: document.getElementById('tcr-beta').value, epitope_sequence: document.getElementById('tcr-epi').value } };
+  }
+}
+
+// ── Render result ──────────────────────────────────
+function renderResult(tab, data) {
+  const el = document.getElementById('result-' + tab);
+  const body = document.getElementById('result-' + tab + '-body');
+  el.classList.remove('error');
+  el.classList.add('visible');
+  let html = '';
+  for (const [k, v] of Object.entries(data)) {
+    if (k === 'error') {
+      el.classList.add('error');
+      html += `<dt>${k}</dt><dd>${v}</dd>`;
+    } else if (typeof v === 'number') {
+      html += `<dt>${k}</dt><dd>${v.toFixed(4)}</dd>`;
+    } else {
+      html += `<dt>${k}</dt><dd>${v}</dd>`;
+    }
+  }
+  body.innerHTML = html;
+}
+
+// ── Predict ────────────────────────────────────────
+async function predict() {
+  const active = document.querySelector('.tab.active');
+  const tab = active.dataset.tab;
+  const btn = document.getElementById(tab + '-btn');
+  const parentBtn = btn.closest('.btn');
+  const res = document.getElementById('result-' + tab);
+  res.classList.remove('visible');
+  btn.innerHTML = '<span class="spinner"></span> Running…';
+  parentBtn.disabled = true;
+
+  try {
+    const payload = buildPayload();
+    const resp = await fetch('/api/predict', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    renderResult(tab, data);
+  } catch (e) {
+    renderResult(tab, { error: e.message || 'Connection failed — is the model container running?' });
+  } finally {
+    btn.innerHTML = '🔬 Run Prediction';
+    parentBtn.disabled = false;
+  }
+}
+</script>
+</body>
+</html>

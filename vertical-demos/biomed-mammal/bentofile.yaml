@@ -1,0 +1,18 @@
+service: "service:BiomedMammalService"
+labels:
+  model: biomed.omics.bl.sm.ma-ted-458m
+  project: biomed-mammal-serve
+docker:
+  python_version: "3.12"
+  setup_script: "./setup.sh"
+python:
+  packages:
+    - torch>=2.0,<3.0
+    - transformers<5.0.0
+    - fuse-med-ml==0.4.1
+    - peft
+    - tabulate
+    - hydra-core
+    - pytorch-lightning
+    - pytest
+    - biomed-multi-alignment==0.2.4

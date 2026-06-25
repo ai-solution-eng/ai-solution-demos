@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "biomed-mammal-serve.fullname" . }}-frontend
+  labels:
+    app: frontend
+spec:
+  type: ClusterIP
+  selector:
+    app: frontend
+  ports:
+    - name: http
+      port: {{ .Values.service.frontendPort }}
+      targetPort: {{ .Values.service.frontendTargetPort }}
+      protocol: TCP

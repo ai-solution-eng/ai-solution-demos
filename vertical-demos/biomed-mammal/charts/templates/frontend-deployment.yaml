@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "biomed-mammal-serve.fullname" . }}-frontend
+  labels:
+    app: frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: "{{ .Values.images.frontend.repository }}:{{ .Values.images.frontend.tag }}"
+          imagePullPolicy: {{ .Values.images.frontend.pullPolicy | default "IfNotPresent" }}
+          ports:
+            - containerPort: {{ .Values.service.frontendTargetPort }}
+          env:
+            - name: MODEL_URL
+              value: {{ if .Values.service.modelUrlOverride }}{{ .Values.service.modelUrlOverride | quote }}{{ else }}"http://{{ include "biomed-mammal-serve.fullname" . }}-backend:{{ .Values.service.backendPort }}"{{ end }}
+          resources:
+            requests:
+              cpu: "{{ .Values.resources.frontend.requests.cpu }}"
+              memory: "{{ .Values.resources.frontend.requests.memory }}"
+            limits:
+              cpu: "{{ .Values.resources.frontend.limits.cpu }}"
+              memory: "{{ .Values.resources.frontend.limits.memory }}"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: {{ .Values.service.frontendTargetPort }}
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: {{ .Values.service.frontendTargetPort }}
+            initialDelaySeconds: 10
+            periodSeconds: 20
