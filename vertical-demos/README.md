@@ -15,6 +15,7 @@ Here is the list of demos you will find in this vertical folder:
 | Demo                                                          | Short Description          |
 | --------------------------------------------------------------|----------------------------|
 | [Blood Vessel Geometry Analysis and Reconstruction](blood-vessel-geometry-analysis-and-reconstruction)              | A streamlit application relying on **NVIDIA Vista 3D model** (deployed using **MLIS**) to analyze, reconstruct and render vessels in 3D. |
+| [Molecular Aligned Multi-Modal Architecture and Language (Biomed-MAMMAL)](biomed-mammal) | A **BentoML** inference service for a **biomedical foundation model** which achieves state-of-the-art results over a variety of tasks across the entire **drug discovery** pipeline and diverse **biomedical domains**. |
 | [Defence Ops](defence-ops)                          | A web application leveraging a VLM (deployed using **MLIS**)to analyze videos, with preloaded defence-related ones provided for example.             |
 | [Genome Sequencing](genome-sequencing)                | **Notebooks** leveraging **NVIDIA Parabricks** for genome sequencing.           |
 | [Hospital Visit Summary](hospital-visit-summary)                      | A **streamlit application** that can display patient information regarding their previous visits from a database, and summarize it. Requires deploying an LLM using **MLIS**.|
