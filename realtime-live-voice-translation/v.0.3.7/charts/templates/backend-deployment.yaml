@@ -1,0 +1,214 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: realtime-voice-translation-backend
+  labels:
+    app: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      initContainers:
+{{- if and .Values.certificatesPolicy .Values.certificatesPolicy.enabled }}
+        - name: build-ca-bundle
+          image: {{ .Values.certificatesPolicy.initContainer.image | quote }}
+          command:
+{{ toYaml .Values.certificatesPolicy.initContainer.command | indent 12 }}
+          volumeMounts:
+{{- range .Values.certificatesPolicy.initVolumeMounts }}
+            - name: {{ .name }}
+              mountPath: {{ .mountPath }}
+              {{- if .subPath }}
+              subPath: {{ .subPath }}
+              {{- end }}
+              {{- if hasKey . "readOnly" }}
+              readOnly: {{ .readOnly }}
+              {{- end }}
+{{- end }}
+{{- end }}
+{{- if .Values.postgresql.enabled }}
+        - name: db-init
+          image: "{{ .Values.images.backend.repository }}:{{ .Values.images.backend.tag }}"
+          imagePullPolicy: {{ .Values.images.backend.pullPolicy | default "IfNotPresent" }}
+          command:
+            - python3
+            - -c
+            - |
+              import asyncio, os, subprocess, sys
+              import asyncpg
+
+              async def main():
+                  password = os.environ["POSTGRES_PASSWORD"]
+                  db_user = os.environ["DATABASE_USER"]
+                  db_password = os.environ["DATABASE_PASSWORD"]
+                  db_name = os.environ["DATABASE_NAME"]
+                  host = os.environ["DB_HOST"]
+
+                  admin_dsn = f"postgresql://{db_user}:{password}@{host}:5432/postgres"
+
+                  print("Waiting for PostgreSQL to become ready...", flush=True)
+                  for i in range(60):
+                      try:
+                          conn = await asyncio.wait_for(
+                              asyncpg.connect(admin_dsn), timeout=5
+                          )
+                          print("Connected to PostgreSQL", flush=True)
+                          break
+                      except Exception:
+                          if i < 59:
+                              await asyncio.sleep(2)
+                          else:
+                              print("Timed out waiting for PostgreSQL", flush=True)
+                              sys.exit(1)
+
+                  try:
+                      role_exists = await conn.fetchval(
+                          "SELECT 1 FROM pg_roles WHERE rolname = $1", db_user
+                      )
+                      if not role_exists:
+                          await conn.execute(
+                              f"CREATE ROLE {db_user} WITH LOGIN PASSWORD '{db_password}'"
+                          )
+                      db_exists = await conn.fetchval(
+                          "SELECT 1 FROM pg_database WHERE datname = $1", db_name
+                      )
+                      if not db_exists:
+                          await conn.execute(
+                              f"CREATE DATABASE {db_name} OWNER {db_user}"
+                          )
+                      await conn.execute(
+                          f"GRANT ALL PRIVILEGES ON DATABASE {db_name} TO {db_user}"
+                      )
+                  finally:
+                      await conn.close()
+
+                  result = subprocess.run(
+                      [sys.executable, "-m", "alembic", "upgrade", "head"],
+                      capture_output=True, text=True,
+                  )
+                  if result.stdout:
+                      print(result.stdout, flush=True)
+                  if result.returncode != 0:
+                      print(result.stderr, file=sys.stderr, flush=True)
+                      sys.exit(result.returncode)
+
+                  print("Database initialization complete", flush=True)
+
+              asyncio.run(main())
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "realtime-translation.fullname" . }}-postgresql
+                  key: postgres-password
+            - name: DATABASE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "realtime-translation.fullname" . }}-postgresql
+                  key: database-user
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "realtime-translation.fullname" . }}-postgresql
+                  key: database-password
+            - name: DATABASE_NAME
+              value: {{ .Values.postgresql.auth.database | quote }}
+            - name: DB_HOST
+              value: {{ include "realtime-translation.fullname" . }}-postgresql
+            - name: DATABASE_URL
+              value: "postgresql+asyncpg://{{ .Values.postgresql.auth.username }}:{{ .Values.postgresql.auth.password }}@{{ include "realtime-translation.fullname" . }}-postgresql:5432/{{ .Values.postgresql.auth.database }}"
+{{- end }}
+
+      containers:
+        - name: backend
+          image: "{{ .Values.images.backend.repository }}:{{ .Values.images.backend.tag }}"
+          imagePullPolicy: {{ .Values.images.backend.pullPolicy | default "IfNotPresent" }}
+          ports:
+            - containerPort: {{ .Values.service.backendPort }}
+          env:
+{{- $dbUrl := include "realtime-translation.databaseUrl" . }}
+{{- if $dbUrl }}
+            - name: DATABASE_URL
+              value: {{ $dbUrl | quote }}
+{{- end }}
+{{- range $key, $val := .Values.env }}
+{{- if ne $key "DATABASE_URL" }}
+            - name: {{ $key }}
+              value: {{ $val | quote }}
+{{- end }}
+{{- end }}
+{{- if and .Values.certificatesPolicy .Values.certificatesPolicy.enabled }}
+{{- range .Values.certificatesPolicy.env }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+{{- end }}
+{{- end }}
+          volumeMounts:
+{{- if .Values.persistence.enabled }}
+            - name: session-storage
+              mountPath: {{ .Values.persistence.mountPath }}
+{{- end }}
+{{- if and .Values.certificatesPolicy .Values.certificatesPolicy.enabled }}
+{{- range .Values.certificatesPolicy.volumeMounts }}
+            - name: {{ .name }}
+              mountPath: {{ .mountPath }}
+              {{- if .subPath }}
+              subPath: {{ .subPath }}
+              {{- end }}
+              {{- if hasKey . "readOnly" }}
+              readOnly: {{ .readOnly }}
+              {{- end }}
+{{- end }}
+{{- end }}
+          resources:
+            requests:
+              cpu: "{{ .Values.resources.backend.requests.cpu }}"
+              memory: "{{ .Values.resources.backend.requests.memory }}"
+            limits:
+              cpu: "{{ .Values.resources.backend.limits.cpu }}"
+              memory: "{{ .Values.resources.backend.limits.memory }}"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.service.backendPort }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.service.backendPort }}
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+
+      volumes:
+{{- if .Values.persistence.enabled }}
+        - name: session-storage
+          persistentVolumeClaim:
+            claimName: {{ if .Values.persistence.existingClaim }}{{ .Values.persistence.existingClaim }}{{ else }}{{ include "realtime-translation.fullname" . }}-pvc{{ end }}
+{{- end }}
+{{- if and .Values.certificatesPolicy .Values.certificatesPolicy.enabled }}
+{{- range .Values.certificatesPolicy.volumes }}
+        - name: {{ .name }}
+{{- if hasKey . "emptyDir" }}
+          emptyDir: {}
+{{- else if .configMap }}
+          configMap:
+            name: {{ .configMap.name }}
+            items:
+{{- range .configMap.items }}
+              - key: {{ .key }}
+                path: {{ .path }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
