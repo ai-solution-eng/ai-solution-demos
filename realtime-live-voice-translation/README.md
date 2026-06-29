@@ -65,7 +65,7 @@ Default language selection:
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
 │   Microphone    │────▶│   Frontend      │────▶│  FastAPI Backend │────▶│  AI Services    │
-│                 │     |   (HTML/JS)     │◀────│  (WebSocket)     │◀────│  (Whisper/LLM)  │
+│                 │     |   (HTML/JS)     │◀────│  (WebSocket)     │◀────│  (ASR/LLM)  │
 └─────────────────┘     └─────────────────┘     └──────────────────┘     └─────────────────┘
                                │                          │                                                         
                                ▼                          ▼
@@ -76,7 +76,7 @@ Default language selection:
 ```
 
 ```text
-Browser mic -> WebSocket -> Silero VAD -> Whisper ASR -> LLM translation -> Live UI
+Browser mic -> WebSocket -> Silero VAD -> ASR -> LLM translation -> Live UI
                                                    \-> summary/minutes/export package
 ```
 
@@ -131,10 +131,13 @@ Before running the app, make sure you have:
 
 - Python 3.11 or compatible runtime
 - `ffmpeg` available on the host
-- A Whisper-compatible ASR endpoint
+- A OpenAI compatible ASR endpoint
 - An OpenAI-compatible LLM endpoint for translation and document generation
 - A Chromium-based browser recommended for microphone and recording support
-- PostgreSQL installed
+
+> **PostgreSQL is automatically provisioned** when deploying via Helm (`postgresql.enabled: true` in values.yaml).
+> No manual PostgreSQL setup is required. To use an external database instead, set `postgresql.enabled: false`
+> and provide `DATABASE_URL` in the `env` section.
 
 ## Configuration
 
@@ -142,9 +145,9 @@ Create a `.env` file in the project root for local backend defaults.
 
 ```env
 # Whisper / ASR
-WHISPER_BASE_URL=https://your-whisper-endpoint/v1
-WHISPER_API_KEY=your-whisper-api-key
-WHISPER_MODEL=openai/whisper-large-v3-turbo
+ASR_BASE_URL=https://your-asr-endpoint/v1
+ASR_API_KEY=your-asr-api-key
+ASR_MODEL=openai/whisper-large-v3-turbo
 
 # LLM / translation
 LLM_BASE_URL=https://your-llm-endpoint/v1
@@ -194,21 +197,38 @@ This project is intended to run in HPE Private Cloud AI and AI Essentials enviro
 
 ### Recommended Model Endpoints
 
-#### Whisper / ASR
+#### ASR models
 
-Recommended example:
+Recommended models :
 
 - Model: `openai/whisper-large-v3-turbo`
 - Image: `tpomas/vllm-audio:0.11.0`
-- CPU: `1`
-- Memory: `10Gi`
-- GPU: `1`
+- CPU: `1->1`
+- Memory: `10Gi->10Gi`
+- GPU: `1->1`
 - Arguments: `--model openai/whisper-large-v3-turbo --port 8080`
 - Optional env: `AIOLI_PROGRESS_DEADLINE=10000s`
 
+or
+
+- Model: `CohereLabs/cohere-transcribe-03-2026`
+- Image: `andrewbydlon/vllmaudio:v0.22.1`
+- CPU: `4->8`
+- Memory: `20Gi->40Gi`
+- GPU: `1->1`
+- Arguments: `CohereLabs/cohere-transcribe-03-2026 --trust-remote-code --port 8080 --gpu-memory-utilization 0.15`
+- Optional env: 
+  - `AIOLI_DISABLE_LOGGER=1` 
+  - `AIOLI_PROGRESS_DEADLINE=15000`
+  - `HF_TOKEN=$HF_TOKEN`
+  - `HF_XET_CLIENT_AC_MAX_DOWNLOAD_CONCURRENCY=1`
+  - `HF_XET_CLIENT_ENABLE_ADAPTIVE_CONCURRENCY=false`
+  - `HF_XET_DATA_MAX_CONCURRENT_FILE_DOWNLOADS=1`
+
+
 #### LLM / Translation
 
-Recommended example:
+Recommended models:
 
 - Model: `Qwen/Qwen3-30B-A3B-Instruct-2507-FP8`
 - Image: `vllm/vllm-openai:latest`
@@ -217,49 +237,57 @@ Recommended example:
 - GPU: `1`
 - Arguments: `--model Qwen/Qwen3-30B-A3B-Instruct-2507-FP8 --enable-auto-tool-choice --tool-call-parser hermes --port 8080 --max-model-len 8192`
 - Optional env:
+  - `AIOLI_DISABLE_LOGGER=1`
+  - `AIOLI_PROGRESS_DEADLINE=15000`
+  - `HF_TOKEN=$HF_TOKEN`
+  - `HF_XET_CLIENT_AC_MAX_DOWNLOAD_CONCURRENCY=1`
+  - `HF_XET_CLIENT_ENABLE_ADAPTIVE_CONCURRENCY=false`
+  - `HF_XET_DATA_MAX_CONCURRENT_FILE_DOWNLOADS=1`
+
+or
+
+- Model: ``
+- Image: `vllm/vllm-openai:gemma4`
+- CPU: `8->16`
+- Memory: `60Gi` to `100Gi`
+- GPU: `1->1`
+- Arguments: `google/gemma-4-31B-it --download-dir /mnt/models/ --enable-auto-tool-choice --reasoning-parser gemma4 --tool-call-parser gemma4 --limit-mm-per-prompt {"image":4,"video":1} --async-scheduling --port 8080`
+- Optional env:
   - `AIOLI_PROGRESS_DEADLINE=10000s`
   - `AIOLI_DISABLE_LOGGER=1`
 
 ### PostgreSQL
-To allow persistence, one can use PostgreSQL which can be installed in PCAI using the [helm chart available here](https://github.com/ai-solution-eng/frameworks/tree/main/postgresql).
 
-After importing `PostgreSQL` use a notebook from within AI Essentials to create new user account for the project. Please follow instructions below.
+PostgreSQL is **automatically provisioned** when deploying via Helm. The chart includes:
 
+1. A **PostgreSQL StatefulSet** (`postgres:16-alpine`) with persistent storage for call recordings, transcripts, and exports.
+2. A **db-init Job** that runs on install/upgrade to:
+   - Create the application role and database if they don't exist
+   - Run Alembic migrations to initialize or update the schema
+3. A **Kubernetes Secret** to securely store database credentials.
 
-```python
-!pip install psycopg
-import psycopg
-conn = psycopg.connect(
-    host="postgresdb-postgresql.postgresdb.svc.cluster.local",
-    port=5432,
-    dbname="postgres",
-    user="postgres",
-    password=${here, use auth: postgresPassword from PostgreSQL's values.yaml file},
-    autocommit=True,
-)
-```
-Specify username (e.g. realtime_voice_user), password (e.g. realtime_voice_password) and create database (e.g. realtime_voice_db), over which realtime_voice_user would have  all priviledges.
-```python
-with conn.cursor() as cur:
-    cur.execute("CREATE USER realtime_voice_user WITH PASSWORD 'realtime_voice_password'")
-    cur.execute("CREATE DATABASE realtime_voice_db OWNER realtime_voice_user")
-    cur.execute("GRANT ALL PRIVILEGES ON DATABASE realtime_voice_db TO realtime_voice_user")
-conn.close()
-print("done")
-```
+This means no manual PostgreSQL setup is required — the entire database stack is deployed alongside the application.
 
-`username`, `password` and `db name` need to be used when specifying the `DATABASE_URL` in the values.yaml file of the realtime live voice translation app, as follows:
+#### Using an External Database
+
+To use an external PostgreSQL instead of the bundled one, set `postgresql.enabled: false` in your values.yaml and provide the `DATABASE_URL` explicitly:
 
 ```yaml
-DATABASE_URL: "postgresql+asyncpg://realtime_voice_user:realtime_voice_password@postgresql.postgresql.svc.cluster.local:5432/realtime_voice_db"
+postgresql:
+  enabled: false
+
+env:
+  DATABASE_URL: "postgresql+asyncpg://realtime_voice_user:realtime_voice_password@postgresql.postgresql.svc.cluster.local:5432/realtime_voice_db"
 ```
 
-When using the app, data in the database can be retrieved by using:
+#### Inspecting the Database
+
+When using the app, data in the database can be retrieved by connecting to the PostgreSQL service:
 
 ```python
 import psycopg
 conn = psycopg.connect(
-    host="postgresdb-postgresql.postgresdb.svc.cluster.local",
+    host="<postgresql-service>",
     port=5432,
     dbname="realtime_voice_db",
     user="realtime_voice_user",
@@ -276,10 +304,7 @@ with conn.cursor() as cur:
     print(cur.fetchall())
 ```
 
-
-**Note-1:** Please, consider using unique username and password.
-
-**Note-2:** Persistance is active only if the presenter enables `Recording`. Attendees will be prompted that recording is in progress by means of a visual banner.
+> **Note:** Persistence is active only if the presenter enables `Recording`. Attendees will be prompted that recording is in progress by means of a visual banner.
 
 
 ### Import Into AI Essentials
@@ -290,19 +315,21 @@ Provide workflow values similar to:
 
 ```yaml
 env:
-  WHISPER_BASE_URL: "ASR_OPENAI_API_COMPATIBLE_URI/v1"
-  WHISPER_API_KEY: "ASR_MLIS_TOKEN"
-  WHISPER_MODEL: "ASR_MODEL_NAME"
+  ASR_BASE_URL: "ASR_OPENAI_API_COMPATIBLE_URI/v1"
+  ASR_API_KEY: "ASR_MLIS_TOKEN"
+  ASR_MODEL: "ASR_MODEL_NAME"
   LLM_BASE_URL: "LLM_OPENAI_API_COMPATIBLE_URI/v1"
   LLM_API_KEY: "LLM_MLIS_TOKEN"
   LLM_MODEL: "LLM_MODEL_NAME"
-  DATABASE_URL: "postgresql+asyncpg://realtime_voice_user:realtime_voice_password@postgresdb-postgresql.postgresdb.svc.cluster.local:5432/realtime_voice_db"
 
+# DATABASE_URL is auto-constructed from postgresql.* when postgresql.enabled=true.
+# For an external database, set postgresql.enabled: false and provide DATABASE_URL:
+# DATABASE_URL: "postgresql+asyncpg://realtime_voice_user:realtime_voice_password@postgresdb-postgresql.postgresdb.svc.cluster.local:5432/realtime_voice_db"
 ```
 
 Suggested app metadata:
 
-Import using Helm chart [realtime-translation-0.3.4.tgz](realtime-translation-0.3.4.tgz).
+Import using Helm chart [realtime-translation-0.3.7.tgz](realtime-translation-0.3.7.tgz).
 ```
 - Framework name: `Realtime Live Voice Translation`
 - Namespace: `realtime-translation`
