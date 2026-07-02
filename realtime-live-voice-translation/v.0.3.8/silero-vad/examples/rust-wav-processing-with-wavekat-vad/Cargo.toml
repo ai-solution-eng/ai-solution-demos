@@ -1,0 +1,8 @@
+[package]
+name = "rust-wav-processing-with-wavekat-vad"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wavekat-vad = { git = "https://github.com/wavekat/wavekat-vad", features = ["silero"] }
+hound = "3"
