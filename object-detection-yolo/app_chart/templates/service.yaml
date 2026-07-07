@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "basic-object-detection-demo-app.fullname" . }}
+  labels:
+    {{- include "basic-object-detection-demo-app.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: {{ .Values.containerPort }}
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "basic-object-detection-demo-app.labels" . | nindent 4 }}

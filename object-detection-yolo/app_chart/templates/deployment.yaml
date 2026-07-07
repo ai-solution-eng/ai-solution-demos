@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "basic-object-detection-demo-app.fullname" . }}
+  labels:
+    {{- include "basic-object-detection-demo-app.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "basic-object-detection-demo-app.labels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "basic-object-detection-demo-app.labels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: streamlit-yolo
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.env }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - containerPort: {{ .Values.containerPort }}
+          resources:
+            requests:
+              cpu: {{ .Values.resources.requests.cpu }}
+              memory: {{ .Values.resources.requests.memory }}
+              {{- if .Values.resources.gpu.enabled }}
+              nvidia.com/gpu: {{ .Values.resources.gpu.count }}
+              {{- end }}
+            limits:
+              cpu: {{ .Values.resources.limits.cpu }}
+              memory: {{ .Values.resources.limits.memory }}
+              {{- if .Values.resources.gpu.enabled }}
+              nvidia.com/gpu: {{ .Values.resources.gpu.count }}
+              {{- end }}
