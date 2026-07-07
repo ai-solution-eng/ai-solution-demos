@@ -8,13 +8,10 @@
 
 ## Abstract
 
-https://github.com/ultralytics/ultralytics
-https://cocodataset.org/#home
-
 This demo aims to show basic object detection inference on PCAI using a simple custom streamlit application that loads and uses a [YOLOv8](https://docs.ultralytics.com/models/yolov8#key-features-of-yolov8) model.
 
-**Disclaimer: This demo does not include a fine-tuning component, it only uses default YOLOv8 models to detect classes of objects found in the **[**COCO dataset**](https://cocodataset.org/#home)
-Please check the [image segmentation demo](https://github.com/ai-solution-eng/ai-solution-demos/tree/main/image-segmentation), for what could be a similarly structured, computer-vision centric demo, that includes a training/fine-tuning component.
+**Disclaimer: This demo does not include a fine-tuning component, it only uses default YOLOv8 models to detect classes of objects found in the** [**COCO dataset**](https://cocodataset.org/#home)
+You can check the [image segmentation demo](https://github.com/ai-solution-eng/ai-solution-demos/tree/main/image-segmentation), for what could be a similarly structured, computer-vision centric demo, that includes a training/fine-tuning component.
 
 This demo uses:
 - **YOLOv8**: Pre-trained model for object detection, running on PyTorch.
@@ -22,7 +19,7 @@ This demo uses:
 
 **Recording:**
 
-- **Demo recording**
+- **Coming soon**
 
 
 ## Description
