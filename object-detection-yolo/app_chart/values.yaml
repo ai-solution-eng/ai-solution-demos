@@ -1,0 +1,34 @@
+replicaCount: 1
+
+ezua:
+  virtualService:
+    endpoint: "basic-object-detection-demo.${DOMAIN_NAME}"
+    istioGateway: "istio-system/ezaf-gateway"
+
+#env:
+#- name: http_proxy
+#  value: ""
+#- name: https_proxy
+#  value: ""
+
+image:
+  repository: ghcr.io/ai-solution-eng/basic-object-detection-demo
+  tag: 0.0.1
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8501
+
+containerPort: 8501
+
+resources:
+  requests:
+    cpu: 4
+    memory: 10Gi
+  limits:
+    cpu: 8
+    memory: 20Gi
+  gpu:
+    enabled: false
+    count: 1
