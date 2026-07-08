@@ -19,7 +19,7 @@ This demo uses:
 
 **Recording:**
 
-- **Coming soon**
+- [**Demo recording**](https://storage.googleapis.com/ai-solution-engineering-videos/public/object-detection-demo.mp4)
 
 
 ## Description
