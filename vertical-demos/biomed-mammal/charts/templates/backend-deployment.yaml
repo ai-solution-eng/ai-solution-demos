@@ -20,6 +20,19 @@ spec:
           image: {{ .Values.certificatesPolicy.initContainer.image | quote }}
           command:
 {{ toYaml .Values.certificatesPolicy.initContainer.command | indent 12 }}
+          env:
+{{- if and .Values.proxy .Values.proxy.enabled }}
+{{- range .Values.proxy.env }}
+          - name: {{ .name }}
+            value: {{ .value | quote }}
+{{- end }}
+{{- end }}
+{{- if and .Values.no_proxy .Values.no_proxy.enabled }}
+{{- range .Values.no_proxy.env }}
+          - name: {{ .name }}
+            value: {{ .value | quote }}
+{{- end }}
+{{- end }}
           volumeMounts:
 {{- range .Values.certificatesPolicy.initVolumeMounts }}
             - name: {{ .name }}
@@ -46,6 +59,18 @@ spec:
 {{- end }}
 {{- if and .Values.certificatesPolicy .Values.certificatesPolicy.enabled }}
 {{- range .Values.certificatesPolicy.env }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+{{- end }}
+{{- end }}
+{{- if and .Values.proxy .Values.proxy.enabled }}
+{{- range .Values.proxy.env }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+{{- end }}
+{{- end }}
+{{- if and .Values.no_proxy .Values.no_proxy.enabled }}
+{{- range .Values.no_proxy.env }}
             - name: {{ .name }}
               value: {{ .value | quote }}
 {{- end }}
