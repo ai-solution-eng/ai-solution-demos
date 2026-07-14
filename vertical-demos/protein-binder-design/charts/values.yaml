@@ -1,0 +1,122 @@
+# ============================================================
+# Application image
+# ============================================================
+images:
+  frontend:
+    repository: "fcaliva/protein-binder-design"
+    pullPolicy: "IfNotPresent"
+    tag: "v0.5.4"
+
+# NVIDIA API Key (set via K8s secret in production)
+nvidia:
+  apiKey: "nvapi-.."
+
+# ============================================================
+# Proxy configuration (for clusters behind corporate proxy)
+# ============================================================
+proxy:
+  enabled: false
+  env:
+    - name: HTTP_PROXY
+      value: http://hpeproxy.its.hpecorp.net:8080
+    - name: http_proxy
+      value: http://hpeproxy.its.hpecorp.net:8080
+    - name: HTTPS_PROXY
+      value: http://hpeproxy.its.hpecorp.net:8080
+    - name: https_proxy
+      value: http://hpeproxy.its.hpecorp.net:8080
+
+no_proxy:
+  enabled: false
+  env:
+    - name: NO_PROXY
+      value: .cluster.local,.svc,.svc.cluster,.svc.cluster.local,10.0.0.0/8,10.96.0.1,127.0.0.1,172.0.0.0/8,localhost,hpecolo.net,.hpecolo.net
+    - name: no_proxy
+      value: .cluster.local,.svc,.svc.cluster,.svc.cluster.local,10.0.0.0/8,10.96.0.1,127.0.0.1,172.0.0.0/8,localhost,hpecolo.net,.hpecolo.net
+
+
+
+# ============================================================
+# Resource limits & requests
+# ============================================================
+resources:
+  frontend:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+# ============================================================
+# Service ports
+# ============================================================
+service:
+  frontendPort: 8080
+  frontendTargetPort: 8080
+
+# ============================================================
+# EZUA settings (HPE Private Cloud AI ingress)
+# ============================================================
+ezua:
+  domainName: "${DOMAIN_NAME}"
+  virtualService:
+    endpoint: "protein-binder-design.${DOMAIN_NAME}"
+    istioGateway: "istio-system/ezaf-gateway"
+
+# ============================================================
+# SSL certificates policy
+# ============================================================
+certificatesPolicy:
+  enabled: false
+
+  env:
+    - name: SSL_CERT_DIR
+      value: /etc/ssl/certs
+    - name: REQUESTS_CA_BUNDLE
+      value: /tmp/certs/ca-certificates.crt
+    - name: SSL_CERT_FILE
+      value: /tmp/certs/ca-certificates.crt
+    - name: CURL_CA_BUNDLE
+      value: /tmp/certs/ca-certificates.crt
+
+  initContainer:
+    image: alpine:3.20
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        if [ -f /etc/ssl/certs/ca-certificates.crt ]; then
+          cp /etc/ssl/certs/ca-certificates.crt /work/ca-certificates.crt
+        elif [ -f /etc/ssl/certs/ca-bundle.crt ]; then
+          cp /etc/ssl/certs/ca-bundle.crt /work/ca-certificates.crt
+        else
+          echo "No base CA bundle found in init container"
+          exit 1
+        fi
+        cat /config/ezaf-root-ca.crt >> /work/ca-certificates.crt
+        echo "" >> /work/ca-certificates.crt
+
+  initVolumeMounts:
+    - name: combined-certs
+      mountPath: /work
+    - name: ezaf-root-ca
+      mountPath: /config/ezaf-root-ca.crt
+      subPath: ca-certificates.crt
+      readOnly: true
+
+  volumeMounts:
+    - name: combined-certs
+      mountPath: /tmp/certs
+      readOnly: false
+
+  volumes:
+    - name: combined-certs
+      emptyDir: {}
+    - name: ezaf-root-ca
+      configMap:
+        name: ezaf-root-ca
+        items:
+          - key: ezaf-root-ca.crt
+            path: ca-certificates.crt

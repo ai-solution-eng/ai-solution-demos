@@ -1,0 +1,7 @@
+apiVersion: v2
+appVersion: 0.1.0
+description: A Helm chart for deploying the Protein Binder Design application using NVIDIA BioNeMo NIM microservices
+name: protein-binder-design
+type: application
+version: 0.5.4
+icon: https://www.hpe.com/content/dam/hpe/shared-pictures/brand/HPE_logo_BLK_S.png

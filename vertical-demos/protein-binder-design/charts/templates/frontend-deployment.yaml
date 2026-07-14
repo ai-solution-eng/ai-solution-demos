@@ -1,0 +1,129 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "protein-binder-design.fullname" . }}-frontend
+  labels:
+    app: frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      {{- if and .Values.certificatesPolicy .Values.certificatesPolicy.enabled }}
+      initContainers:
+        - name: build-ca-bundle
+          image: {{ .Values.certificatesPolicy.initContainer.image | quote }}
+          command:
+{{ toYaml .Values.certificatesPolicy.initContainer.command | indent 12 }}
+          env:
+{{- if and .Values.proxy .Values.proxy.enabled }}
+{{- range .Values.proxy.env }}
+          - name: {{ .name }}
+            value: {{ .value | quote }}
+{{- end }}
+{{- end }}
+{{- if and .Values.no_proxy .Values.no_proxy.enabled }}
+{{- range .Values.no_proxy.env }}
+          - name: {{ .name }}
+            value: {{ .value | quote }}
+{{- end }}
+{{- end }}
+          volumeMounts:
+{{- range .Values.certificatesPolicy.initVolumeMounts }}
+            - name: {{ .name }}
+              mountPath: {{ .mountPath }}
+              {{- if .subPath }}
+              subPath: {{ .subPath }}
+              {{- end }}
+              {{- if hasKey . "readOnly" }}
+              readOnly: {{ .readOnly }}
+              {{- end }}
+{{- end }}
+      {{- end }}
+
+      containers:
+        - name: frontend
+          image: "{{ .Values.images.frontend.repository }}:{{ .Values.images.frontend.tag }}"
+          imagePullPolicy: {{ .Values.images.frontend.pullPolicy | default "IfNotPresent" }}
+          ports:
+            - containerPort: {{ .Values.service.frontendTargetPort }}
+          env:
+            - name: NVIDIA_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "protein-binder-design.fullname" . }}-nvapi
+                  key: apiKey
+                  optional: false
+{{- if and .Values.certificatesPolicy .Values.certificatesPolicy.enabled }}
+{{- range .Values.certificatesPolicy.env }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+{{- end }}
+{{- end }}
+{{- if and .Values.proxy .Values.proxy.enabled }}
+{{- range .Values.proxy.env }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+{{- end }}
+{{- end }}
+{{- if and .Values.no_proxy .Values.no_proxy.enabled }}
+{{- range .Values.no_proxy.env }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+{{- end }}
+{{- end }}
+          volumeMounts:
+{{- if and .Values.certificatesPolicy .Values.certificatesPolicy.enabled }}
+{{- range .Values.certificatesPolicy.volumeMounts }}
+            - name: {{ .name }}
+              mountPath: {{ .mountPath }}
+              {{- if .subPath }}
+              subPath: {{ .subPath }}
+              {{- end }}
+              {{- if hasKey . "readOnly" }}
+              readOnly: {{ .readOnly }}
+              {{- end }}
+{{- end }}
+{{- end }}
+          resources:
+            requests:
+              cpu: "{{ .Values.resources.frontend.requests.cpu }}"
+              memory: "{{ .Values.resources.frontend.requests.memory }}"
+            limits:
+              cpu: "{{ .Values.resources.frontend.limits.cpu }}"
+              memory: "{{ .Values.resources.frontend.limits.memory }}"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: {{ .Values.service.frontendTargetPort }}
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: {{ .Values.service.frontendTargetPort }}
+            initialDelaySeconds: 10
+            periodSeconds: 20
+
+      volumes:
+{{- if and .Values.certificatesPolicy .Values.certificatesPolicy.enabled }}
+{{- range .Values.certificatesPolicy.volumes }}
+        - name: {{ .name }}
+{{- if hasKey . "emptyDir" }}
+          emptyDir: {}
+{{- else if .configMap }}
+          configMap:
+            name: {{ .configMap.name }}
+            items:
+{{- range .configMap.items }}
+              - key: {{ .key }}
+                path: {{ .path }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

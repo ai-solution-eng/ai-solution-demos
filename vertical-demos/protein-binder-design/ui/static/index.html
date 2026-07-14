@@ -1,0 +1,1176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Protein Binder Design — NVIDIA BioNeMo NIM</title>
+<script src="https://3dmol.org/build/3Dmol-min.js"></script>
+<style>
+:root {
+  --hpe: #01A982;
+  --hpe-hover: #018f6e;
+  --dark: #1a1a2e;
+  --gray: #6b7280;
+  --light: #f3f4f6;
+  --border: #e5e7eb;
+  --bg: #f8f9fa;
+  --white: #fff;
+  --error: #dc2626;
+  --success: #059669;
+  --step-inactive: #d1d5db;
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--dark);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+header {
+  background: var(--white);
+  border-bottom: 2px solid var(--hpe);
+  padding: 0 32px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.06);
+  flex-shrink: 0;
+}
+header img { height: 32px; }
+header h1 { font-size: 18px; font-weight: 600; }
+header span { font-size: 13px; color: var(--gray); margin-left: auto; }
+
+/* Stepper */
+.stepper {
+  display: flex;
+  background: var(--white);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 32px;
+  justify-content: center;
+  gap: 0;
+  flex-shrink: 0;
+}
+.step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 24px;
+  cursor: pointer;
+  opacity: .5;
+  transition: all .15s;
+  user-select: none;
+  position: relative;
+}
+.step.active { opacity: 1; }
+.step.done { opacity: .8; cursor: pointer; }
+.step:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  right: -20px;
+  top: 50%;
+  width: 24px;
+  height: 2px;
+  background: var(--step-inactive);
+}
+.step.active::after, .step.done::after { background: var(--hpe); }
+.step .num {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 700;
+  background: var(--step-inactive);
+  color: var(--white);
+  flex-shrink: 0;
+}
+.step.active .num { background: var(--hpe); }
+.step.done .num { background: var(--success); }
+.step .label { font-size: 13px; font-weight: 500; white-space: nowrap; }
+.step .sub { font-size: 11px; color: var(--gray); white-space: nowrap; }
+
+main {
+  flex: 1;
+  padding: 24px 32px;
+  max-width: 1200px;
+  width: 100%;
+  margin: 0 auto;
+}
+.step-panel { display: none; }
+.step-panel.active { display: block; }
+
+.card {
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 24px;
+  margin-bottom: 20px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.04);
+}
+.card h2 { font-size: 18px; font-weight: 600; margin-bottom: 4px; }
+.card .subtitle { font-size: 13px; color: var(--gray); margin-bottom: 20px; }
+
+.field { margin-bottom: 16px; }
+.field label {
+  display: block; font-size: 13px; font-weight: 600;
+  margin-bottom: 5px; color: var(--dark);
+}
+.field input, .field textarea, .field select {
+  width: 100%; padding: 9px 12px;
+  border: 1px solid var(--border); border-radius: 6px;
+  font-size: 13px; font-family: var(--font);
+  transition: border-color .15s;
+}
+.field textarea { font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; line-height: 1.5; resize: vertical; }
+.field input:focus, .field textarea:focus, .field select:focus {
+  outline: none; border-color: var(--hpe);
+  box-shadow: 0 0 0 3px rgba(1,169,130,.1);
+}
+.field .hint { font-size: 11px; color: var(--gray); margin-top: 3px; }
+.field-row {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+}
+.field-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+
+.btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 10px 24px;
+  background: var(--hpe); color: var(--white);
+  border: none; border-radius: 6px;
+  font-size: 14px; font-weight: 600; cursor: pointer;
+  transition: background .15s;
+}
+.btn:hover { background: var(--hpe-hover); }
+.btn:disabled { opacity: .6; cursor: not-allowed; }
+.btn-outline {
+  background: transparent; color: var(--hpe);
+  border: 1.5px solid var(--hpe);
+}
+.btn-outline:hover { background: rgba(1,169,130,.06); }
+.btn-sm { padding: 6px 14px; font-size: 12px; }
+.btn-danger { background: var(--error); }
+.btn-danger:hover { background: #b91c1c; }
+
+.spinner {
+  display: inline-block; width: 16px; height: 16px;
+  border: 2px solid rgba(255,255,255,.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin .6s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.result-box {
+  margin-top: 20px; padding: 16px 20px;
+  border-radius: 6px; border: 1px solid var(--border);
+  background: #fafbfc; display: none;
+}
+.result-box.visible { display: block; }
+.result-box h3 {
+  font-size: 13px; font-weight: 600; color: var(--gray);
+  text-transform: uppercase; letter-spacing: .5px; margin-bottom: 12px;
+}
+.result-box.error { border-color: var(--error); background: #fef2f2; }
+
+.pdb-viewer { width: 100%; height: 400px; border-radius: 6px; border: 1px solid var(--border); position: relative; }
+
+.backbone-list, .seq-list {
+  display: grid; gap: 12px; margin-top: 12px;
+}
+.backbone-item, .seq-item {
+  border: 1px solid var(--border); border-radius: 6px; padding: 12px 16px;
+  cursor: pointer; transition: all .1s;
+}
+.backbone-item:hover, .seq-item:hover { border-color: var(--hpe); }
+.backbone-item.selected { border-color: var(--hpe); background: rgba(1,169,130,.04); }
+
+.badge {
+  display: inline-block; padding: 2px 8px; border-radius: 4px;
+  font-size: 11px; font-weight: 600;
+}
+.badge-green { background: #d1fae5; color: #065f46; }
+.badge-blue { background: #dbeafe; color: #1e40af; }
+.badge-gray { background: var(--light); color: var(--gray); }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; padding: 8px 12px; background: var(--light); font-weight: 600; border-bottom: 2px solid var(--border); }
+td { padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+tr:hover td { background: #f9fafb; }
+tr.selected td { background: rgba(1,169,130,.06); }
+
+.seq-cell { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 11px; word-break: break-all; max-width: 400px; }
+.score-cell { font-weight: 600; white-space: nowrap; }
+.actions-cell { white-space: nowrap; }
+
+.viewer-tabs {
+  display: flex; gap: 0; margin-bottom: 8px;
+}
+.viewer-tab {
+  padding: 6px 16px; font-size: 12px; font-weight: 500;
+  border: 1px solid var(--border); cursor: pointer;
+  background: var(--white); color: var(--gray);
+}
+.viewer-tab:first-child { border-radius: 6px 0 0 6px; }
+.viewer-tab:last-child { border-radius: 0 6px 6px 0; }
+.viewer-tab.active { background: var(--hpe); color: var(--white); border-color: var(--hpe); }
+
+footer {
+  flex-shrink: 0; border-top: 1px solid var(--border);
+  padding: 16px 32px; font-size: 12px; color: var(--gray);
+  text-align: center; background: var(--white);
+}
+
+@media (max-width: 768px) {
+  header { padding: 0 16px; }
+  .stepper { padding: 12px 16px; gap: 0; overflow-x: auto; }
+  .step { padding: 6px 12px; }
+  .step .sub { display: none; }
+  .step:not(:last-child)::after { width: 12px; right: -10px; }
+  main { padding: 16px; }
+  .field-row, .field-row-3 { grid-template-columns: 1fr; }
+  .pdb-viewer { height: 280px; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <img src="/static/hpe-logo.jpg" alt="HPE" onerror="this.style.display='none'">
+  <h1>Protein Binder Design</h1>
+  <span>NVIDIA BioNeMo NIM</span>
+</header>
+
+<div class="stepper" id="stepper">
+  <div class="step active" data-step="1">
+    <span class="num">1</span>
+    <div><div class="label">Target &amp; Backbone</div><div class="sub">RFdiffusion</div></div>
+  </div>
+  <div class="step" data-step="2">
+    <span class="num">2</span>
+    <div><div class="label">Sequence Design</div><div class="sub">ProteinMPNN</div></div>
+  </div>
+  <div class="step" data-step="3">
+    <span class="num">3</span>
+    <div><div class="label">Validation</div><div class="sub">OpenFold3</div></div>
+  </div>
+</div>
+
+<main>
+<!-- ────────────── STEP 1: TARGET & BACKBONE ────────────── -->
+<div class="step-panel active" id="panel-1">
+  <div class="card">
+    <h2>Step 1: Target Protein &amp; Backbone Generation</h2>
+    <p class="subtitle">Specify a target protein and generate novel binder backbones using RFdiffusion.</p>
+
+    <div class="field-row">
+      <div class="field">
+        <label>PDB ID (from RCSB)</label>
+        <div style="display:flex;gap:8px">
+          <input id="pdb-id" placeholder="e.g. 4Z98, 1R42" style="flex:1;text-transform:uppercase">
+          <button class="btn btn-sm btn-outline" onclick="fetchPdb()">Fetch</button>
+        </div>
+        <div class="hint">Or upload a PDB file below</div>
+      </div>
+      <div class="field">
+        <label>Upload PDB File</label>
+        <input id="pdb-file" type="file" accept=".pdb,.ent">
+        <div class="hint">Upload a custom PDB file</div>
+      </div>
+    </div>
+
+    <div style="margin-top:8px;margin-bottom:16px">
+      <span style="font-size:12px;font-weight:600;color:var(--gray);margin-right:8px">Quick demos:</span>
+      <button class="btn btn-sm btn-outline" onclick="loadDemo('4Z98','A18-120/0 60-90','A54,A56,A66')" title="PD-L1 — cancer immunotherapy target">PD-L1 (4Z98)</button>
+      <button class="btn btn-sm btn-outline" onclick="loadDemo('1R42','A22-615/0 60-90','A37,A41')" title="ACE2 — SARS-CoV-2 receptor">ACE2 (1R42)</button>
+      <button class="btn btn-sm btn-outline" onclick="loadDemo('3V6B','A1-150/0 60-90','')" title="TNFα — inflammation target">TNFα (3V6B)</button>
+    </div>
+
+    <div class="result-box" id="target-info">
+      <h3>Target Protein</h3>
+      <div id="target-info-body"></div>
+      <div id="target-viewer" class="pdb-viewer" style="margin-top:12px;display:none"></div>
+    </div>
+
+    <div class="field-row-3">
+      <div class="field">
+        <label>Contigs (binder specification)</label>
+        <input id="contigs" placeholder="Auto-detected when you fetch a PDB" style="color:var(--gray)">
+        <div class="hint">Auto-detected from PDB. Format: <code>A5-97/A105-263/0 60-90</code></div>
+      </div>
+      <div class="field">
+        <label>Hotspot Residues</label>
+        <input id="hotspots" placeholder="e.g. A45,A67,A89">
+        <div class="hint">Comma-separated, e.g. <code>A45,A67</code></div>
+      </div>
+      <div class="field">
+        <label>Binder Chain ID</label>
+        <input id="binder-chain" value="B" placeholder="e.g. B">
+        <div class="hint">Chain ID RFdiffusion assigns to the binder</div>
+      </div>
+    </div>
+
+    <div class="field-row-3">
+      <div class="field">
+        <label>Diffusion Steps</label>
+        <input id="diff-steps" type="number" value="50" min="1" max="50">
+      </div>
+      <div class="field">
+        <label>Number of Backbones</label>
+        <input id="num-backbones" type="number" value="3" min="1" max="20">
+      </div>
+      <div class="field">
+        <label>Random Seed (optional)</label>
+        <input id="seed" type="number" placeholder="Leave blank for random">
+      </div>
+    </div>
+
+    <button class="btn" onclick="generateBackbones()">
+      <span id="rfdiff-btn">🎯 Generate Backbones</span>
+    </button>
+
+    <div class="result-box" id="rfdiff-result">
+      <h3>Generated Backbones</h3>
+      <div id="rfdiff-body"></div>
+    </div>
+
+    <div id="backbone-viewer-container" style="display:none">
+      <div class="viewer-tabs">
+        <div class="viewer-tab active" data-view="target" onclick="switchViewer('target')">Target</div>
+        <div class="viewer-tab" data-view="backbone" onclick="switchViewer('backbone')">Backbone</div>
+      </div>
+      <div id="mol-viewer" class="pdb-viewer"></div>
+    </div>
+
+    <div style="display:flex;justify-content:flex-end;margin-top:20px">
+      <button class="btn" onclick="goToStep(2)">Next →</button>
+    </div>
+  </div>
+</div>
+
+<!-- ────────────── STEP 2: SEQUENCE DESIGN ────────────── -->
+<div class="step-panel" id="panel-2">
+  <div class="card">
+    <h2>Step 2: Sequence Design with ProteinMPNN</h2>
+    <p class="subtitle">Design amino acid sequences for the generated binder backbones.</p>
+
+    <div class="field">
+      <label>Select Backbone</label>
+      <select id="backbone-select">
+        <option value="">— Generate backbones in Step 1 first —</option>
+      </select>
+    </div>
+
+    <div class="field-row-3">
+      <div class="field">
+        <label>Sequences per Backbone</label>
+        <input id="seq-per-target" type="number" value="8" min="1" max="100">
+      </div>
+      <div class="field">
+        <label>Sampling Temperature(s)</label>
+        <input id="sampling-temp" value="0.1,0.2" placeholder="Comma-separated: 0.1,0.2">
+        <div class="hint">Lower = more conservative; comma for multiple temps</div>
+      </div>
+      <div class="field">
+        <label><input id="soluble-model" type="checkbox" checked> Use soluble model</label>
+        <div class="hint">Recommended for soluble binder designs</div>
+      </div>
+    </div>
+
+    <button class="btn" onclick="designSequences()">
+      <span id="mpnn-btn">🧬 Design Sequences</span>
+    </button>
+
+    <div class="result-box" id="mpnn-result">
+      <h3>Designed Sequences</h3>
+      <div id="mpnn-body"></div>
+    </div>
+
+    <div class="result-box" id="mpnn-detail">
+      <h3>Sequence Details</h3>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr>
+            <th style="width:40px"><input type="checkbox" onchange="toggleAllSeqs(this)"></th>
+            <th style="width:50px">#</th>
+            <th>Header</th>
+            <th>Sequence</th>
+            <th style="width:80px">Score</th>
+            <th style="width:80px">Select</th>
+          </tr></thead>
+          <tbody id="seq-table-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <button class="btn" onclick="validateSequences()" id="validate-btn" style="display:none">
+      <span id="fold-btn">🔬 Validate Selected (OpenFold3)</span>
+    </button>
+
+    <div style="display:flex;justify-content:space-between;margin-top:20px">
+      <button class="btn btn-outline" onclick="goToStep(1)">← Back</button>
+      <button class="btn" onclick="goToStep(3)">Next →</button>
+    </div>
+  </div>
+</div>
+
+<!-- ────────────── STEP 3: VALIDATION ────────────── -->
+<div class="step-panel" id="panel-3">
+  <div class="card">
+    <h2>Step 3: Structure Validation</h2>
+    <p class="subtitle">Co-fold the designed binder with the target using OpenFold3.</p>
+
+    <div id="validation-status" class="result-box visible">
+      <h3>Ready</h3>
+      <p id="validation-ready-text">Select sequences in Step 2 and run validation.</p>
+    </div>
+
+    <div class="result-box" id="fold-result">
+      <h3>Predicted Complex Structure</h3>
+      <div id="fold-scores" style="margin-bottom:12px"></div>
+      <div id="fold-viewer-container">
+        <div class="viewer-tabs">
+          <div class="viewer-tab active" data-view="fold" onclick="switchViewer('fold')">Predicted Complex</div>
+          <div class="viewer-tab" data-view="target2" onclick="switchViewer('target2')">Target</div>
+        </div>
+        <div style="margin:8px 0;text-align:center">
+          <span id="val-result-label" style="font-size:12px;color:var(--gray)"></span>
+        </div>
+        <div id="fold-mol-viewer" class="pdb-viewer"></div>
+      </div>
+    </div>
+
+    <div class="result-box" id="validation-table" style="margin-top:16px">
+      <h3>Validation Results</h3>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr>
+            <th style="width:50px">Show</th>
+            <th>Rank</th>
+            <th>Design #</th>
+            <th>Sequence (prefix)</th>
+            <th>ProteinMPNN Score</th>
+            <th>pLDDT</th>
+            <th>ipTM</th>
+            <th>Status</th>
+          </tr></thead>
+          <tbody id="validation-table-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div style="display:flex;justify-content:flex-start;margin-top:20px">
+      <button class="btn btn-outline" onclick="goToStep(2)">← Back</button>
+    </div>
+  </div>
+</div>
+
+</main>
+
+<footer>
+  Powered by <a href="https://build.nvidia.com/nvidia/protein-binder-design-for-drug-discovery" target="_blank">NVIDIA BioNeMo NIM</a>
+  &middot; RFdiffusion + ProteinMPNN + OpenFold3
+  &middot; Deployed on <a href="https://www.hpe.com/us/en/hpe-private-cloud-ai.html" target="_blank">HPE Private Cloud AI</a>
+</footer>
+
+<script>
+// ── State ──────────────────────────────────────────────────────
+const S = {
+  targetPdb: '',
+  targetChains: [],
+  backbones: [],
+  selectedBbIdx: -1,
+  sequences: [],
+  selectedSeqs: new Set(),
+  viewerMode: 'target',
+  validationResults: [],
+  selectedValIdx: 0,
+  showDesigns: new Set(),
+};
+
+// ── Stepper ────────────────────────────────────────────────────
+document.querySelectorAll('.step').forEach(el => {
+  el.addEventListener('click', () => {
+    const step = parseInt(el.dataset.step);
+    if (step === 2 && S.backbones.length === 0) { alert('Generate backbones in Step 1 first'); return; }
+    if (step === 3 && S.sequences.length === 0) { alert('Design sequences in Step 2 first'); return; }
+    goToStep(step);
+  });
+});
+
+function goToStep(n) {
+  document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.step-panel').forEach(p => p.classList.remove('active'));
+  document.querySelector(`.step[data-step="${n}"]`).classList.add('active');
+  document.getElementById(`panel-${n}`).classList.add('active');
+}
+
+function markStepDone(n) {
+  document.querySelector(`.step[data-step="${n}"]`).classList.add('done');
+}
+
+// ── PDB handling ────────────────────────────────────────────────
+async function fetchPdb() {
+  const id = document.getElementById('pdb-id').value.trim().toUpperCase();
+  if (!id) { alert('Enter a PDB ID'); return; }
+  const btn = document.querySelector('#pdb-id + button');
+  btn.disabled = true; btn.textContent = 'Fetching…';
+  try {
+    const resp = await fetch(`/api/pdb/${id}`);
+    if (!resp.ok) { alert(`PDB ${id} not found`); return; }
+    S.targetPdb = await resp.text();
+    parseAndShowTarget(id);
+  } catch (e) {
+    alert(`Failed to fetch PDB: ${e.message}`);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Fetch';
+  }
+}
+
+document.getElementById('pdb-file').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  S.targetPdb = await file.text();
+  parseAndShowTarget(file.name);
+});
+
+async function parseAndShowTarget(name) {
+  const chains = detectChains(S.targetPdb);
+  S.targetChains = chains;
+  const info = document.getElementById('target-info');
+  const body = document.getElementById('target-info-body');
+
+  // Auto-detect residue ranges
+  let ranges = {};
+  let suggestedContigs = '';
+  try {
+    const resp = await fetch('/api/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pdb: S.targetPdb }),
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      ranges = data.chains || {};
+      suggestedContigs = data.suggested_contigs || '';
+      if (suggestedContigs) {
+        const el = document.getElementById('contigs');
+        el.value = suggestedContigs;
+        el.style.color = '';
+      }
+    }
+  } catch (e) { /* analyze is best-effort */ }
+
+  let rangesHtml = '';
+  for (const [chain, info] of Object.entries(ranges)) {
+    rangesHtml += `<dt style="font-weight:600">Chain ${chain}</dt><dd>${info.ranges.join(', ')} (${info.count} residues)</dd>`;
+  }
+
+  info.classList.add('visible');
+  body.innerHTML = `
+    <div style="display:grid;grid-template-columns:auto 1fr;gap:4px 16px;font-size:14px">
+      <dt style="font-weight:600">Source</dt><dd>${name}</dd>
+      <dt style="font-weight:600">ATOM lines</dt><dd>${(S.targetPdb.match(/^ATOM/gm) || []).length}</dd>
+      ${rangesHtml || `<dt style="font-weight:600">Chains</dt><dd>${chains.length ? chains.join(', ') : 'none'}</dd>`}
+      ${suggestedContigs ? `<dt style="font-weight:600">Suggested contigs</dt><dd><code>${suggestedContigs}</code></dd>` : ''}
+    </div>
+  `;
+  const v = document.getElementById('target-viewer');
+  v.style.display = 'block';
+  initViewer('target-viewer', S.targetPdb, 'cartoon');
+  goToStep(1);
+}
+
+async function loadDemo(pdbId, contigs, hotspots) {
+  document.getElementById('pdb-id').value = pdbId;
+  document.getElementById('contigs').value = contigs;
+  document.getElementById('contigs').style.color = '';
+  document.getElementById('hotspots').value = hotspots;
+  await fetchPdb();
+}
+
+function detectChains(pdb) {
+  const chains = new Set();
+  for (const line of pdb.split('\n')) {
+    if (line.startsWith('ATOM') && line.length > 21) {
+      chains.add(line[21]);
+    }
+  }
+  return [...chains].sort();
+}
+
+function countResidues(pdb) {
+  const residues = new Set();
+  for (const line of pdb.split('\n')) {
+    if (line.startsWith('ATOM') && line.length > 26) {
+      residues.add(line.substring(22, 27).trim());
+    }
+  }
+  return residues.size;
+}
+
+// ── 3Dmol.js Viewer ────────────────────────────────────────────
+let molViewer = null;
+let foldViewer = null;
+
+function initViewer(containerId, pdbData, style) {
+  const el = document.getElementById(containerId);
+  el.innerHTML = '';
+  try {
+    const viewer = $3Dmol.createViewer(containerId, { backgroundColor: 'white' });
+    viewer.addModel(pdbData, 'pdb');
+    viewer.setStyle({}, { [style || 'cartoon']: { color: 'spectrum' } });
+    viewer.zoomTo();
+    viewer.render();
+    return viewer;
+  } catch (e) {
+    el.innerHTML = `<div style="padding:20px;color:var(--error)">3D viewer error: ${e.message}</div>`;
+    return null;
+  }
+}
+
+function switchViewer(mode) {
+  document.querySelectorAll('.viewer-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll(`.viewer-tab[data-view="${mode}"]`).forEach(t => t.classList.add('active'));
+  if (mode === 'target') {
+    if (S.targetPdb) initViewer('mol-viewer', S.targetPdb, 'cartoon');
+  } else if (mode === 'backbone') {
+    const bb = S.backbones[S.selectedBbIdx];
+    if (bb && bb.pdb) initViewer('mol-viewer', bb.pdb, 'cartoon');
+  } else if (mode === 'fold') {
+    updateOverlayViewer();
+  } else if (mode === 'target2') {
+    if (S.targetPdb) initViewer('fold-mol-viewer', S.targetPdb, 'cartoon');
+  }
+}
+
+// ── Validation result viewer (multi-select overlay + single view) ──
+function toggleShowDesign(origIdx) {
+  if (S.showDesigns.has(origIdx)) S.showDesigns.delete(origIdx);
+  else S.showDesigns.add(origIdx);
+  updateOverlayViewer();
+}
+
+function updateOverlayViewer() {
+  const vr = S.validationResults;
+  const selected = [...S.showDesigns].filter(idx => vr.find(r => r.origIdx === idx)?.structure);
+  const el = document.getElementById('fold-mol-viewer');
+  el.innerHTML = '';
+
+  if (selected.length === 0) {
+    // Single-design fallback: show first validated result
+    if (vr.length > 0) showValResult(0);
+    return;
+  }
+
+  const VR_COLORS = ['#00BFFF', '#32CD32', '#FF1493', '#FFD700', '#FF4500', '#9370DB', '#00CED1', '#FF6347'];
+
+  try {
+    const viewer = $3Dmol.createViewer('fold-mol-viewer', { backgroundColor: 'white' });
+
+    // Add target as reference (model 0)
+    if (S.targetPdb) {
+      viewer.addModel(S.targetPdb, 'pdb');
+      viewer.setStyle({model: 0}, {cartoon: {color: '#d0d0d0', opacity: 0.5}});
+    }
+
+    selected.forEach((origIdx, ci) => {
+      const result = vr.find(r => r.origIdx === origIdx);
+      if (!result?.structure) return;
+
+      // Detect binder chain (shorter chain = binder)
+      const cc = {};
+      for (const line of result.structure.split('\n')) {
+        if (line.startsWith('ATOM') && line.length > 26) {
+          const c = line[21];
+          if (!cc[c]) cc[c] = new Set();
+          cc[c].add(line.substring(22, 27).trim());
+        }
+      }
+      const sorted = Object.entries(cc).sort((a, b) => a[1].size - b[1].size);
+      const binderChain = sorted[0]?.[0] || 'A';
+
+      // Extract only the binder chain atoms
+      const binderAtoms = result.structure.split('\n')
+        .filter(l => (l.startsWith('ATOM') || l.startsWith('HETATM')) && l.length > 21 && l[21] === binderChain)
+        .join('\n');
+      if (!binderAtoms.trim()) return;
+
+      viewer.addModel(binderAtoms, 'pdb');
+      const modelIdx = (S.targetPdb ? 1 : 0) + ci;
+      viewer.addStyle({model: modelIdx}, {cartoon: {color: VR_COLORS[ci % VR_COLORS.length]}});
+    });
+
+    viewer.zoomTo();
+    viewer.render();
+    foldViewer = viewer;
+
+    const label = document.getElementById('val-result-label');
+    const colorsText = selected.map((_, ci) => VR_COLORS[ci % VR_COLORS.length]).join(',');
+    label.textContent = `Showing ${selected.length} design(s) — target=gray, binder colors: ●●●`;
+  } catch (e) {
+    el.innerHTML = `<div style="padding:20px;color:var(--error)">Overlay error: ${e.message}</div>`;
+  }
+}
+
+function showValResult(idx) {
+  const vr = S.validationResults;
+  if (!vr.length || !vr[idx] || !vr[idx].structure) return;
+  S.selectedValIdx = idx;
+  const pdb = vr[idx].structure;
+
+  const chainCounts = {};
+  for (const line of pdb.split('\n')) {
+    if (line.startsWith('ATOM') && line.length > 26) {
+      const chain = line[21];
+      const resNum = line.substring(22, 27).trim();
+      if (!chainCounts[chain]) chainCounts[chain] = new Set();
+      chainCounts[chain].add(resNum);
+    }
+  }
+  const chains = Object.entries(chainCounts)
+    .map(([c, s]) => ({chain: c, count: s.size}))
+    .sort((a, b) => a.count - b.count);
+  const binderChain = chains[0]?.chain || 'A';
+  const targetChain = chains.length > 1 ? chains[1].chain : 'B';
+
+  const el = document.getElementById('fold-mol-viewer');
+  el.innerHTML = '';
+  try {
+    const viewer = $3Dmol.createViewer('fold-mol-viewer', { backgroundColor: 'white' });
+    viewer.addModel(pdb, 'pdb');
+    viewer.setStyle({}, {cartoon: {color: '#cccccc'}});
+    viewer.addStyle({chain: binderChain}, {cartoon: {color: '#00BFFF'}});
+    viewer.addStyle({chain: targetChain}, {cartoon: {color: '#FF8C00'}});
+    viewer.zoomTo();
+    viewer.render();
+    foldViewer = viewer;
+  } catch (e) {
+    el.innerHTML = `<div style="padding:20px;color:var(--error)">3D viewer error: ${e.message}</div>`;
+  }
+  document.getElementById('val-result-label').textContent =
+    `Design ${idx + 1}/${vr.length} (binder=cyan, target=orange)`;
+}
+
+// ── Step 1: RFdiffusion ────────────────────────────────────────
+async function generateBackbones() {
+  if (!S.targetPdb) { alert('Fetch or upload a target PDB first'); return; }
+
+  const contigs = document.getElementById('contigs').value.trim();
+  const hotspots = document.getElementById('hotspots').value.trim();
+  const diffSteps = parseInt(document.getElementById('diff-steps').value) || 50;
+  const numDesigns = parseInt(document.getElementById('num-backbones').value) || 3;
+  const seed = document.getElementById('seed').value.trim();
+
+  if (!contigs) { alert('Contigs string is required'); return; }
+
+  const btn = document.getElementById('rfdiff-btn');
+  btn.innerHTML = '<span class="spinner"></span> Generating…';
+  document.querySelector('#rfdiff-btn').closest('.btn').disabled = true;
+
+  const payload = {
+    input_pdb: S.targetPdb,
+    contigs: contigs,
+    diffusion_steps: diffSteps,
+    num_designs: numDesigns,
+  };
+  if (hotspots) payload.hotspot_res = hotspots.split(',').map(s => s.trim()).filter(Boolean);
+  if (seed) payload.random_seed = parseInt(seed);
+
+  try {
+    const resp = await fetch('/api/rfdiffusion/generate_batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+
+    if (!resp.ok) throw new Error(data.detail || 'RFdiffusion failed');
+
+    S.backbones = data.backbones || [];
+    renderBackbones();
+    markStepDone(1);
+    populateBackboneSelect();
+  } catch (e) {
+    const result = document.getElementById('rfdiff-result');
+    result.classList.add('visible', 'error');
+    document.getElementById('rfdiff-body').innerHTML = `<p style="color:var(--error)">${e.message}</p>`;
+  } finally {
+    btn.innerHTML = '🎯 Generate Backbones';
+    document.querySelector('#rfdiff-btn').closest('.btn').disabled = false;
+  }
+}
+
+function renderBackbones() {
+  const result = document.getElementById('rfdiff-result');
+  const body = document.getElementById('rfdiff-body');
+  result.classList.remove('error');
+  result.classList.add('visible');
+
+  let html = `<p style="margin-bottom:12px">Generated <strong>${S.backbones.length}</strong> backbone(s):</p>`;
+  html += '<div class="backbone-list">';
+  S.backbones.forEach((bb, i) => {
+    const hasPdb = !!bb.pdb;
+    const status = bb.error ? `<span class="badge badge-gray">Error: ${bb.error}</span>` : `<span class="badge badge-green">${(bb.pdb.match(/^ATOM/gm) || []).length} atoms</span>`;
+    html += `<div class="backbone-item ${i === S.selectedBbIdx ? 'selected' : ''}" onclick="selectBackbone(${i})">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <strong>Backbone ${bb.id}</strong>
+        ${status}
+      </div>
+    </div>`;
+  });
+  html += '</div>';
+  body.innerHTML = html;
+
+  if (S.backbones.length > 0) {
+    selectBackbone(0);
+    document.getElementById('backbone-viewer-container').style.display = 'block';
+  }
+}
+
+function selectBackbone(idx) {
+  S.selectedBbIdx = idx;
+  document.querySelectorAll('.backbone-item').forEach((el, i) => {
+    el.classList.toggle('selected', i === idx);
+  });
+  const bb = S.backbones[idx];
+  if (bb && bb.pdb) {
+    switchViewer('backbone');
+  }
+}
+
+function populateBackboneSelect() {
+  const sel = document.getElementById('backbone-select');
+  sel.innerHTML = S.backbones.map((bb, i) =>
+    `<option value="${i}">${bb.id} — ${bb.pdb ? (bb.pdb.match(/^ATOM/gm) || []).length + ' atoms' : 'error'}</option>`
+  ).join('');
+}
+
+// ── Step 2: ProteinMPNN ────────────────────────────────────────
+async function designSequences() {
+  const bbIdx = parseInt(document.getElementById('backbone-select').value);
+  if (isNaN(bbIdx) || !S.backbones[bbIdx] || !S.backbones[bbIdx].pdb) {
+    alert('Select a valid backbone');
+    return;
+  }
+
+  const numSeq = parseInt(document.getElementById('seq-per-target').value) || 8;
+  const tempRaw = document.getElementById('sampling-temp').value;
+  const temps = tempRaw.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n));
+  const soluble = document.getElementById('soluble-model').checked;
+  const binderChain = document.getElementById('binder-chain').value.trim() || 'B';
+
+  const btn = document.getElementById('mpnn-btn');
+  btn.innerHTML = '<span class="spinner"></span> Designing…';
+  document.querySelector('#mpnn-btn').closest('.btn').disabled = true;
+
+  const payload = {
+    input_pdb: S.backbones[bbIdx].pdb,
+    input_pdb_chains: [binderChain],
+    num_seq_per_target: numSeq,
+    sampling_temp: temps.length > 0 ? temps : [0.1],
+    use_soluble_model: soluble,
+  };
+
+  try {
+    const resp = await fetch('/api/proteinmpnn/predict', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+
+    if (!resp.ok) throw new Error(data.detail || 'ProteinMPNN failed');
+
+    S.sequences = parseMfasta(data.mfasta || '', data.scores || []);
+    renderSequences();
+    markStepDone(2);
+    document.getElementById('validate-btn').style.display = 'inline-flex';
+  } catch (e) {
+    const result = document.getElementById('mpnn-result');
+    result.classList.add('visible', 'error');
+    document.getElementById('mpnn-body').innerHTML = `<p style="color:var(--error)">${e.message}</p>`;
+  } finally {
+    btn.innerHTML = '🧬 Design Sequences';
+    document.querySelector('#mpnn-btn').closest('.btn').disabled = false;
+  }
+}
+
+function parseMfasta(mfasta, scores) {
+  // Split on '>' to get individual FASTA records; skip empty parts
+  const records = mfasta.split('>').filter(r => r.trim());
+
+  // The first record is the input/native sequence — skip it
+  const designed = records.slice(1);
+
+  // If the scores array includes the input's score (one extra element),
+  // shift by one to align with designed sequences
+  const scoreShift = scores.length > designed.length ? 1 : 0;
+
+  return designed.map((rec, i) => {
+    const lines = rec.trim().split('\n');
+    const header = '>' + lines[0];
+    const sequence = lines.slice(1).join('').replace(/\s/g, '');
+    return {
+      idx: i,
+      header,
+      sequence,
+      score: scores[i + scoreShift] ?? null,
+    };
+  });
+}
+
+function renderSequences() {
+  const detail = document.getElementById('mpnn-detail');
+  detail.classList.add('visible');
+  const body = document.getElementById('seq-table-body');
+
+  let html = '';
+  S.sequences.forEach((seq, i) => {
+    const score = seq.score !== null ? seq.score.toFixed(4) : '—';
+    html += `<tr class="${S.selectedSeqs.has(i) ? 'selected' : ''}">
+      <td><input type="checkbox" ${S.selectedSeqs.has(i) ? 'checked' : ''} onchange="toggleSeq(${i})"></td>
+      <td>${i + 1}</td>
+      <td style="max-width:200px;word-break:break-all;font-size:11px">${seq.header.substring(0, 80)}</td>
+      <td class="seq-cell">${seq.sequence.substring(0, 100)}${seq.sequence.length > 100 ? '…' : ''}</td>
+      <td class="score-cell">${score}</td>
+      <td class="actions-cell">
+        <button class="btn btn-sm btn-outline" onclick="copySeq(${i})">Copy</button>
+        <button class="btn btn-sm btn-outline" onclick="viewSeqIn3d(${i})">3D</button>
+      </td>
+    </tr>`;
+  });
+  body.innerHTML = html;
+
+  // Show result summary
+  const result = document.getElementById('mpnn-result');
+  result.classList.remove('error');
+  result.classList.add('visible');
+  document.getElementById('mpnn-body').innerHTML =
+    `<p>Designed <strong>${S.sequences.length}</strong> sequences. Select ones to validate in Step 3.</p>`;
+}
+
+function toggleSeq(idx) {
+  if (S.selectedSeqs.has(idx)) S.selectedSeqs.delete(idx);
+  else S.selectedSeqs.add(idx);
+  renderSequences();
+}
+
+function toggleAllSeqs(cb) {
+  S.sequences.forEach((_, i) => {
+    if (cb.checked) S.selectedSeqs.add(i);
+    else S.selectedSeqs.delete(i);
+  });
+  renderSequences();
+}
+
+function copySeq(idx) {
+  navigator.clipboard.writeText(S.sequences[idx].sequence).then(() => {
+    alert('Sequence copied to clipboard');
+  });
+}
+
+function viewSeqIn3d(idx) {
+  // For now, just show the backbone with the sequence highlighted
+  const bb = S.backbones[S.selectedBbIdx];
+  if (bb && bb.pdb) {
+    initViewer('mol-viewer', bb.pdb, 'cartoon');
+    goToStep(1);
+    switchViewer('backbone');
+  }
+}
+
+// ── Step 3: Validation with OpenFold3 ───────────────────────────
+async function validateSequences() {
+  if (S.selectedSeqs.size === 0) { alert('Select at least one sequence to validate'); return; }
+  if (!S.targetPdb) { alert('Target PDB not available'); return; }
+
+  const btn = document.getElementById('fold-btn');
+  btn.innerHTML = '<span class="spinner"></span> Folding…';
+  document.querySelector('#fold-btn').closest('.btn').disabled = true;
+
+  const status = document.getElementById('validation-status');
+  status.querySelector('p').textContent = `Validating ${S.selectedSeqs.size} design(s) with OpenFold3...`;
+
+  try {
+    const selected = S.sequences.filter((_, i) => S.selectedSeqs.has(i));
+
+    // Get target sequence from PDB
+    const targetSeq = extractSequenceFromPdb(S.targetPdb, S.targetChains[0] || 'A');
+
+    const results = [];
+    for (let i = 0; i < selected.length; i++) {
+      const seq = selected[i];
+      status.querySelector('p').textContent = `Validating design ${i + 1}/${selected.length}...`;
+
+      const payload = {
+        inputs: [{
+          input_id: `design_${i}`,
+          molecules: [
+            {
+              type: 'protein',
+              sequence: seq.sequence,
+              msa: {
+                main: {
+                  a3m: {
+                    alignment: `>query\n${seq.sequence}`,
+                    format: 'a3m',
+                  },
+                },
+              },
+            },
+            {
+              type: 'protein',
+              sequence: targetSeq,
+              msa: {
+                main: {
+                  a3m: {
+                    alignment: `>query\n${targetSeq}`,
+                    format: 'a3m',
+                  },
+                },
+              },
+            },
+          ],
+          output_format: 'pdb',
+        }],
+      };
+
+      const resp = await fetch('/api/openfold3/predict', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await resp.json();
+
+      if (!resp.ok) throw new Error(data.detail || 'OpenFold3 failed');
+
+      // Extract structure and scores from OpenFold3 response
+      const sws = data.outputs?.[0]?.structures_with_scores?.[0];
+      const structure = sws?.structure || '';
+      const plddt = extractPlddtScore(data) || extractPlddt(structure);
+      const iptm = extractIptm(data);
+
+      results.push({ origIdx: i, seq, structure, plddt, iptm });
+    }
+
+    renderValidationResults(results);
+    status.querySelector('p').textContent = `Validated ${results.length} design(s) successfully.`;
+  } catch (e) {
+    status.querySelector('p').textContent = `Validation error: ${e.message}`;
+    status.style.borderColor = 'var(--error)';
+  } finally {
+    btn.innerHTML = '🔬 Validate Selected (OpenFold3)';
+    document.querySelector('#fold-btn').closest('.btn').disabled = false;
+  }
+}
+
+function extractSequenceFromPdb(pdb, chain) {
+  const seq = {};
+  for (const line of pdb.split('\n')) {
+    if (line.startsWith('ATOM') && line.length > 26 && (!chain || line[21] === chain)) {
+      const resNum = line.substring(22, 27).trim();
+      const resName = line.substring(17, 20).trim();
+      if (!seq[resNum]) {
+        seq[resNum] = threeToOne(resName);
+      }
+    }
+  }
+  return Object.values(seq).join('');
+}
+
+function threeToOne(res) {
+  const map = {
+    'ALA':'A','ARG':'R','ASN':'N','ASP':'D','CYS':'C','GLN':'Q','GLU':'E',
+    'GLY':'G','HIS':'H','ILE':'I','LEU':'L','LYS':'K','MET':'M','PHE':'F',
+    'PRO':'P','SER':'S','THR':'T','TRP':'W','TYR':'Y','VAL':'V',
+    'MSE':'M',
+  };
+  return map[res] || 'X';
+}
+
+function extractPlddt(structure) {
+  // Parse average pLDDT from B-factor column in PDB
+  let sum = 0, count = 0;
+  for (const line of structure.split('\n')) {
+    if (line.startsWith('ATOM') && line.length > 60) {
+      const bfactor = parseFloat(line.substring(60, 66));
+      if (!isNaN(bfactor)) { sum += bfactor; count++; }
+    }
+  }
+  return count > 0 ? (sum / count).toFixed(1) : '—';
+}
+
+function extractIptm(data) {
+  const sws = data.outputs?.[0]?.structures_with_scores?.[0];
+  if (!sws) return '—';
+  if (sws.iptm_score !== undefined) return sws.iptm_score.toFixed(3);
+  if (sws.ptm_score !== undefined) return sws.ptm_score.toFixed(3);
+  if (sws.confidence_score !== undefined) return sws.confidence_score.toFixed(3);
+  return '—';
+}
+
+function extractPlddtScore(data) {
+  const sws = data.outputs?.[0]?.structures_with_scores?.[0];
+  if (sws?.complex_plddt_score !== undefined) return sws.complex_plddt_score.toFixed(1);
+  return null;
+}
+
+function renderValidationResults(results) {
+  S.validationResults = results;
+  const foldResult = document.getElementById('fold-result');
+  foldResult.classList.add('visible');
+
+  // Reset viewer
+  S.selectedValIdx = 0;
+  S.showDesigns = new Set();
+  updateOverlayViewer();
+
+  // Scores summary
+  const scoresDiv = document.getElementById('fold-scores');
+  const best = results.reduce((a, b) => {
+    const aScore = a.iptm !== '—' ? parseFloat(a.iptm) : 0;
+    const bScore = b.iptm !== '—' ? parseFloat(b.iptm) : 0;
+    return aScore >= bScore ? a : b;
+  }, results[0]);
+  scoresDiv.innerHTML = `
+    <div style="display:grid;grid-template-columns:auto 1fr;gap:4px 16px;font-size:14px">
+      <dt style="font-weight:600">Best ipTM</dt><dd>${best.iptm !== '—' ? best.iptm : 'N/A'}</dd>
+      <dt style="font-weight:600">Best pLDDT</dt><dd>${best.plddt !== '—' ? best.plddt : 'N/A'}</dd>
+      <dt style="font-weight:600">Designs validated</dt><dd>${results.length}</dd>
+    </div>
+  `;
+
+  // Table
+  const tableBody = document.getElementById('validation-table-body');
+  const sorted = [...results].sort((a, b) => {
+    const aS = a.iptm !== '—' ? parseFloat(a.iptm) : 0;
+    const bS = b.iptm !== '—' ? parseFloat(b.iptm) : 0;
+    return bS - aS;
+  });
+  let html = '';
+  sorted.forEach((r, i) => {
+    const rank = i + 1;
+    const prefix = r.seq.sequence.substring(0, 30);
+    const mpnnScore = r.seq.score !== null ? r.seq.score.toFixed(4) : '—';
+    const status = r.structure ? '<span class="badge badge-green">Validated</span>' : '<span class="badge badge-gray">Failed</span>';
+    const showChecked = S.showDesigns.has(r.origIdx);
+    html += `<tr class="${showChecked ? 'selected' : ''}">
+      <td><input type="checkbox" ${showChecked ? 'checked' : ''} onchange="toggleShowDesign(${r.origIdx})"></td>
+      <td><strong>#${rank}</strong></td>
+      <td>${r.seq.idx + 1}</td>
+      <td class="seq-cell">${prefix}…</td>
+      <td class="score-cell">${mpnnScore}</td>
+      <td>${r.plddt}</td>
+      <td>${r.iptm}</td>
+      <td>${status}</td>
+    </tr>`;
+  });
+  tableBody.innerHTML = html;
+  document.getElementById('validation-table').classList.add('visible');
+  markStepDone(3);
+}
+</script>
+</body>
+</html>
