@@ -176,7 +176,7 @@ print(token)
 4. For `langflow-agent-v1-5.json` you need to configure the MCP Server connection in Langflow, remember this is only available in AIE 1.12 and above. Therefore navigate within the Langflow settings to `MCP Servers` and select `Add MCP Server`
     - Type `Streamable HTTP/SSE`
     - Name `ezpresto`
-    - Streamable HTTP/SSE URL > take this from AIE navigating to Data Engineering > Data Sources > MCP Server
+    - Streamable HTTP/SSE URL > take this from AIE navigating to Data Engineering > Data Sources > MCP Server If you want to skip SSL verify, set this to the EzPresto MCP Server internal K8s service (e.g. `http://ezpresto-mcp-server.ezpresto-mcp-server.svc.cluster.local:9097/mcp`)
     - Headers `Authorization` `Bearer JWT Token` Set this JWT to your AI Essentials user token you saved in an earlier step (remember that by default these tokens expire after 30 minutes)
 5. Upload the [provided flow if using `Langflow 1.4.X`](langflow-agent-v1-4-localvectordb.json) into any project by clicking the upload button
     - if you want to use Presto MCP server use the Langflow 1.5.X either with [`passport`](langflow-agent-v1-5-passport-localvectordb-mcp.json) or  [`flight data`](langflow-agent-v1-5-localvectordb-mcp.json). 
