@@ -22,7 +22,7 @@
 ## 📄 Documentation
 
 For more detailed documentation, please refer to:
-- [Video Recording](https://hpe-my.sharepoint.com/:v:/p/jose-claudio_calderon/EWp593pDFZ5PmLWZzxoVSu8Bltbth0cbfHQH5IEnnQHpIA?e=28GF0A&referrer=Outlook.Win32&referrerScenario=email-linkwithoutembed)
+- [Video Recording](https://storage.googleapis.com/ai-solution-engineering-videos/public/Onboarding%20Buddy%20Recording.mp4)
 - [Confluence Page](https://github.com/user-attachments/files/21543757/CS-New.Hire.Onboarding.Assistant-260625-152208.pdf) (click to download it in PDF)
   - Better than this `README.md` for non-technical audience. 
 
