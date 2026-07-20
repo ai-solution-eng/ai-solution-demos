@@ -53,12 +53,12 @@ images:
   backend:
     repository: "fcaliva/realtime-voice-translation"
     pullPolicy: "IfNotPresent"
-    tag: "0.3.8"
+    tag: "0.3.9"
 
   frontend:
     repository: "fcaliva/realtime-voice-translation-fe"
     pullPolicy: "IfNotPresent"
-    tag: "0.3.8"
+    tag: "0.3.9"
 
 resources:
   backend:
