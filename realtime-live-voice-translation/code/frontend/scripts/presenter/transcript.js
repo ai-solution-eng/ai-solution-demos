@@ -12,6 +12,11 @@
     }
 
     function canDownloadAnything() {
+        // Disable while live conversation or recording is active.
+        // The download becomes available only after the user clicks "Stop live".
+        if (app.state.micStream) return false;
+        if (app.state.recordingActive) return false;
+        if (app.state.recordingState === "recording") return false;
         if (app.state.canDownloadPackage) return true;
         if (app.state.recordingSessionId) return true;
         return false;

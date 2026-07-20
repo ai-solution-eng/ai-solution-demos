@@ -308,6 +308,14 @@
         app.state.analyser = null;
 
         app.state.recordingActive = false;
+        // Reset recording state so the Stop button disables and the New Room
+        // guard unlocks. The server-side recording remains "paused" and is
+        // finalized when the next room is created (see createConfirmedNewRoom).
+        // We intentionally keep recordingSessionId so createConfirmedNewRoom
+        // can still finalize the previous room's audio.
+        if (app.state.recordingState === "paused" || app.state.recordingState === "recording") {
+            app.state.recordingState = "idle";
+        }
         syncPresenterRecordingUI();
 
         app.setStatus(statusText);
