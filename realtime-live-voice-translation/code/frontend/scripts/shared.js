@@ -154,3 +154,49 @@
         initFullscreenToggle();
     }
 })();
+
+(() => {
+    function initThemeToggle() {
+        const btn = document.getElementById("themeToggleBtn");
+        if (!btn) return;
+        const root = document.documentElement;
+
+        function current() {
+            return root.dataset.theme === "light" ? "light" : "dark";
+        }
+
+        function sync() {
+            const t = current();
+            btn.setAttribute("aria-pressed", String(t === "light"));
+            btn.setAttribute("aria-label", t === "light" ? "Switch to dark theme" : "Switch to light theme");
+        }
+
+        sync();
+
+        btn.addEventListener("click", (event) => {
+            event.stopPropagation();
+            const next = current() === "light" ? "dark" : "light";
+            root.dataset.theme = next;
+            try { localStorage.setItem("rt-theme", next); } catch (e) {}
+            sync();
+        });
+
+        try {
+            const mq = window.matchMedia("(prefers-color-scheme: light)");
+            if (typeof mq.addEventListener === "function") {
+                mq.addEventListener("change", (e) => {
+                    if (!localStorage.getItem("rt-theme")) {
+                        root.dataset.theme = e.matches ? "light" : "dark";
+                        sync();
+                    }
+                });
+            }
+        } catch (e) {}
+    }
+
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", initThemeToggle);
+    } else {
+        initThemeToggle();
+    }
+})();
