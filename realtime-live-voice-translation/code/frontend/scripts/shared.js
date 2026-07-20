@@ -116,3 +116,41 @@
         triggerBlobDownload
     });
 })();
+
+(() => {
+    function initFullscreenToggle() {
+        const box = document.querySelector(".translation-box");
+        const btn = document.getElementById("liveFullscreenBtn");
+        if (!box || !btn) return;
+
+        function setFullscreen(on) {
+            box.classList.toggle("is-fullscreen", on);
+            document.body.classList.toggle("fs-lock", on);
+            btn.setAttribute("aria-expanded", String(on));
+            btn.setAttribute("aria-label", on ? "Collapse live transcript" : "Expand live transcript");
+            btn.title = on ? "Exit fullscreen" : "Fullscreen";
+            if (!on) {
+                requestAnimationFrame(() => {
+                    const center = document.getElementById("center");
+                    if (center) center.scrollTo({ top: 0 });
+                });
+            }
+        }
+
+        btn.addEventListener("click", () => {
+            setFullscreen(!box.classList.contains("is-fullscreen"));
+        });
+
+        document.addEventListener("keydown", (e) => {
+            if (e.key === "Escape" && box.classList.contains("is-fullscreen")) {
+                setFullscreen(false);
+            }
+        });
+    }
+
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", initFullscreenToggle);
+    } else {
+        initFullscreenToggle();
+    }
+})();

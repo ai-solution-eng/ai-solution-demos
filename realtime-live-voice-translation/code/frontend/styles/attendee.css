@@ -770,3 +770,151 @@
                 font-size: clamp(22px, 7vw, 30px);
             }
         }
+
+        .fs-toggle {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 44px;
+            min-height: 44px;
+            padding: 10px;
+            border-radius: 999px;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            background: rgba(255, 255, 255, 0.06);
+            color: var(--text-soft);
+            cursor: pointer;
+            transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+            flex: 0 0 auto;
+        }
+
+        .fs-toggle:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: rgba(0, 199, 129, 0.35);
+            color: var(--brand);
+        }
+
+        .fs-toggle:focus-visible {
+            outline: 2px solid rgba(0, 199, 129, 0.4);
+            outline-offset: 2px;
+        }
+
+        .fs-icon-contract {
+            display: none;
+        }
+
+        body.fs-lock {
+            overflow: hidden;
+        }
+
+        .translation-box.is-fullscreen {
+            position: fixed;
+            inset: 0;
+            z-index: 9999;
+            border-radius: 0;
+            max-width: none;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            padding: clamp(16px, 3vw, 32px);
+            gap: clamp(12px, 2vw, 18px);
+        }
+
+        .translation-box.is-fullscreen .fs-icon-expand {
+            display: none;
+        }
+
+        .translation-box.is-fullscreen .fs-icon-contract {
+            display: block;
+        }
+
+        .translation-box.is-fullscreen .translation-heading {
+            flex: 0 0 auto;
+        }
+
+        .translation-box.is-fullscreen .translation-scroll {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow-y: auto;
+            overflow-x: hidden;
+            display: flex;
+            flex-direction: column;
+            justify-content: safe center;
+        }
+
+        .translation-box.is-fullscreen .stack {
+            max-width: 1400px;
+            width: 100%;
+            margin-block: auto;
+            margin-inline: auto;
+        }
+
+        .translation-box.is-fullscreen .pair {
+            padding: clamp(24px, 3vw, 36px);
+            border-radius: clamp(22px, 2.5vw, 32px);
+        }
+
+        .translation-box.is-fullscreen .pair-copy.original {
+            font-size: clamp(18px, 1.8vw, 26px);
+            line-height: 1.6;
+            margin-bottom: clamp(18px, 2vw, 26px);
+        }
+
+        .translation-box.is-fullscreen .pair-copy.translation {
+            font-size: clamp(32px, 4.5vw, 64px);
+            line-height: 1.15;
+        }
+
+        .translation-box.is-fullscreen .pair.previous .pair-copy.translation {
+            font-size: clamp(26px, 3.5vw, 44px);
+        }
+
+        .translation-box.is-fullscreen .pair-original-label,
+        .translation-box.is-fullscreen .pair-translation-label {
+            font-size: 13px;
+            margin-bottom: 10px;
+        }
+
+        @media (max-width: 768px) {
+            .translation-box.is-fullscreen {
+                padding: clamp(14px, 4vw, 20px);
+            }
+
+            .translation-box.is-fullscreen .pair-meta {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 6px;
+            }
+
+            .translation-box.is-fullscreen .pair-copy.translation {
+                font-size: clamp(26px, 8vw, 38px);
+            }
+        }
+
+        @media (max-width: 480px) {
+            .translation-box.is-fullscreen {
+                padding: 14px;
+            }
+
+            .translation-box.is-fullscreen .pair {
+                padding: 14px;
+            }
+
+            .translation-box.is-fullscreen .pair-copy.translation {
+                font-size: clamp(22px, 7vw, 30px);
+            }
+
+            .fs-toggle {
+                min-width: 48px;
+                min-height: 48px;
+            }
+        }
+
+        @media (orientation: landscape) and (max-height: 500px) {
+            .translation-box.is-fullscreen .translation-heading {
+                margin-bottom: 4px;
+            }
+
+            .translation-box.is-fullscreen .translation-label {
+                font-size: 10px;
+            }
+        }
