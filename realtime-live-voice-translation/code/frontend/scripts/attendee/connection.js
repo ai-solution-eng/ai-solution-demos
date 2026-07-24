@@ -61,6 +61,7 @@
                     refs.roomInputEl.value = app.state.roomId;
                     app.setRoomLabel();
                     app.setConnectionStatus("Connected", "connected");
+                    if (app.tts) app.tts.onRoomJoined(msg);
                     return;
                 }
                 if (msg.type === "room_state") {
@@ -72,6 +73,7 @@
                         refs.roomInputEl.value = msg.room_id;
                         app.setRoomLabel();
                     }
+                    if (app.tts) app.tts.onRoomState(msg);
                     app.syncRecordingUI();
                     return;
                 }
@@ -83,6 +85,7 @@
                     app.state.canDownloadPackage = !!msg.can_download_package;
                     refs.roomInputEl.value = app.state.roomId;
                     app.setRoomLabel();
+                    if (app.tts) app.tts.onRoomState(msg);
                     app.applySnapshot(msg.segments || []);
                     return;
                 }

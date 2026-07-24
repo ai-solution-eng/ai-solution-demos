@@ -88,6 +88,23 @@
             </div>
         </details>
 
+        <section class="tts-bar" id="ttsBar">
+            <button id="ttsMuteBtn" class="tts-mute-btn" type="button" aria-pressed="false" title="Toggle text-to-speech">
+                <svg class="tts-icon-muted" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                    <line x1="23" y1="9" x2="17" y2="15"/>
+                    <line x1="17" y1="9" x2="23" y2="15"/>
+                </svg>
+                <svg class="tts-icon-on" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                </svg>
+                <span class="tts-mute-label">TTS: Off</span>
+            </button>
+            <select id="ttsVoiceSelect" class="tts-voice-select" title="Select TTS voice"></select>
+            <button id="ttsManageBtn" class="btn-secondary tts-manage-btn" type="button">Manage voices</button>
+        </section>
+
         <section class="translation-box">
             <div class="translation-heading">
                 <div>
@@ -141,12 +158,44 @@
         </div>
     </div>
 
+    <div id="ttsVoiceModal" class="tts-modal" hidden>
+        <div class="tts-modal-card">
+            <div class="tts-modal-header">
+                <span class="tts-modal-title">Voice Profiles</span>
+                <button id="ttsModalCloseBtn" class="tts-modal-close" type="button">&times;</button>
+            </div>
+            <div class="tts-modal-body">
+                <div class="tts-upload-section">
+                    <div class="tts-upload-title">Add a voice profile</div>
+                    <label for="ttsVoiceNameInput" class="tts-field-label">Voice name</label>
+                    <input id="ttsVoiceNameInput" class="tts-field-input" type="text" placeholder="type voice name to begin" />
+                    <label for="ttsConsentCheck" class="tts-consent-row">
+                        <input id="ttsConsentCheck" type="checkbox" />
+                        <span>I confirm I have the speaker's consent to clone this voice.</span>
+                    </label>
+                    <div class="tts-upload-buttons">
+                        <button id="ttsUploadFileBtn" class="btn-secondary" type="button" disabled>Upload audio file</button>
+                        <button id="ttsRecordBtn" class="btn-secondary" type="button" disabled>Record voice</button>
+                    </div>
+                    <input id="ttsFileInput" type="file" accept="audio/*" hidden />
+                    <div id="ttsRecordBar" class="tts-record-bar" hidden>
+                        <span class="tts-record-dot"></span>
+                        <span id="ttsRecordStatus" class="tts-record-status">Recording...</span>
+                    </div>
+                </div>
+                <hr class="tts-divider" />
+                <div class="tts-voice-list" id="ttsVoiceList"></div>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="./frontend/scripts/shared.js"></script>
     <script src="./frontend/scripts/shared-transcript.js"></script>
     <script src="./frontend/scripts/shared-export.js"></script>
     <script src="./frontend/scripts/attendee/core.js"></script>
     <script src="./frontend/scripts/attendee/transcript.js"></script>
+    <script src="./frontend/scripts/attendee/tts.js"></script>
     <script src="./frontend/scripts/attendee/export.js"></script>
     <script src="./frontend/scripts/attendee/connection.js"></script>
     <script src="./frontend/scripts/attendee.js"></script>

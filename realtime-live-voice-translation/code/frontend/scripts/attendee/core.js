@@ -26,7 +26,20 @@
         exportBarEl: document.getElementById("exportBar"),
         exportStageEl: document.getElementById("exportStage"),
         exportDetailEl: document.getElementById("exportDetail"),
-        exportPercentEl: document.getElementById("exportPercent")
+        exportPercentEl: document.getElementById("exportPercent"),
+        ttsBarEl: document.getElementById("ttsBar"),
+        ttsMuteBtnEl: document.getElementById("ttsMuteBtn"),
+        ttsVoiceSelectEl: document.getElementById("ttsVoiceSelect"),
+        ttsManageBtnEl: document.getElementById("ttsManageBtn"),
+        ttsVoiceModalEl: document.getElementById("ttsVoiceModal"),
+        ttsModalCloseBtnEl: document.getElementById("ttsModalCloseBtn"),
+        ttsVoiceListEl: document.getElementById("ttsVoiceList"),
+        ttsVoiceNameInputEl: document.getElementById("ttsVoiceNameInput"),
+        ttsConsentCheckEl: document.getElementById("ttsConsentCheck"),
+        ttsUploadFileBtnEl: document.getElementById("ttsUploadFileBtn"),
+        ttsRecordBtnEl: document.getElementById("ttsRecordBtn"),
+        ttsFileInputEl: document.getElementById("ttsFileInput"),
+        ttsRecordStatusEl: document.getElementById("ttsRecordStatus")
     };
 
     const HTTP_BASE = shared.resolveBackendHttpBase();
@@ -47,7 +60,11 @@
             canDownloadPackage: false,
             connected: false,
             joinRejected: false,
-            segments: []
+            segments: [],
+            ttsMuted: true,
+            ttsVoice: "",
+            ttsDefaultVoice: "",
+            ttsConfigured: false
         }
     };
 

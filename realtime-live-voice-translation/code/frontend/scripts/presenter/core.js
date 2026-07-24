@@ -36,6 +36,21 @@
         exportDetailEl: document.getElementById("exportDetail"),
         exportPercentEl: document.getElementById("exportPercent"),
         toggleKeysBtnLLM: document.getElementById("toggleKeysBtnLLM"),
+        ttsModelEl: document.getElementById("ttsModel"),
+        ttsBaseUrlEl: document.getElementById("ttsBaseUrl"),
+        ttsApiKeyEl: document.getElementById("ttsApiKey"),
+        ttsVoiceEl: document.getElementById("ttsVoice"),
+        ttsManageBtnEl: document.getElementById("ttsManageBtn"),
+        ttsVoiceModalEl: document.getElementById("ttsVoiceModal"),
+        ttsModalCloseBtnEl: document.getElementById("ttsModalCloseBtn"),
+        ttsVoiceListEl: document.getElementById("ttsVoiceList"),
+        ttsVoiceNameInputEl: document.getElementById("ttsVoiceNameInput"),
+        ttsConsentCheckEl: document.getElementById("ttsConsentCheck"),
+        ttsUploadFileBtnEl: document.getElementById("ttsUploadFileBtn"),
+        ttsRecordBtnEl: document.getElementById("ttsRecordBtn"),
+        ttsFileInputEl: document.getElementById("ttsFileInput"),
+        ttsRecordStatusEl: document.getElementById("ttsRecordStatus"),
+        ttsWaveCanvasEl: document.getElementById("ttsWaveCanvas"),
         recordingBannerEl: document.getElementById("recordingBanner"),
         recordModalEl: document.getElementById("recordConsentModal"),
         recordAcknowledgeBtn: document.getElementById("recordAcknowledgeBtn"),
@@ -258,8 +273,13 @@
             if (defaults.llm?.base_url) refs.llmBaseUrlEl.value = defaults.llm.base_url;
             if (defaults.llm?.model) refs.llmModelEl.value = defaults.llm.model;
 
+            if (defaults.tts?.base_url) refs.ttsBaseUrlEl.value = defaults.tts.base_url;
+            if (defaults.tts?.model) refs.ttsModelEl.value = defaults.tts.model;
+            if (defaults.tts?.voice) refs.ttsVoiceEl.value = defaults.tts.voice;
+
             if (defaults.asr?.has_api_key) refs.asrApiKeyEl.placeholder = "ASR_API_KEY (set on server)";
             if (defaults.llm?.has_api_key) refs.llmApiKeyEl.placeholder = "LLM_API_KEY (set on server)";
+            if (defaults.tts?.has_api_key) refs.ttsApiKeyEl.placeholder = "TTS_API_KEY (set on server)";
         } catch (error) {
             console.warn("Could not load defaults:", error);
         }
@@ -270,6 +290,7 @@
 
         const asrKey = refs.asrApiKeyEl.value.trim();
         const llmKey = refs.llmApiKeyEl.value.trim();
+        const ttsKey = refs.ttsApiKeyEl.value.trim();
 
         const payload = {
             type: "config",
@@ -282,11 +303,17 @@
             llm: {
                 base_url: refs.llmBaseUrlEl.value.trim(),
                 model: refs.llmModelEl.value.trim()
+            },
+            tts: {
+                base_url: refs.ttsBaseUrlEl.value.trim(),
+                model: refs.ttsModelEl.value.trim(),
+                voice: refs.ttsVoiceEl.value.trim()
             }
         };
 
         if (asrKey) payload.asr.api_key = asrKey;
         if (llmKey) payload.llm.api_key = llmKey;
+        if (ttsKey) payload.tts.api_key = ttsKey;
 
         app.state.ws.send(JSON.stringify(payload));
     };

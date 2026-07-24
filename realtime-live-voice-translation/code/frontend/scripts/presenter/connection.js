@@ -86,6 +86,12 @@
                         app.updateRoomBadge();
                         app.setPresenterRoomInputValue(msg.room_id);
                     }
+                    if (app.tts && msg.tts && msg.tts.voice) {
+                        refs.ttsVoiceEl.value = msg.tts.voice;
+                    }
+                    if (app.tts && app.tts.loadVoices) {
+                        app.tts.loadVoices();
+                    }
                     return;
                 }
                 if (msg.type !== "segment") return;

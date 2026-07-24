@@ -10,6 +10,7 @@ from app.routes.exports import router as exports_router
 from app.routes.health import router as health_router
 from app.routes.recordings import router as recordings_router
 from app.routes.rooms import router as rooms_router
+from app.routes.tts import router as tts_router
 from app.services.cleanup import cleanup_expired_persisted_state, periodic_cleanup_loop
 from app.services.recovery import recover_persisted_rooms
 
@@ -49,4 +50,5 @@ app.include_router(health_router)
 app.include_router(rooms_router)
 app.include_router(recordings_router)
 app.include_router(exports_router)
+app.include_router(tts_router)
 app.include_router(websocket_router)

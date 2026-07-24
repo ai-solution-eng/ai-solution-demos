@@ -16,6 +16,17 @@ env:
   LLM_BASE_URL: MLIS_MODEL_ENDPOINT/v1
   LLM_API_KEY: MLIS_MODEL_API_KEY
   LLM_MODEL: Qwen/Qwen3-30B-A3B-Instruct-2507-FP8
+  # ============================================================
+  # TTS model configuration for attendee text-to-speech
+  # ============================================================
+  TTS_BASE_URL: MLIS_MODEL_ENDPOINT/v1
+  TTS_API_KEY: MLIS_MODEL_API_KEY
+  TTS_MODEL: fishaudio/s2-pro
+  TTS_VOICE: alys
+  # ============================================================
+  # ASR hallucination filter patterns (comma-separated)
+  # ============================================================
+  HALLUCINATION_PATTERNS: "you,thank you,thanks,продолжение следует"
 
 persistence:
   enabled: true
@@ -53,12 +64,12 @@ images:
   backend:
     repository: "fcaliva/realtime-voice-translation"
     pullPolicy: "IfNotPresent"
-    tag: "0.4.1"
+    tag: "0.5.0"
 
   frontend:
     repository: "fcaliva/realtime-voice-translation-fe"
     pullPolicy: "IfNotPresent"
-    tag: "0.4.4"
+    tag: "0.5.0"
 
 resources:
   backend:

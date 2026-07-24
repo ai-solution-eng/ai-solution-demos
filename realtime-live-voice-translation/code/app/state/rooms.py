@@ -77,6 +77,9 @@ def build_room_state(room_id: str) -> dict[str, Any]:
         "presenter_tgt": cfg["tgt"],
         "asr": dict(cfg["asr"]),
         "llm": dict(cfg["llm"]),
+        "tts": dict(cfg["tts"]),
+        "tts_default_voice": cfg["tts"].get("voice") or "",
+        "tts_cache": None,
         "segments": [],
         "segment_index": {},
         "connections": [],
@@ -186,6 +189,8 @@ def serialize_room_state(room: dict[str, Any]) -> dict[str, Any]:
         "recording_state": room.get("recording_state") or "idle",
         "recording_session_id": room.get("recording_session_id") or "",
         "can_download_package": room_can_download(room),
+        "tts_default_voice": room.get("tts_default_voice") or "",
+        "tts_configured": bool((room.get("tts") or {}).get("base_url")),
     }
 
 

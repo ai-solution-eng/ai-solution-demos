@@ -486,6 +486,8 @@ async def websocket_endpoint(websocket: WebSocket):
                             "room_id": room_id,
                             "src": cfg["src"],
                             "tgt": cfg["tgt"] if role == "presenter" else attendee_target_language,
+                            "tts_default_voice": room.get("tts_default_voice") or "",
+                            "tts_configured": bool((room.get("tts") or {}).get("base_url")),
                         }
                     )
                     await send_json(serialize_room_state(room))
@@ -528,6 +530,21 @@ async def websocket_endpoint(websocket: WebSocket):
                         if l.get("model") is not None:
                             cfg["llm"]["model"] = str(l.get("model") or "").strip()
 
+                    t = payload.get("tts") or {}
+                    if isinstance(t, dict):
+                        if t.get("base_url") is not None:
+                            new_url = str(t.get("base_url") or "").strip()
+                            if new_url:
+                                cfg["tts"]["base_url"] = new_url
+                        if t.get("api_key") is not None:
+                            new_key = str(t.get("api_key") or "").strip()
+                            if new_key:
+                                cfg["tts"]["api_key"] = new_key
+                        if t.get("model") is not None:
+                            cfg["tts"]["model"] = str(t.get("model") or "").strip()
+                        if t.get("voice") is not None:
+                            cfg["tts"]["voice"] = str(t.get("voice") or "").strip()
+
                     asr_client = make_client(cfg["asr"]["base_url"], cfg["asr"]["api_key"])
                     llm_client = make_client(cfg["llm"]["base_url"], cfg["llm"]["api_key"])
 
@@ -538,6 +555,8 @@ async def websocket_endpoint(websocket: WebSocket):
                             room["presenter_tgt"] = cfg["tgt"]
                             room["asr"] = dict(cfg["asr"])
                             room["llm"] = dict(cfg["llm"])
+                            room["tts"] = dict(cfg["tts"])
+                            room["tts_default_voice"] = cfg["tts"].get("voice") or ""
                             room["updated_at"] = time.time()
 
                     session_epoch += 1
@@ -555,6 +574,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             "tgt": cfg["tgt"],
                             "asr": {"base_url": cfg["asr"]["base_url"], "model": cfg["asr"]["model"]},
                             "llm": {"base_url": cfg["llm"]["base_url"], "model": cfg["llm"]["model"]},
+                            "tts": {"base_url": cfg["tts"]["base_url"], "model": cfg["tts"]["model"], "voice": cfg["tts"]["voice"]},
                         }
                     )
                     await broadcast_room_state(room_id)
@@ -577,6 +597,23 @@ async def websocket_endpoint(websocket: WebSocket):
                                     break
                             room["updated_at"] = time.time()
                     await send_snapshot_to_current_client()
+                    continue
+
+                if payload.get("type") == "tts_config":
+                    if not room_id:
+                        continue
+                    muted = bool(payload.get("muted"))
+                    voice = str(payload.get("voice") or "").strip()
+                    async with ROOMS_LOCK:
+                        room = ROOMS.get(room_id)
+                        if room is not None:
+                            for connection in room.get("connections") or []:
+                                if connection.get("websocket") is websocket:
+                                    connection["tts_muted"] = muted
+                                    if voice:
+                                        connection["tts_voice"] = voice
+                                    break
+                            room["updated_at"] = time.time()
                     continue
 
                 if payload.get("type") == "recording_boundary":

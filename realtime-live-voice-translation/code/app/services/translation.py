@@ -7,6 +7,7 @@ from app.audio.ffmpeg import rms_dbfs, wav_bytesio_from_pcm16
 from app.config import (
     DEFAULT_SOURCE_LANGUAGE,
     DEFAULT_TARGET_LANGUAGE,
+    HALLUCINATION_SET,
     LIVE_CONTEXT_TURNS,
     MIN_AUDIO_MS,
     MIN_SEND_TEXT_CHARS,
@@ -59,6 +60,7 @@ async def transcribe_snapshot(
     src: str,
     asr_client: AsyncOpenAI,
     asr_model: str,
+    hallucination_set: set[str] = HALLUCINATION_SET,
 ) -> str:
     duration_ms = len(pcm16_sentence) * 1000 / SAMPLE_RATE
     if duration_ms < MIN_AUDIO_MS:
@@ -81,6 +83,16 @@ async def transcribe_snapshot(
 
     source_language_text = (getattr(transcript_resp, "text", "") or "").strip()
     if len(source_language_text) <= MIN_SEND_TEXT_CHARS:
+        return ""
+
+    normalized = source_language_text.lower()
+
+    if hallucination_set and normalized in hallucination_set:
+        print(f"Hallucination filtered: '{source_language_text}'")
+        return ""
+
+    if normalized.startswith("*") and normalized.endswith("*"):
+        print(f"Sound effect filtered: '{source_language_text}'")
         return ""
 
     return source_language_text

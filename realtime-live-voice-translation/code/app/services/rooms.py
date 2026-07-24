@@ -18,6 +18,16 @@ from app.state.rooms import (
 )
 
 
+async def update_room_tts_default_voice(room_id: str, *, voice: str) -> None:
+    normalized = normalize_room_id(room_id)
+    async with ROOMS_LOCK:
+        room = ROOMS.get(normalized)
+        if room is None:
+            return
+        room["tts_default_voice"] = (voice or "").strip()
+        room["updated_at"] = time.time()
+
+
 async def register_room_connection(
     room_id: str,
     *,

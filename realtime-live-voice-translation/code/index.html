@@ -184,6 +184,14 @@
                             <input id="llmApiKey" type="password" placeholder="LLM_API_KEY" />
                             <button id="toggleKeysBtnLLM" type="button" class="btn-secondary">Show key</button>
                         </div>
+
+                        <div class="controls-row param-row tts-row">
+                            <input id="ttsModel" placeholder="TTS_MODEL" />
+                            <input id="ttsBaseUrl" placeholder="TTS_BASE_URL" />
+                            <input id="ttsApiKey" type="password" placeholder="TTS_API_KEY" />
+                            <select id="ttsVoice"></select>
+                            <button id="ttsManageBtn" class="btn-secondary" type="button">Voices</button>
+                        </div>
                     </div>
                 </details>
             </div>
@@ -273,6 +281,38 @@
     </div>
 
     <pre id="log"></pre>
+
+    <div id="ttsVoiceModal" class="tts-modal" hidden>
+        <div class="tts-modal-card">
+            <div class="tts-modal-header">
+                <span class="tts-modal-title">Voice Profiles</span>
+                <button id="ttsModalCloseBtn" class="tts-modal-close" type="button">&times;</button>
+            </div>
+            <div class="tts-modal-body">
+                <div class="tts-upload-section">
+                    <div class="tts-upload-title">Add a voice profile</div>
+                    <label for="ttsVoiceNameInput" class="tts-field-label">Voice name</label>
+                    <input id="ttsVoiceNameInput" class="tts-field-input" type="text" placeholder="type voice name to begin" />
+                    <label for="ttsConsentCheck" class="tts-consent-row">
+                        <input id="ttsConsentCheck" type="checkbox" />
+                        <span>I confirm I have the speaker's consent to clone this voice.</span>
+                    </label>
+                    <div class="tts-upload-buttons">
+                        <button id="ttsUploadFileBtn" class="btn-secondary" type="button" disabled>Upload audio file</button>
+                        <button id="ttsRecordBtn" class="btn-secondary" type="button" disabled>Record voice</button>
+                    </div>
+                    <input id="ttsFileInput" type="file" accept="audio/*" hidden />
+                    <div id="ttsRecordBar" class="tts-record-bar" hidden>
+                        <canvas id="ttsWaveCanvas" class="tts-wave-canvas" width="400" height="50"></canvas>
+                        <span class="tts-record-dot"></span>
+                        <span id="ttsRecordStatus" class="tts-record-status">Recording...</span>
+                    </div>
+                </div>
+                <hr class="tts-divider" />
+                <div class="tts-voice-list" id="ttsVoiceList"></div>
+            </div>
+        </div>
+    </div>
     <script src="./frontend/scripts/shared.js"></script>
     <script src="./frontend/scripts/shared-transcript.js"></script>
     <script src="./frontend/scripts/shared-export.js"></script>
@@ -281,6 +321,7 @@
     <script src="./frontend/scripts/presenter/transcript.js"></script>
     <script src="./frontend/scripts/presenter/export.js"></script>
     <script src="./frontend/scripts/presenter/recording.js"></script>
+    <script src="./frontend/scripts/presenter/tts.js"></script>
     <script src="./frontend/scripts/presenter/connection.js"></script>
     <script src="./frontend/scripts/presenter.js"></script>
 </body>

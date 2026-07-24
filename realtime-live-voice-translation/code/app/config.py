@@ -33,6 +33,11 @@ DEFAULT_LLM_BASE_URL = os.getenv("LLM_BASE_URL", "")
 DEFAULT_LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 DEFAULT_LLM_MODEL = os.getenv("LLM_MODEL", "Qwen/Qwen3-30B-A3B-Instruct-2507-FP8")
 
+DEFAULT_TTS_BASE_URL = os.getenv("TTS_BASE_URL", "")
+DEFAULT_TTS_API_KEY = os.getenv("TTS_API_KEY", "")
+DEFAULT_TTS_MODEL = os.getenv("TTS_MODEL", "fishaudio/s2-pro")
+DEFAULT_TTS_VOICE = os.getenv("TTS_VOICE", "alys")
+
 DEFAULT_SOURCE_LANGUAGE = os.getenv("SOURCE_LANGUAGE", "en")
 DEFAULT_TARGET_LANGUAGE = os.getenv("TARGET_LANGUAGE", "es")
 
@@ -115,6 +120,20 @@ LIVE_MIN_PARTIAL_AUDIO_MS = max(
 LIVE_CONTEXT_TURNS = max(0, int(os.getenv("LIVE_CONTEXT_TURNS", "3")))
 
 
+HALLUCINATION_PATTERNS = os.getenv(
+    "HALLUCINATION_PATTERNS",
+    "thank you,thanks,продолжение следует",
+)
+
+
+def build_hallucination_set(patterns: str) -> set[str]:
+    base = {x.strip().lower() for x in (patterns or "").split(",") if x.strip()}
+    return base | {f"{x}." for x in base} | {f"{x}!" for x in base}
+
+
+HALLUCINATION_SET: set[str] = build_hallucination_set(HALLUCINATION_PATTERNS)
+
+
 def build_default_runtime_config() -> dict[str, object]:
     return {
         "src": DEFAULT_SOURCE_LANGUAGE,
@@ -128,6 +147,12 @@ def build_default_runtime_config() -> dict[str, object]:
             "base_url": DEFAULT_LLM_BASE_URL,
             "api_key": DEFAULT_LLM_API_KEY,
             "model": DEFAULT_LLM_MODEL,
+        },
+        "tts": {
+            "base_url": DEFAULT_TTS_BASE_URL,
+            "api_key": DEFAULT_TTS_API_KEY,
+            "model": DEFAULT_TTS_MODEL,
+            "voice": DEFAULT_TTS_VOICE,
         },
     }
 
@@ -145,6 +170,12 @@ def build_defaults_payload() -> dict[str, object]:
             "base_url": DEFAULT_LLM_BASE_URL,
             "model": DEFAULT_LLM_MODEL,
             "has_api_key": bool(DEFAULT_LLM_API_KEY),
+        },
+        "tts": {
+            "base_url": DEFAULT_TTS_BASE_URL,
+            "model": DEFAULT_TTS_MODEL,
+            "voice": DEFAULT_TTS_VOICE,
+            "has_api_key": bool(DEFAULT_TTS_API_KEY),
         },
         "export": {
             "chunk_seconds": EXPORT_CHUNK_SECONDS,

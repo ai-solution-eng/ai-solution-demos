@@ -4,7 +4,11 @@
     const transcriptUi = window.RealtimeTranslationTranscript;
 
     function upsertSegment(segment) {
+        const wasFinal = app.state.segments.find(s => s.segment_id === segment.segment_id)?.is_final;
         transcriptUi.upsertSegment(app.state.segments, segment);
+        if (!wasFinal && segment.is_final && app.tts) {
+            app.tts.handleFinalSegment(segment);
+        }
     }
 
     function applySnapshot(segments) {
