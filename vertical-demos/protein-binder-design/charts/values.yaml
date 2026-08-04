@@ -18,21 +18,21 @@ proxy:
   enabled: false
   env:
     - name: HTTP_PROXY
-      value: http://hpeproxy.its.hpecorp.net:8080
+      value: ""
     - name: http_proxy
-      value: http://hpeproxy.its.hpecorp.net:8080
+      value: ""
     - name: HTTPS_PROXY
-      value: http://hpeproxy.its.hpecorp.net:8080
+      value: ""
     - name: https_proxy
-      value: http://hpeproxy.its.hpecorp.net:8080
+      value: ""
 
 no_proxy:
   enabled: false
   env:
     - name: NO_PROXY
-      value: .cluster.local,.svc,.svc.cluster,.svc.cluster.local,10.0.0.0/8,10.96.0.1,127.0.0.1,172.0.0.0/8,localhost,hpecolo.net,.hpecolo.net
+      value: ""
     - name: no_proxy
-      value: .cluster.local,.svc,.svc.cluster,.svc.cluster.local,10.0.0.0/8,10.96.0.1,127.0.0.1,172.0.0.0/8,localhost,hpecolo.net,.hpecolo.net
+      value: ""
 
 
 
@@ -69,54 +69,4 @@ ezua:
 # ============================================================
 certificatesPolicy:
   enabled: false
-
-  env:
-    - name: SSL_CERT_DIR
-      value: /etc/ssl/certs
-    - name: REQUESTS_CA_BUNDLE
-      value: /tmp/certs/ca-certificates.crt
-    - name: SSL_CERT_FILE
-      value: /tmp/certs/ca-certificates.crt
-    - name: CURL_CA_BUNDLE
-      value: /tmp/certs/ca-certificates.crt
-
-  initContainer:
-    image: alpine:3.20
-    command:
-      - /bin/sh
-      - -c
-      - |
-        set -e
-        if [ -f /etc/ssl/certs/ca-certificates.crt ]; then
-          cp /etc/ssl/certs/ca-certificates.crt /work/ca-certificates.crt
-        elif [ -f /etc/ssl/certs/ca-bundle.crt ]; then
-          cp /etc/ssl/certs/ca-bundle.crt /work/ca-certificates.crt
-        else
-          echo "No base CA bundle found in init container"
-          exit 1
-        fi
-        cat /config/ezaf-root-ca.crt >> /work/ca-certificates.crt
-        echo "" >> /work/ca-certificates.crt
-
-  initVolumeMounts:
-    - name: combined-certs
-      mountPath: /work
-    - name: ezaf-root-ca
-      mountPath: /config/ezaf-root-ca.crt
-      subPath: ca-certificates.crt
-      readOnly: true
-
-  volumeMounts:
-    - name: combined-certs
-      mountPath: /tmp/certs
-      readOnly: false
-
-  volumes:
-    - name: combined-certs
-      emptyDir: {}
-    - name: ezaf-root-ca
-      configMap:
-        name: ezaf-root-ca
-        items:
-          - key: ezaf-root-ca.crt
-            path: ca-certificates.crt
+  env: []

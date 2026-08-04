@@ -66,7 +66,11 @@ async def _nvidia_post(path: str, payload: dict, timeout: int = 600):
 
 @app.get("/")
 async def root():
-    return FileResponse("static/index.html")
+    return FileResponse("static/index.html", headers={
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    })
 
 def _parse_pdb_ranges(pdb_text: str) -> dict:
     """Parse PDB to find chains and their continuous residue ranges."""
