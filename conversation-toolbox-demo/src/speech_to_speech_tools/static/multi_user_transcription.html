@@ -1,0 +1,1134 @@
+<!-- static/multi_user_transcription.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <title>Multi-User Transcription</title>
+    <style>
+        :root {
+            --primary: #01A982;
+            --primary-dark: #008567;
+            --success: #01A982;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+            --bg: #f5f7fa;
+            --surface: #ffffff;
+            --text: #1a1a1a;
+            --text-muted: #5e6b7a;
+            --border: #d4dce6;
+            --hpe-green: #01A982;
+            --hpe-dark: #1a1a1a;
+        }
+
+        [data-theme="dark"] {
+            --bg: #0f172a;
+            --surface: #1e293b;
+            --text: #e2e8f0;
+            --text-muted: #94a3b8;
+            --border: #334155;
+            --hpe-dark: #0a0f1e;
+        }
+        [data-theme="dark"] .share-info { background: #422006; }
+        [data-theme="dark"] .config-info { background: #1e3a5f; }
+        [data-theme="dark"] .transcript-entry.user-1 { background: #3b1f6e; }
+        [data-theme="dark"] .transcript-entry.user-2 { background: #1e3a5f; }
+        [data-theme="dark"] .transcript-entry.user-3 { background: #064e3b; }
+        [data-theme="dark"] .transcript-entry.user-4 { background: #422006; }
+        [data-theme="dark"] .transcript-entry.user-5 { background: #6b2143; }
+        
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, var(--hpe-green), var(--primary-dark));
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .header h1 { font-size: 1.5rem; margin-bottom: 8px; }
+        .header p { opacity: 0.9; font-size: 0.9rem; }
+        
+        @font-face {
+            font-family: 'MetricHPE';
+            src: local('MetricHPE'), local('Metric HPE'), local('Arial');
+        }
+        
+        body {
+            font-family: 'MetricHPE', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+        
+        .nav {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 0 24px;
+            background: var(--hpe-dark);
+            height: 48px;
+        }
+        .nav-brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-right: 16px;
+            text-decoration: none;
+            color: white;
+            font-weight: 600;
+            font-size: 0.85rem;
+            letter-spacing: 0.02em;
+            padding: 4px 0;
+            white-space: nowrap;
+        }
+        .nav-brand .hpe-element {
+            display: inline-block;
+            width: 18px;
+            height: 18px;
+            background: var(--hpe-green);
+            clip-path: polygon(25% 0%, 100% 0%, 75% 100%, 0% 100%);
+            flex-shrink: 0;
+        }
+        .nav a {
+            padding: 8px 14px;
+            border-radius: 6px;
+            text-decoration: none;
+            color: rgba(255,255,255,0.75);
+            font-weight: 500;
+            font-size: 0.8rem;
+            transition: all 0.15s;
+            white-space: nowrap;
+        }
+        .nav a:hover { background: rgba(255,255,255,0.1); color: white; }
+        .nav a.active { background: var(--hpe-green); color: white; }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .card {
+            background: var(--surface);
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            margin-bottom: 20px;
+        }
+        
+        .card h2 {
+            font-size: 1.1rem;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .session-controls {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+        
+        .input-group {
+            display: flex;
+            gap: 8px;
+            flex: 1;
+            min-width: 250px;
+        }
+        
+        .input-group input {
+            flex: 1;
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 0.95rem;
+        }
+        
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-primary:hover { background: var(--primary-dark); }
+        .btn-success { background: var(--success); color: white; }
+        .btn-danger { background: var(--danger); color: white; }
+        .btn-secondary { background: var(--bg); color: var(--text); border: 1px solid var(--border); }
+        
+        .users-panel {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .user-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            background: var(--bg);
+            border-radius: 20px;
+            font-size: 0.9rem;
+        }
+        
+        .user-badge .dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--text-muted);
+        }
+        
+        .user-badge.connected .dot { background: var(--success); }
+        .user-badge.speaking .dot {
+            animation: pulse 0.5s infinite;
+            background: var(--primary);
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        
+        .transcript-container {
+            height: 400px;
+            overflow-y: auto;
+            background: var(--bg);
+            border-radius: 8px;
+            padding: 16px;
+        }
+        
+        .transcript-entry {
+            margin-bottom: 12px;
+            padding: 12px 16px;
+            border-radius: 8px;
+            animation: fadeIn 0.3s ease;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .transcript-entry .timestamp {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+        }
+        
+        .transcript-entry .speaker {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        
+        .transcript-entry .text {
+            line-height: 1.5;
+        }
+        
+        .transcript-entry.user-1 { background: #ede9fe; }
+        .transcript-entry.user-2 { background: #dbeafe; }
+        .transcript-entry.user-3 { background: #dcfce7; }
+        .transcript-entry.user-4 { background: #fef3c7; }
+        .transcript-entry.user-5 { background: #fce7f3; }
+        
+        .status-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            background: var(--surface);
+            border-radius: 8px;
+            margin-bottom: 16px;
+            font-size: 0.9rem;
+            border: 1px solid var(--border);
+        }
+        
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: var(--text-muted);
+        }
+        
+        .status-dot.connected { background: var(--success); }
+        .status-dot.listening { 
+            background: var(--primary); 
+            animation: pulse 1s infinite;
+        }
+        
+        .status-dot.speech-detected {
+            background: var(--danger);
+            animation: pulse 0.3s infinite;
+        }
+        
+        .visualizer {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 3px;
+            height: 40px;
+            margin: 10px 0;
+        }
+        
+        .bar {
+            width: 4px;
+            background: var(--primary);
+            border-radius: 2px;
+            height: 5px;
+            transition: height 0.08s ease-out;
+        }
+        
+        .vad-status {
+            display: flex;
+            gap: 16px;
+            justify-content: center;
+            padding: 8px;
+            background: var(--bg);
+            border-radius: 8px;
+            margin-bottom: 16px;
+            font-size: 0.85rem;
+        }
+        
+        .vad-status span {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .vad-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--text-muted);
+        }
+        
+        .vad-indicator.active { background: var(--success); }
+        .vad-indicator.speech { background: var(--danger); animation: pulse 0.3s infinite; }
+        
+        .toast-container {
+            position: fixed;
+            top: 80px;
+            right: 20px;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        
+        .toast {
+            padding: 12px 20px;
+            border-radius: 8px;
+            background: var(--surface);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            animation: slideIn 0.3s ease;
+        }
+        
+        .toast.success { border-left: 4px solid var(--success); }
+        .toast.error { border-left: 4px solid var(--danger); }
+        .toast.info { border-left: 4px solid var(--primary); }
+        
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        
+        .share-info {
+            background: #fef3c7;
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        
+        .share-info h3 {
+            font-size: 0.95rem;
+            margin-bottom: 8px;
+        }
+        
+        .session-link {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        
+        .session-link input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-family: monospace;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-muted);
+        }
+        
+        .empty-state .icon {
+            font-size: 3rem;
+            margin-bottom: 16px;
+        }
+        
+        .config-info {
+            background: #e0e7ff;
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 0.9rem;
+        }
+        
+        .config-info strong {
+            color: var(--primary-dark);
+        }
+    </style>
+    <script>if(localStorage.getItem('dark-mode')==='true')document.documentElement.setAttribute('data-theme','dark')</script>
+</head>
+<body>
+    <nav class="nav">
+        <a href="/" class="nav-brand">
+            <span class="hpe-element"></span>
+            <span>Hewlett Packard Enterprise</span>
+        </a>
+        <a href="/">Voice Assistant</a>
+        <a href="/voice-profiles">Voice Profiles</a>
+        <a href="/multi-user" class="active">Multi-User</a>
+        <a href="/transcribe-file">File Transcription</a>
+        <a href="/batch-transcription">Batch Transcription</a>
+            <button id="dark-mode-toggle" style="margin-left:auto;background:none;border:none;color:white;font-size:1.1rem;cursor:pointer;padding:8px;border-radius:6px;transition:background 0.15s;" title="Toggle dark mode">🌙</button>
+    </nav>
+    
+    <div class="header">
+        <h1>Multi-User Transcription</h1>
+        <p>Real-time transcription for multiple speakers</p>
+    </div>
+    
+    <div class="container">
+        <!-- Config Info -->
+        <div class="config-info" id="config-info">
+            <strong>ℹ️ Using default model configuration.</strong> 
+            Configure models on the Voice Assistant page first, then refresh this page.
+        </div>
+        
+        <!-- Session Controls -->
+        <div class="card">
+            <h2>🔗 Session Controls</h2>
+            
+            <div id="join-section">
+                <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
+                    <div class="input-group" style="flex:1;min-width:160px;">
+                        <input type="text" id="user-name-input" placeholder="Your name (optional)" maxlength="30">
+                    </div>
+                </div>
+                <div class="session-controls">
+                    <div class="input-group">
+                        <input type="text" id="session-id-input" placeholder="Enter session ID to join...">
+                        <button class="btn btn-secondary" onclick="joinSession()">Join Session</button>
+                    </div>
+                    <span style="color: var(--text-muted); align-self: center;">— or —</span>
+                    <button class="btn btn-primary" onclick="createNewSession()">➕ Create New Session</button>
+                </div>
+            </div>
+            
+            <div id="active-session" style="display: none;">
+                <div class="share-info">
+                    <h3>📤 Share this session ID with others:</h3>
+                    <div class="session-link">
+                        <input type="text" id="session-link-display" readonly>
+                        <button class="btn btn-secondary" onclick="copySessionLink()">📋 Copy</button>
+                    </div>
+                    <div style="font-size:0.8rem;color:var(--text-muted);margin-top:6px;">
+                        Others can join by entering this ID on the Multi-User page.
+                    </div>
+                </div>
+                
+                <div class="session-controls">
+                    <button class="btn btn-danger" onclick="leaveSession()">🚪 Leave Session</button>
+                    <button class="btn btn-success" onclick="downloadTranscript()">💾 Download Transcript</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Users Panel -->
+        <div class="card">
+            <h2>👥 Connected Users</h2>
+            <div class="users-panel" id="users-panel">
+                <div class="empty-state">
+                    <div class="icon">👤</div>
+                    <p>No users connected yet</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Audio Controls -->
+        <div class="card" id="audio-card" style="display: none;">
+            <h2>🎤 Audio Status</h2>
+            <div class="status-bar">
+                <div class="status-indicator">
+                    <div class="status-dot" id="connection-dot"></div>
+                    <span id="connection-status">Disconnected</span>
+                </div>
+                <span id="user-name-display"></span>
+            </div>
+            
+            <div class="vad-status">
+                <span><div class="vad-indicator" id="vad-indicator"></div> VAD Ready</span>
+                <span><div class="vad-indicator" id="speech-indicator"></div> Speech Detected: <span id="speech-count">0</span></span>
+                <span>Segments Sent: <span id="segments-sent">0</span></span>
+            </div>
+            
+            <div class="visualizer" id="visualizer"></div>
+            
+            <div class="session-controls">
+                <button class="btn btn-primary" id="btn-mic" onclick="toggleMic()">🎤 Start Transmitting</button>
+                <button class="btn btn-secondary" id="btn-mute" onclick="toggleMute()" disabled>🔇 Unmuted</button>
+            </div>
+        </div>
+        
+        <!-- Transcript Display -->
+        <div class="card">
+            <h2>📝 Live Transcript</h2>
+            <div class="transcript-container" id="transcript-container">
+                <div class="empty-state">
+                    <div class="icon">📄</div>
+                    <p>Transcripts will appear here in real-time</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="toast-container" id="toast-container"></div>
+    
+    <script>
+        // ==============================================================================
+        // Configuration - Load from localStorage (same as Voice Assistant page)
+        // ==============================================================================
+        let config = {};
+        
+        function loadConfig() {
+            try {
+                const saved = localStorage.getItem('voice-chat-config');
+                if (saved) {
+                    config = JSON.parse(saved);
+                    console.log('Config loaded:', config);
+                    
+                    // Update config info
+                    const configInfo = document.getElementById('config-info');
+                    configInfo.innerHTML = `
+                        <strong>✓ Using saved configuration:</strong><br>
+                        ASR: ${config.asrBaseUrl || 'default'}<br>
+                        Configure on the Voice Assistant page.
+                    `;
+                } else {
+                    // Fetch from backend
+                    fetch('/api/config')
+                        .then(r => r.json())
+                        .then(backendConfig => {
+                            config = backendConfig;
+                            console.log('Config from backend:', config);
+                        })
+                        .catch(e => console.log('Using default config'));
+                }
+            } catch (e) {
+                console.error('Failed to load config:', e);
+            }
+        }
+        // ==============================================================================
+        // VAD (Voice Activity Detection) Configuration
+        // ==============================================================================
+        const VAD_CONFIG = {
+            energyThreshold: 500,
+            minSpeechEnergy: 300,
+            minSpeechFrames: 3,
+            silenceFramesToEnd: 15,
+            maxSegmentDuration: 150,
+            bufferMaxFrames: 200,
+            preSpeechFrames: 5,
+        };
+        // ==============================================================================
+        // State Variables
+        // ==============================================================================
+        let ws = null;
+        let mediaStream = null;
+        let audioContext = null;
+        let audioProcessor = null;
+        let isConnected = false;
+        let isMuted = false;
+        let isTransmitting = false;
+        let sessionId = null;
+        let userId = null;
+        let userName = null;
+        let users = [];
+        let transcriptEntries = [];
+        
+        // VAD State
+        let speechBuffer = [];
+        let isSpeaking = false;
+        let silenceCounter = 0;
+        let speechCounter = 0;
+        let totalSpeechDetections = 0;
+        let totalSegmentsSent = 0;
+        
+        const visualizer = document.getElementById('visualizer');
+        const transcriptContainer = document.getElementById('transcript-container');
+        const usersPanel = document.getElementById('users-panel');
+        const toastContainer = document.getElementById('toast-container');
+        
+        function init() {
+            loadConfig();
+            initVisualizer();
+            
+            const urlParams = new URLSearchParams(window.location.search);
+            const urlSessionId = urlParams.get('session');
+            if (urlSessionId) {
+                document.getElementById('session-id-input').value = urlSessionId;
+                joinSession();
+            }
+        }
+        
+        function initVisualizer() {
+            visualizer.innerHTML = '';
+            for (let i = 0; i < 20; i++) {
+                const bar = document.createElement('div');
+                bar.className = 'bar';
+                visualizer.appendChild(bar);
+            }
+        }
+        
+        function updateVisualizer(volume) {
+            const bars = visualizer.querySelectorAll('.bar');
+            bars.forEach((bar, i) => {
+                const waveOffset = Math.sin(Date.now() / 200 + i * 0.5) * 0.3 + 0.7;
+                const height = 5 + (volume * 35 * waveOffset);
+                bar.style.height = `${Math.min(40, Math.max(5, height))}px`;
+                bar.style.background = isSpeaking ? '#ef4444' : '#01A982';
+            });
+        }
+        
+        function updateVadIndicators() {
+            document.getElementById('vad-indicator').className = 'vad-indicator' + (isTransmitting ? ' active' : '');
+            document.getElementById('speech-indicator').className = 'vad-indicator' + (isSpeaking ? ' speech' : '');
+            document.getElementById('speech-count').textContent = totalSpeechDetections;
+            document.getElementById('segments-sent').textContent = totalSegmentsSent;
+        }
+        
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            toastContainer.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+        // ==============================================================================
+        // VAD Functions
+        // ==============================================================================
+        
+        function calculateRMS(audioData) {
+            let sum = 0;
+            for (let i = 0; i < audioData.length; i++) {
+                sum += audioData[i] * audioData[i];
+            }
+            return Math.sqrt(sum / audioData.length);
+        }
+        
+        function processVAD(inputData) {
+            const rms = calculateRMS(inputData);
+            const isSpeech = rms > VAD_CONFIG.minSpeechEnergy;
+            
+            if (isSpeech) {
+                speechCounter++;
+                silenceCounter = 0;
+            } else {
+                speechCounter = 0;
+                silenceCounter++;
+            }
+            
+            speechBuffer.push({
+                data: new Int16Array(inputData.buffer),
+                rms: rms,
+                isSpeech: isSpeech
+            });
+            
+            if (speechBuffer.length > VAD_CONFIG.bufferMaxFrames) {
+                speechBuffer.shift();
+            }
+            
+            return { rms, isSpeech };
+        }
+        
+        async function checkAndSendSegment() {
+            if (isSpeaking && silenceCounter >= VAD_CONFIG.silenceFramesToEnd) {
+                await sendSegment();
+            } else if (isSpeaking && speechBuffer.length >= VAD_CONFIG.maxSegmentDuration) {
+                console.log('Max segment duration reached, force sending');
+                await sendSegment();
+            }
+        }
+        
+        async function sendSegment() {
+            if (speechBuffer.length < VAD_CONFIG.minSpeechFrames) {
+                speechBuffer = [];
+                isSpeaking = false;
+                silenceCounter = 0;
+                return;
+            }
+            
+            let startIdx = 0;
+            let endIdx = speechBuffer.length;
+            
+            for (let i = 0; i < speechBuffer.length; i++) {
+                if (speechBuffer[i].isSpeech) {
+                    startIdx = Math.max(0, i - VAD_CONFIG.preSpeechFrames);
+                    break;
+                }
+            }
+            
+            for (let i = speechBuffer.length - 1; i >= 0; i--) {
+                if (speechBuffer[i].isSpeech) {
+                    endIdx = Math.min(speechBuffer.length, i + 1);
+                    break;
+                }
+            }
+            
+            const segmentFrames = speechBuffer.slice(startIdx, endIdx);
+            
+            if (segmentFrames.length === 0) {
+                speechBuffer = [];
+                isSpeaking = false;
+                silenceCounter = 0;
+                return;
+            }
+            
+            const totalLength = segmentFrames.reduce((sum, frame) => sum + frame.data.length, 0);
+            const combinedAudio = new Int16Array(totalLength);
+            let offset = 0;
+            
+            for (const frame of segmentFrames) {
+                combinedAudio.set(frame.data, offset);
+                offset += frame.data.length;
+            }
+            
+            const minAudioLength = 16000 * 0.5;
+            if (combinedAudio.length < minAudioLength) {
+                console.log(`Segment too short (${combinedAudio.length} samples), skipping`);
+                speechBuffer = [];
+                isSpeaking = false;
+                silenceCounter = 0;
+                return;
+            }
+            
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                try {
+                    ws.send(combinedAudio.buffer);
+                    totalSegmentsSent++;
+                    console.log(`Sent segment: ${combinedAudio.length} samples`);
+                } catch (e) {
+                    console.error('Failed to send segment:', e);
+                }
+            }
+            
+            speechBuffer = [];
+            isSpeaking = false;
+            silenceCounter = 0;
+        }
+        // ==============================================================================
+        // WebSocket Connection
+        // ==============================================================================
+        
+        function getUserDisplayName() {
+            const input = document.getElementById('user-name-input').value.trim();
+            return input || '';
+        }
+
+        async function createNewSession() {
+            try {
+                const response = await fetch('/api/multi-user/create-session', {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                sessionId = data.session_id;
+                document.getElementById('session-id-input').value = sessionId;
+                document.getElementById('session-link-display').value = sessionId;
+                joinSession();
+                showToast('New session created!', 'success');
+            } catch (error) {
+                showToast('Failed to create session', 'error');
+            }
+        }
+        
+        async function joinSession() {
+            const inputSessionId = document.getElementById('session-id-input').value.trim();
+            if (!inputSessionId) {
+                showToast('Please enter a session ID', 'error');
+                return;
+            }
+            
+            sessionId = inputSessionId;
+            document.getElementById('session-link-display').value = sessionId;
+            
+            window.history.pushState({}, '', `?session=${sessionId}`);
+            await connectWebSocket();
+        }
+        
+        async function connectWebSocket() {
+            try {
+                mediaStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        channelCount: 1,
+                        sampleRate: 16000,
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    }
+                });
+                
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+                const source = audioContext.createMediaStreamSource(mediaStream);
+                audioProcessor = audioContext.createScriptProcessor(2048, 1, 1);
+                source.connect(audioProcessor);
+                audioProcessor.connect(audioContext.destination);
+                
+                const wsUrl = `wss://${window.location.host}/ws/multi-user/${sessionId}`;
+                ws = new WebSocket(wsUrl);
+                
+                ws.onopen = () => {
+                    isConnected = true;
+                    document.getElementById('join-section').style.display = 'none';
+                    document.getElementById('active-session').style.display = 'block';
+                    document.getElementById('audio-card').style.display = 'block';
+                    updateConnectionStatus('connected', 'Connected');
+                    showToast('Connected to session', 'success');
+                    
+                    // Send config to server
+                    if (config.asrBaseUrl) {
+                        ws.send(JSON.stringify({
+                            type: 'config_update',
+                            config: config
+                        }));
+                        console.log('Config sent to server');
+                    }
+                };
+                
+                ws.onmessage = async (event) => {
+                    try {
+                        const msg = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+                        
+                        switch (msg.type) {
+                            case 'joined':
+                                userId = msg.user_id;
+                                userName = msg.user_name;
+                                users = msg.users;
+                                // Apply custom name if one was entered
+                                const customName = getUserDisplayName();
+                                if (customName && ws && ws.readyState === WebSocket.OPEN) {
+                                    ws.send(JSON.stringify({ type: 'update_name', name: customName }));
+                                }
+                                document.getElementById('user-name-display').textContent = `You are: ${userName}`;
+                                updateUsersPanel();
+                                break;
+                            
+                            case 'user_joined':
+                            case 'user_left':
+                            case 'user_renamed':
+                                users = msg.users;
+                                updateUsersPanel();
+                                if (msg.type === 'user_renamed') {
+                                    if (msg.user_id === userId) {
+                                        userName = msg.new_name;
+                                        document.getElementById('user-name-display').textContent = `You are: ${userName}`;
+                                    }
+                                    showToast(`${msg.new_name || 'A user'} changed name`, 'info');
+                                } else if (msg.type === 'user_joined') {
+                                    showToast(`${msg.user_name} joined`, 'info');
+                                } else if (msg.type === 'user_left') {
+                                    showToast(`${msg.user_name} left`, 'info');
+                                }
+                                break;
+                            
+                            case 'transcript':
+                                addTranscriptEntry(msg);
+                                break;
+                            
+                            case 'transcript_saved':
+                                showToast('Transcript saved!', 'success');
+                                break;
+                            
+                            case 'error':
+                                showToast(msg.message || 'An error occurred', 'error');
+                                break;
+                        }
+                    } catch (e) {
+                        console.error('Message parse error:', e);
+                    }
+                };
+                
+                ws.onclose = () => {
+                    isConnected = false;
+                    if (isTransmitting) {
+                        toggleMic();
+                    }
+                    updateConnectionStatus('disconnected', 'Disconnected');
+                };
+                
+                ws.onerror = (error) => {
+                    showToast('Connection error', 'error');
+                };
+                
+                audioProcessor.onaudioprocess = async (e) => {
+                    if (!ws || ws.readyState !== WebSocket.OPEN || !isTransmitting || isMuted) {
+                        updateVisualizer(0);
+                        return;
+                    }
+                    
+                    const inputData = e.inputBuffer.getChannelData(0);
+                    
+                    const pcmData = new Int16Array(inputData.length);
+                    for (let i = 0; i < inputData.length; i++) {
+                        const s = Math.max(-1, Math.min(1, inputData[i]));
+                        pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                    }
+                    
+                    const { rms, isSpeech } = processVAD(pcmData);
+                    
+                    const volume = inputData.reduce((acc, val) => acc + Math.abs(val), 0) / inputData.length;
+                    updateVisualizer(Math.min(1, volume * 5));
+                    
+                    if (isSpeech && !isSpeaking) {
+                        if (speechCounter >= VAD_CONFIG.minSpeechFrames) {
+                            isSpeaking = true;
+                            totalSpeechDetections++;
+                            console.log('Speech started');
+                        }
+                    } else if (!isSpeech && isSpeaking) {
+                        await checkAndSendSegment();
+                    } else if (isSpeaking) {
+                        await checkAndSendSegment();
+                    }
+                    
+                    updateVadIndicators();
+                };
+                
+            } catch (error) {
+                showToast('Microphone access denied', 'error');
+            }
+        }
+        
+        function updateConnectionStatus(status, text) {
+            const dot = document.getElementById('connection-dot');
+            dot.className = 'status-dot';
+            if (status === 'connected') {
+                dot.classList.add('connected');
+            } else if (status === 'listening') {
+                dot.classList.add('listening');
+            }
+            document.getElementById('connection-status').textContent = text;
+        }
+        
+        function updateUsersPanel() {
+            if (users.length === 0) {
+                usersPanel.innerHTML = `
+                    <div class="empty-state">
+                        <div class="icon">👤</div>
+                        <p>No users connected yet</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            usersPanel.innerHTML = users.map(user => `
+                <div class="user-badge ${user.user_id === userId ? 'you' : ''}">
+                    <div class="dot"></div>
+                    <span>${user.name}${user.user_id === userId ? ' (You)' : ''}</span>
+                </div>
+            `).join('');
+        }
+        
+        function addTranscriptEntry(msg) {
+            const emptyState = transcriptContainer.querySelector('.empty-state');
+            if (emptyState) emptyState.remove();
+            
+            const user = users.find(u => u.user_id === msg.sender_id || u.name === msg.sender_name);
+            const userClass = user ? `user-${(user.user_number % 5) + 1}` : 'user-1';
+            
+            const entry = document.createElement('div');
+            entry.className = `transcript-entry ${userClass}`;
+            entry.innerHTML = `
+                <div class="timestamp">${msg.timestamp}</div>
+                <div class="speaker">${msg.sender_name}</div>
+                <div class="text">${msg.text}</div>
+            `;
+            
+            transcriptContainer.appendChild(entry);
+            transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
+            
+            transcriptEntries.push({
+                sender_name: msg.sender_name,
+                text: msg.text,
+                timestamp: msg.timestamp
+            });
+        }
+        
+        function toggleMic() {
+            isTransmitting = !isTransmitting;
+            const btn = document.getElementById('btn-mic');
+            
+            if (isTransmitting) {
+                btn.textContent = '⏹️ Stop Transmitting';
+                btn.classList.remove('btn-primary');
+                btn.classList.add('btn-danger');
+                document.getElementById('btn-mute').disabled = false;
+                updateConnectionStatus('listening', 'Transmitting...');
+                
+                speechBuffer = [];
+                isSpeaking = false;
+                silenceCounter = 0;
+                speechCounter = 0;
+                
+                showToast('Now transmitting audio', 'success');
+            } else {
+                btn.textContent = '🎤 Start Transmitting';
+                btn.classList.remove('btn-danger');
+                btn.classList.add('btn-primary');
+                
+                if (speechBuffer.length > 0 && isSpeaking) {
+                    sendSegment();
+                }
+                
+                updateConnectionStatus('connected', 'Connected');
+                updateVisualizer(0);
+                showToast('Stopped transmitting', 'info');
+            }
+            
+            updateVadIndicators();
+        }
+        
+        function toggleMute() {
+            isMuted = !isMuted;
+            const btn = document.getElementById('btn-mute');
+            
+            if (isMuted) {
+                btn.textContent = '🔇 Muted';
+                updateVisualizer(0);
+                showToast('Microphone muted', 'info');
+            } else {
+                btn.textContent = '🔇 Unmuted';
+                showToast('Microphone unmuted', 'info');
+            }
+        }
+        
+        function leaveSession() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+            
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
+            }
+            
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+            
+            isConnected = false;
+            isTransmitting = false;
+            isMuted = false;
+            sessionId = null;
+            userId = null;
+            userName = null;
+            users = [];
+            transcriptEntries = [];
+            
+            speechBuffer = [];
+            isSpeaking = false;
+            silenceCounter = 0;
+            
+            document.getElementById('join-section').style.display = 'block';
+            document.getElementById('active-session').style.display = 'none';
+            document.getElementById('audio-card').style.display = 'none';
+            document.getElementById('session-id-input').value = '';
+            document.getElementById('session-link-display').value = '';
+            transcriptContainer.innerHTML = `
+                <div class="empty-state">
+                    <div class="icon">📄</div>
+                    <p>Transcripts will appear here in real-time</p>
+                </div>
+            `;
+            
+            window.history.pushState({}, '', '/multi-user');
+            showToast('Left session', 'info');
+        }
+        
+        function copySessionLink() {
+            const sessionId = document.getElementById('session-id-input').value;
+            navigator.clipboard.writeText(sessionId);
+            showToast('Session ID copied!', 'success');
+        }
+        
+        function downloadTranscript() {
+            if (transcriptEntries.length === 0) {
+                showToast('No transcript to download', 'error');
+                return;
+            }
+            
+            const content = transcriptEntries.map(e => 
+                `[${e.timestamp}] ${e.sender_name}: ${e.text}`
+            ).join('\n');
+            
+            const blob = new Blob([content], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `transcript_${sessionId}_${Date.now()}.txt`;
+            a.click();
+            URL.revokeObjectURL(url);
+            showToast('Transcript downloaded!', 'success');
+        }
+        
+        init();
+    </script>
+
+    <script>
+        (function() {
+            var toggle = document.getElementById('dark-mode-toggle');
+            if (toggle) {
+                toggle.textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️' : '🌙';
+                toggle.addEventListener('click', function() {
+                    var nowDark = document.documentElement.getAttribute('data-theme') === 'dark';
+                    if (nowDark) {
+                        document.documentElement.removeAttribute('data-theme');
+                        localStorage.setItem('dark-mode', 'false');
+                        toggle.textContent = '🌙';
+                    } else {
+                        document.documentElement.setAttribute('data-theme', 'dark');
+                        localStorage.setItem('dark-mode', 'true');
+                        toggle.textContent = '☀️';
+                    }
+                });
+            }
+        })();
+    </script>
+</body>
+</html>

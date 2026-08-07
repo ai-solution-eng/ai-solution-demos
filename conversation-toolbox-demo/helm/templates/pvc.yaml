@@ -1,0 +1,65 @@
+{{- if and .Values.persistence.recordings_dir.enabled (not .Values.persistence.recordings_dir.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.deployment.name }}-recordings-pvc
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/resource-policy": keep
+    {{- with .Values.persistence.recordings_dir.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  accessModes:
+    - {{ .Values.persistence.recordings_dir.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.recordings_dir.size }}
+  {{- if .Values.persistence.recordings_dir.storageClass }}
+  storageClassName: {{ .Values.persistence.recordings_dir.storageClass }}
+  {{- end }}
+{{- end }}
+---
+{{- if and .Values.persistence.transcripts_dir.enabled (not .Values.persistence.transcripts_dir.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.deployment.name }}-transcripts-pvc
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/resource-policy": keep
+    {{- with .Values.persistence.transcripts_dir.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  accessModes:
+    - {{ .Values.persistence.transcripts_dir.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.transcripts_dir.size }}
+  {{- if .Values.persistence.transcripts_dir.storageClass }}
+  storageClassName: {{ .Values.persistence.transcripts_dir.storageClass }}
+  {{- end }}
+{{- end }}
+---
+{{- if and .Values.diarization.enabled .Values.persistence.hf_cache_dir.enabled (not .Values.persistence.hf_cache_dir.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.deployment.name }}-hf-cache-pvc
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/resource-policy": keep
+    {{- with .Values.persistence.hf_cache_dir.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  accessModes:
+    - {{ .Values.persistence.hf_cache_dir.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.hf_cache_dir.size }}
+  {{- if .Values.persistence.hf_cache_dir.storageClass }}
+  storageClassName: {{ .Values.persistence.hf_cache_dir.storageClass }}
+  {{- end }}
+{{- end }}

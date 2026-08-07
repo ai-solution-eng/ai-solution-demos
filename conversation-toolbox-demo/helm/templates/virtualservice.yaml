@@ -1,0 +1,26 @@
+{{- if .Values.ezua.enabled }}
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: {{ .Values.deployment.name }}-vs
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.deployment.appName }}
+    hpe-ezua/app: {{ .Values.deployment.appName }}
+    hpe-ezua/type: vendor-service
+spec:
+  gateways: 
+    - {{ .Values.ezua.virtualService.istioGateway }} 
+  hosts: 
+    - {{ .Values.ezua.virtualService.endpoint | required "\nValid .Values.ezua.virtualService.endpoint is required !" }} 
+  http:
+    - match:
+        - uri:
+            prefix: /
+      route:
+        - destination:
+            host: {{ .Values.deployment.name }}-service.{{ .Release.Namespace }}.svc.cluster.local
+            port:
+              number: {{ .Values.service.port }}
+      timeout: {{ .Values.ezua.virtualService.timeout }}
+{{- end }}

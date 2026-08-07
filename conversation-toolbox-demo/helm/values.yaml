@@ -1,0 +1,203 @@
+image:
+  repository: andrewbydlon/conversation-toolbox
+  tag: v4.4.2
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8000
+
+deployment:
+  name: conversation-toolbox
+  appName: conversation-toolbox
+  replicaCount: 1
+
+redis:
+  external: false
+  url: redis://conversation-toolbox-redis:6379/0
+  # Redis maxmemory controls when Redis starts rejecting writes. Must be
+  # below the container memory limit. Use integer MB (Redis doesn't accept
+  # fractional GB). Batch transcription stores job state + segment metadata
+  # here; segment audio is NOT in Redis (lives on PVC).
+  maxmemory: '1536mb'
+  maxmemoryPolicy: noeviction
+  resources:
+    requests:
+      cpu: '250m'
+      memory: 512Mi
+    limits:
+      cpu: '500m'
+      memory: 2Gi
+
+workers:
+  enabled: true
+  # When autoscaling is enabled, the HPA owns the replica count at runtime;
+  # this value is only the initial deploy count before HPA takes over. Set
+  # to match minReplicas to avoid brief over-provisioning on fresh deploys.
+  replicaCount: 1
+  resources:
+    requests:
+      # Worker is I/O-bound (HTTP to vLLM ASR/TTS). Steady-state memory is
+      # ~117Mi (measured via kubectl top). CPU baseline is ~150-260m due to
+      # the agents SDK + MCP keepalive + exec probes; request sized to
+      # avoid throttling without over-reserving. Memory request is low
+      # because HPA uses memory utilization (70% target = ~716Mi).
+      cpu: '250m'
+      memory: 1Gi
+    limits:
+      # Limit allows real bursts (audio encoding, base64, numpy) without
+      # node over-commit. Memory limit is the OOM safety net for peak
+      # batch load (3 concurrent 1-hr files ≈ 1.5GB + baseline).
+      cpu: '500m'
+      memory: 4Gi
+  # Horizontal Pod Autoscaler. When enabled, replicaCount becomes the
+  # fallback only if autoscaling is disabled. The HPA will override it
+  # at runtime. CPU target is low (40%) because the workload is I/O-
+  # bound (HTTP to vLLM ASR/TTS); memory (70%) is the primary signal
+  # since batch jobs load audio segments into RAM.
+  # NOTE: KEDA on arq:queue depth would be a better fit (scales on
+  # actual backlog), but KEDA is not installed on this cluster. Revisit
+  # if/when KEDA becomes available — a ScaledObject on the
+  # `arq:queue` Redis list length would be a drop-in replacement.
+  autoscaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 3
+    memoryTarget: 70
+    # KEDA scales on actual Redis queue depth (arq:queue list length)
+    # instead of CPU/memory. This is the correct metric for I/O-bound
+    # workloads — "big queue → more pods". Requires KEDA to be installed
+    # on the cluster. When enabled, set `enabled: false` above to avoid
+    # both KEDA and HPA competing for the same Deployment.
+    # Install KEDA:
+    #   helm repo add kedacore https://kedacore.github.io/charts
+    #   helm install keda kedacore/keda -n keda-system --create-namespace
+    keda:
+      enabled: false
+
+resources:
+  requests:
+    cpu: '2'
+    memory: 2Gi
+  limits:
+    cpu: '4'
+    memory: 4Gi
+
+livenessProbe:
+  enabled: true
+  path: /health
+  port: 8000
+  initialDelaySeconds: 15
+  periodSeconds: 10
+  timeoutSeconds: 10
+  failureThreshold: 3
+  successThreshold: 1
+
+readinessProbe:
+  enabled: true
+  path: /ready
+  port: 8000
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  timeoutSeconds: 5
+  failureThreshold: 3
+  successThreshold: 1
+
+env:
+- name: REDIS_URL
+  value: redis://conversation-toolbox-redis:6379/0
+- name: BATCH_TRANSCRIPTION_WORKER_COUNT
+  value: '4'
+- name: BATCH_MAX_CONCURRENT_JOBS
+  value: '3'
+- name: BATCH_MAX_MEMORY_PERCENT
+  value: '75'
+- name: BATCH_USE_BOUNDED_QUEUE
+  value: 'true'
+
+diarization:
+  enabled: false
+  baseUrl: http://conversation-toolbox-diarization:8001
+  pipeline: pyannote/speaker-diarization-community-1
+  gpuMemoryFraction: '0.10'
+  cudaVisibleDevices: GPU-8bac3311-f987-7d04-adc5-4f8a12e3ed59
+  nodeName: pcai-se-scs04.hst.lab
+  tolerations: []
+  resources:
+    requests:
+      cpu: '2'
+      memory: 4Gi
+    limits:
+      cpu: '4'
+      memory: 8Gi
+  livenessProbe:
+    enabled: true
+    path: /health
+    port: 8001
+    initialDelaySeconds: 30
+    periodSeconds: 15
+    timeoutSeconds: 10
+    failureThreshold: 3
+  readinessProbe:
+    enabled: true
+    path: /ready
+    port: 8001
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+config:
+  asrBaseUrl: ""
+  hallucinationPatterns: "thank you,thanks,\u043F\u0440\u043E\u0434\u043E\u043B\u0436\
+    \u0435\u043D\u0438\u0435 \u0441\u043B\u0435\u0434\u0443\u0435\u0442"
+  llmBaseUrl: ""
+  systemPrompt: You are a concise voice agent. Use tags with emotional descriptors like [laughing], [emphasis], [sad], [sigh], [shouting], or [short pause] to change the mood of your voice. This is not an exhaustive list of tags; there are 15k+. Don&#39;t use bold, italics, ..., or other strange syntax which may confuse the tts model. Use tools only if necessary.
+  ttsBaseUrl: ""
+  ttsVoice: alys
+  sampleRate: '16000'
+  vadAggression: '2'
+  batchTranscriptionWorkerCount: '8'
+
+secrets:
+  asrApiKey: ""
+  llmApiKey: ""
+  ttsApiKey: ""
+
+ezua:
+  enabled: true
+  domainName: ${DOMAIN_NAME}
+  virtualService:
+    endpoint: conversation-toolbox.${DOMAIN_NAME}
+    istioGateway: istio-system/ezaf-gateway
+    timeout: 660s
+  authorizationPolicy:
+    namespace: istio-system
+    providerName: oauth2-proxy
+
+persistence:
+  recordings_dir:
+    enabled: true
+    storageClass: gl4f-filesystem
+    accessMode: ReadWriteMany
+    size: 40Gi
+    mountPath: /mnt/persistent/recordings/
+    existingClaim: ''
+    annotations: {}
+  transcripts_dir:
+    enabled: true
+    storageClass: gl4f-filesystem
+    accessMode: ReadWriteMany
+    size: 20Gi
+    mountPath: /mnt/persistent/transcripts/
+    existingClaim: ''
+    annotations: {}
+  hf_cache_dir:
+    enabled: true
+    storageClass: gl4f-filesystem
+    accessMode: ReadWriteMany
+    size: 10Gi
+    mountPath: /mnt/persistent/hf-cache
+    existingClaim: ''
+    annotations: {}
