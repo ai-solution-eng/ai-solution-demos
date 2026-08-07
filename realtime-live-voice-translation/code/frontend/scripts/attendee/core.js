@@ -34,12 +34,20 @@
         ttsVoiceModalEl: document.getElementById("ttsVoiceModal"),
         ttsModalCloseBtnEl: document.getElementById("ttsModalCloseBtn"),
         ttsVoiceListEl: document.getElementById("ttsVoiceList"),
-        ttsVoiceNameInputEl: document.getElementById("ttsVoiceNameInput"),
+ttsVoiceNameInputEl: document.getElementById("ttsVoiceNameInput"),
+        ttsVoiceRefTextEl: document.getElementById("ttsVoiceRefText"),
+        ttsVoiceRefTextErrorEl: document.getElementById("ttsRefTextError"),
         ttsConsentCheckEl: document.getElementById("ttsConsentCheck"),
         ttsUploadFileBtnEl: document.getElementById("ttsUploadFileBtn"),
         ttsRecordBtnEl: document.getElementById("ttsRecordBtn"),
         ttsFileInputEl: document.getElementById("ttsFileInput"),
-        ttsRecordStatusEl: document.getElementById("ttsRecordStatus")
+        ttsRecordStatusEl: document.getElementById("ttsRecordStatus"),
+        ttsWaveCanvasEl: document.getElementById("ttsWaveCanvas"),
+        ttsAudioToolsEl: document.getElementById("ttsAudioTools"),
+        ttsReplayBtnEl: document.getElementById("ttsReplayBtn"),
+        ttsTranscribeStatusEl: document.getElementById("ttsTranscribeStatus"),
+        ttsAudioPlayerEl: document.getElementById("ttsAudioPlayer"),
+        ttsAcceptBtnEl: document.getElementById("ttsAcceptBtn")
     };
 
     const HTTP_BASE = shared.resolveBackendHttpBase();

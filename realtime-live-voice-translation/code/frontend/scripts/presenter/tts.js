@@ -7,7 +7,10 @@
         recordedChunks: [],
         isRecording: false,
         waveAnalyser: null,
-        waveAnimId: null
+        waveAnimId: null,
+        stagedBlob: null,
+        stagedFilename: "",
+        stagedUrl: ""
     };
 
     function ttsHttpBase() {
@@ -26,14 +29,94 @@
     function closeVoiceModal() {
         refs.ttsVoiceModalEl.hidden = true;
         stopRecording();
+        clearStagedAudio();
     }
 
     function syncUploadButtons() {
         const name = refs.ttsVoiceNameInputEl.value.trim();
         const consented = refs.ttsConsentCheckEl.checked;
-        const enabled = name.length > 0 && consented;
-        refs.ttsUploadFileBtnEl.disabled = !enabled;
-        refs.ttsRecordBtnEl.disabled = !enabled;
+        const hasAudio = !!state.stagedBlob;
+        refs.ttsUploadFileBtnEl.disabled = !(name.length > 0 && consented);
+        refs.ttsRecordBtnEl.disabled = !(name.length > 0 && consented);
+        refs.ttsAcceptBtnEl.disabled = !(name.length > 0 && consented && hasAudio);
+    }
+
+    function setTranscribeStatus(text, isError) {
+        const el = refs.ttsTranscribeStatusEl;
+        if (el) {
+            el.textContent = text || "";
+            el.hidden = !text;
+            el.style.color = isError ? "#ff1744" : "";
+        }
+    }
+
+    function showRefTextError(message) {
+        const el = refs.ttsVoiceRefTextErrorEl;
+        if (!el) return;
+        if (message) {
+            el.textContent = message;
+            el.hidden = false;
+        } else {
+            el.textContent = "";
+            el.hidden = true;
+        }
+    }
+
+    function clearStagedAudio() {
+        if (state.stagedUrl) URL.revokeObjectURL(state.stagedUrl);
+        state.stagedBlob = null;
+        state.stagedFilename = "";
+        state.stagedUrl = "";
+        if (refs.ttsAudioToolsEl) refs.ttsAudioToolsEl.hidden = true;
+        if (refs.ttsAudioPlayerEl) refs.ttsAudioPlayerEl.removeAttribute("src");
+        setTranscribeStatus("");
+        showRefTextError("");
+    }
+
+    async function stageAudioBlob(blob, filename) {
+        if (state.stagedUrl) URL.revokeObjectURL(state.stagedUrl);
+        state.stagedBlob = blob;
+        state.stagedFilename = filename || "sample.webm";
+        state.stagedUrl = URL.createObjectURL(blob);
+        if (refs.ttsAudioPlayerEl) {
+            refs.ttsAudioPlayerEl.src = state.stagedUrl;
+        }
+        if (refs.ttsAudioToolsEl) refs.ttsAudioToolsEl.hidden = false;
+        refs.ttsVoiceRefTextEl.value = "";
+        showRefTextError("");
+        syncUploadButtons();
+
+        const roomId = getRoomId();
+        if (!roomId) {
+            setTranscribeStatus("Connect to a room to transcribe.", true);
+            return;
+        }
+
+        setTranscribeStatus("Transcribing audio...");
+        refs.ttsAcceptBtnEl.disabled = true;
+        const formData = new FormData();
+        formData.append("audio_sample", blob, state.stagedFilename);
+        try {
+            const resp = await fetch(`${ttsHttpBase()}/api/rooms/${encodeURIComponent(roomId)}/tts/voices/transcribe`, {
+                method: "POST",
+                body: formData
+            });
+            if (!resp.ok) {
+                const detail = await resp.text().catch(() => "");
+                showRefTextError(`Auto-transcription failed (${resp.status}). You can type the transcript below.`);
+                setTranscribeStatus("");
+                return;
+            }
+            const data = await resp.json();
+            const text = (data && data.text || "").trim();
+            refs.ttsVoiceRefTextEl.value = text;
+            setTranscribeStatus(text ? "Transcript ready — review and edit below." : "No text detected — type the transcript below.");
+        } catch (err) {
+            showRefTextError(`Auto-transcription failed: ${err.message}. You can type the transcript below.`);
+            setTranscribeStatus("");
+        } finally {
+            syncUploadButtons();
+        }
     }
 
     async function loadVoicesForModal() {
@@ -174,15 +257,22 @@
 
     async function uploadVoiceAudio(audioBlob, filename) {
         const name = refs.ttsVoiceNameInputEl.value.trim();
-        if (!name || !refs.ttsConsentCheckEl.checked) return;
+        const refText = (refs.ttsVoiceRefTextEl.value || "").trim();
+        if (!name || !refs.ttsConsentCheckEl.checked || !audioBlob) return;
+        if (!refText) {
+            showRefTextError("Please provide the transcript of the audio sample before saving.");
+            refs.ttsVoiceRefTextEl.focus();
+            return;
+        }
 
         const formData = new FormData();
         formData.append("name", name);
         formData.append("consent", `user-${name}-${Math.floor(Date.now() / 1000)}`);
+        formData.append("ref_text", refText);
         formData.append("audio_sample", audioBlob, filename || "sample.webm");
 
-        refs.ttsUploadFileBtnEl.disabled = true;
-        refs.ttsRecordBtnEl.disabled = true;
+        refs.ttsAcceptBtnEl.disabled = true;
+        setTranscribeStatus("Saving voice...");
 
         try {
             const resp = await fetch(`${ttsHttpBase()}/api/rooms/${encodeURIComponent(getRoomId())}/tts/voices`, {
@@ -191,27 +281,34 @@
             });
             if (resp.ok) {
                 refs.ttsVoiceNameInputEl.value = "";
+                refs.ttsVoiceRefTextEl.value = "";
                 refs.ttsConsentCheckEl.checked = false;
+                clearStagedAudio();
                 syncUploadButtons();
                 await loadVoicesForModal();
+                await loadVoices();
             } else {
                 const detail = await resp.text().catch(() => "");
-                alert(`Upload failed: ${detail || resp.statusText}`);
+                showRefTextError(`Upload failed: ${detail || resp.statusText}`);
             }
         } catch (err) {
-            alert(`Upload failed: ${err.message}`);
+            showRefTextError(`Upload failed: ${err.message}`);
         } finally {
-            refs.ttsUploadFileBtnEl.disabled = false;
-            refs.ttsRecordBtnEl.disabled = false;
+            setTranscribeStatus("");
             syncUploadButtons();
         }
+    }
+
+    function acceptStagedVoice() {
+        if (!state.stagedBlob) return;
+        uploadVoiceAudio(state.stagedBlob, state.stagedFilename);
     }
 
     function onFileSelected() {
         const file = refs.ttsFileInputEl.files[0];
         if (!file) return;
-        uploadVoiceAudio(file, file.name);
         refs.ttsFileInputEl.value = "";
+        stageAudioBlob(file, file.name);
     }
 
     function stopWaveVisualizer() {
@@ -294,7 +391,7 @@
                 const blob = new Blob(state.recordedChunks, { type: mime || "audio/webm" });
                 state.isRecording = false;
                 refs.ttsRecordBtnEl.textContent = "Record voice";
-                uploadVoiceAudio(blob, "recorded.webm");
+                stageAudioBlob(blob, "recorded.webm");
             };
 
             state.mediaRecorder.start();
@@ -318,13 +415,26 @@
         }
     }
 
+    function replayStagedAudio() {
+        const player = refs.ttsAudioPlayerEl;
+        if (!player || !state.stagedUrl) return;
+        player.currentTime = 0;
+        player.play().catch((err) => console.warn("Replay failed:", err));
+    }
+
     function init() {
         refs.ttsManageBtnEl.addEventListener("click", openVoiceModal);
         refs.ttsModalCloseBtnEl.addEventListener("click", closeVoiceModal);
         refs.ttsUploadFileBtnEl.addEventListener("click", () => refs.ttsFileInputEl.click());
         refs.ttsFileInputEl.addEventListener("change", onFileSelected);
         refs.ttsRecordBtnEl.addEventListener("click", toggleRecording);
+        refs.ttsAcceptBtnEl.addEventListener("click", acceptStagedVoice);
+        refs.ttsReplayBtnEl.addEventListener("click", replayStagedAudio);
         refs.ttsVoiceNameInputEl.addEventListener("input", syncUploadButtons);
+        refs.ttsVoiceRefTextEl.addEventListener("input", () => {
+            showRefTextError("");
+            syncUploadButtons();
+        });
         refs.ttsConsentCheckEl.addEventListener("change", syncUploadButtons);
         document.addEventListener("keydown", (e) => {
             if (e.key === "Escape" && refs.ttsVoiceModalEl && !refs.ttsVoiceModalEl.hidden) {

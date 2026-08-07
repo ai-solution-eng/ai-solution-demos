@@ -7,6 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
+from openai import APIError
 from pydantic import BaseModel
 from pydub import AudioSegment
 
@@ -49,6 +50,55 @@ def _get_room_tts_cache(room_id: str) -> TTSCache:
         cache = TTSCache()
         room["tts_cache"] = cache
     return cache
+
+
+async def _transcribe_audio(
+    room_id: str, audio_bytes: bytes, filename: str, timeout: float = 30.0
+) -> str:
+    normalized = normalize_room_id(room_id)
+    room = ROOMS.get(normalized)
+    if room is None:
+        raise HTTPException(status_code=404, detail="Room not found.")
+    asr_cfg = room.get("asr") or {}
+    asr_base_url = (asr_cfg.get("base_url") or "").strip()
+    asr_api_key = (asr_cfg.get("api_key") or "").strip()
+    asr_model = (asr_cfg.get("model") or "").strip()
+    if not asr_base_url or not asr_model:
+        raise HTTPException(status_code=400, detail="ASR is not configured for this room.")
+
+    temp_dir = tempfile.mkdtemp()
+    try:
+        ext = os.path.splitext(filename or "sample.webm")[1].lower() or ".webm"
+        temp_in = os.path.join(temp_dir, f"sample{ext}")
+        with open(temp_in, "wb") as f:
+            f.write(audio_bytes)
+
+        audio = AudioSegment.from_file(temp_in)
+        audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
+        wav_buf = io.BytesIO()
+        audio.export(wav_buf, format="wav")
+        wav_buf.seek(0)
+
+        asr_client = make_client(asr_base_url, asr_api_key)
+        result = await asyncio.wait_for(
+            asr_client.audio.transcriptions.create(model=asr_model, file=wav_buf),
+            timeout=timeout,
+        )
+
+        if hasattr(result, "text"):
+            text = (result.text or "").strip()
+        elif isinstance(result, dict):
+            text = (result.get("text", "") or "").strip()
+        else:
+            text = ""
+        print(f"ASR transcription ({len(text)} chars): {text[:100]}")
+        return text
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=400, detail="ASR transcription timed out")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Could not transcribe audio: {exc}")
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 class TTSGenerateRequest(BaseModel):
@@ -95,44 +145,22 @@ async def upload_tts_voice(
     resolved_ref_text = (ref_text or "").strip()
 
     if not resolved_ref_text:
-        normalized = normalize_room_id(room_id)
-        room = ROOMS.get(normalized)
-        if room is not None:
-            asr_cfg = room.get("asr") or {}
-            asr_base_url = (asr_cfg.get("base_url") or "").strip()
-            asr_api_key = (asr_cfg.get("api_key") or "").strip()
-            asr_model = (asr_cfg.get("model") or "").strip()
-            if asr_base_url and asr_model:
-                temp_dir = tempfile.mkdtemp()
-                try:
-                    ext = os.path.splitext(audio_sample.filename or "sample.webm")[1].lower() or ".webm"
-                    temp_in = os.path.join(temp_dir, f"sample{ext}")
-                    with open(temp_in, "wb") as f:
-                        f.write(audio_bytes)
+        try:
+            resolved_ref_text = await _transcribe_audio(
+                room_id, audio_bytes, audio_sample.filename or "sample.webm"
+            )
+        except HTTPException as exc:
+            raise exc
 
-                    audio = AudioSegment.from_file(temp_in)
-                    audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
-                    wav_buf = io.BytesIO()
-                    audio.export(wav_buf, format="wav")
-                    wav_buf.seek(0)
-
-                    asr_client = make_client(asr_base_url, asr_api_key)
-                    result = await asyncio.wait_for(
-                        asr_client.audio.transcriptions.create(model=asr_model, file=wav_buf),
-                        timeout=30.0,
-                    )
-
-                    if hasattr(result, "text"):
-                        resolved_ref_text = (result.text or "").strip()
-                    elif isinstance(result, dict):
-                        resolved_ref_text = (result.get("text", "") or "").strip()
-                    print(f"ASR ref_text ({len(resolved_ref_text)} chars): {resolved_ref_text[:100]}")
-                except asyncio.TimeoutError:
-                    raise HTTPException(status_code=400, detail="ASR transcription timed out")
-                except Exception as exc:
-                    raise HTTPException(status_code=400, detail=f"Could not transcribe audio: {exc}")
-                finally:
-                    shutil.rmtree(temp_dir, ignore_errors=True)
+    if not resolved_ref_text:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "A reference transcript (ref_text) is required to clone a voice. "
+                "Please provide the transcript of the audio sample, or use a sample "
+                "that can be automatically transcribed."
+            ),
+        )
 
     result = await upload_voice(
         base_url=cfg["base_url"],
@@ -147,6 +175,18 @@ async def upload_tts_voice(
     if result["status"] not in (200, 201):
         raise HTTPException(status_code=result["status"], detail=str(result["data"]))
     return JSONResponse(result["data"])
+
+
+@router.post("/api/rooms/{room_id}/tts/voices/transcribe")
+async def transcribe_tts_voice(room_id: str, audio_sample: UploadFile = File(...)):
+    audio_bytes = await audio_sample.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Audio sample is empty")
+    if len(audio_bytes) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Audio sample exceeds 10MB limit")
+
+    text = await _transcribe_audio(room_id, audio_bytes, audio_sample.filename or "sample.webm")
+    return JSONResponse({"text": text})
 
 
 @router.delete("/api/rooms/{room_id}/tts/voices/{name}")
@@ -174,6 +214,10 @@ async def preview_tts_voice(room_id: str, payload: TTSVoicePreviewRequest):
             tts_client=tts_client,
             tts_model=cfg["model"],
         )
+    except APIError as exc:
+        body = getattr(exc, "body", None) or {}
+        message = body.get("message") or body.get("detail") or str(exc)
+        raise HTTPException(status_code=502, detail=f"TTS preview failed: {message}")
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"TTS preview failed: {exc}")
 
@@ -203,6 +247,10 @@ async def generate_tts(room_id: str, payload: TTSGenerateRequest):
             tts_client=tts_client,
             tts_model=cfg["model"],
         )
+    except APIError as exc:
+        body = getattr(exc, "body", None) or {}
+        message = body.get("message") or body.get("detail") or str(exc)
+        raise HTTPException(status_code=502, detail=f"TTS synthesis failed: {message}")
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"TTS synthesis failed: {exc}")
 

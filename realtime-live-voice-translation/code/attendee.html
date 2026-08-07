@@ -169,19 +169,32 @@
                     <div class="tts-upload-title">Add a voice profile</div>
                     <label for="ttsVoiceNameInput" class="tts-field-label">Voice name</label>
                     <input id="ttsVoiceNameInput" class="tts-field-input" type="text" placeholder="type voice name to begin" />
-                    <label for="ttsConsentCheck" class="tts-consent-row">
-                        <input id="ttsConsentCheck" type="checkbox" />
-                        <span>I confirm I have the speaker's consent to clone this voice.</span>
-                    </label>
                     <div class="tts-upload-buttons">
                         <button id="ttsUploadFileBtn" class="btn-secondary" type="button" disabled>Upload audio file</button>
                         <button id="ttsRecordBtn" class="btn-secondary" type="button" disabled>Record voice</button>
                     </div>
                     <input id="ttsFileInput" type="file" accept="audio/*" hidden />
                     <div id="ttsRecordBar" class="tts-record-bar" hidden>
+                        <canvas id="ttsWaveCanvas" class="tts-wave-canvas" width="400" height="50"></canvas>
                         <span class="tts-record-dot"></span>
                         <span id="ttsRecordStatus" class="tts-record-status">Recording...</span>
                     </div>
+                    <div id="ttsAudioTools" class="tts-audio-tools" hidden>
+                        <button id="ttsReplayBtn" class="btn-secondary" type="button" title="Replay recording">&#9654; Replay</button>
+                        <span id="ttsTranscribeStatus" class="tts-transcribe-status"></span>
+                    </div>
+                    <label for="ttsVoiceRefText" class="tts-field-label">Reference transcript</label>
+                    <textarea id="ttsVoiceRefText" class="tts-field-input" rows="3" placeholder="The transcript of the sample appears here. Edit it if needed."></textarea>
+                    <div id="ttsRefTextError" class="tts-field-error" hidden></div>
+                    <label for="ttsConsentCheck" class="tts-consent-row">
+                        <input id="ttsConsentCheck" type="checkbox" />
+                        <span>I confirm I have the speaker's consent to clone this voice.</span>
+                    </label>
+                    <div class="tts-upload-buttons">
+                        <button id="ttsAcceptBtn" class="btn-primary" type="button" disabled>Save voice</button>
+                    </div>
+                    <audio id="ttsAudioPlayer" hidden></audio>
+                </div>
                 </div>
                 <hr class="tts-divider" />
                 <div class="tts-voice-list" id="ttsVoiceList"></div>

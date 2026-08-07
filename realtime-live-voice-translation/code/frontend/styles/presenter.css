@@ -923,6 +923,36 @@
             animation: tts-pulse 1s ease-in-out infinite;
         }
 
+        .tts-audio-tools {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 6px 0;
+        }
+
+        .tts-audio-tools[hidden] { display: none; }
+
+        .tts-audio-tools button {
+            flex: 0 0 auto;
+            width: auto;
+            padding: 5px 12px;
+        }
+
+        .tts-transcribe-status {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .tts-transcribe-status[hidden] { display: none; }
+
+        .tts-field-error {
+            font-size: 0.8rem;
+            color: #ff1744;
+            margin-top: 4px;
+        }
+
+        .tts-field-error[hidden] { display: none; }
+
         @keyframes tts-pulse {
             0%, 100% { opacity: 1; transform: scale(1); }
             50% { opacity: 0.5; transform: scale(0.7); }
