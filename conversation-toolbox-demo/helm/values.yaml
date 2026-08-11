@@ -1,5 +1,5 @@
 image:
-  repository: andrewbydlon/conversation-toolbox
+  repository: ghcr.io/ai-solution-eng/conversation-toolbox
   tag: v4.4.2
   pullPolicy: IfNotPresent
 
@@ -121,8 +121,10 @@ diarization:
   baseUrl: http://conversation-toolbox-diarization:8001
   pipeline: pyannote/speaker-diarization-community-1
   gpuMemoryFraction: '0.10'
-  cudaVisibleDevices: GPU-8bac3311-f987-7d04-adc5-4f8a12e3ed59
-  nodeName: pcai-se-scs04.hst.lab
+  # Optional. If empty, the pod is not pinned to a specific node and
+  # CUDA_VISIBLE_DEVICES is not set (the runtime picks the GPU).
+  cudaVisibleDevices: ""
+  nodeName: ""
   tolerations: []
   resources:
     requests:
@@ -164,6 +166,9 @@ secrets:
   asrApiKey: ""
   llmApiKey: ""
   ttsApiKey: ""
+  # Required only when diarization.enabled is true (pyannote). Provide a
+  # Hugging Face token with access to the gated speaker-diarization model.
+  hfToken: ""
 
 ezua:
   enabled: true

@@ -45,8 +45,10 @@ spec:
               value: {{ .Values.diarization.pipeline | quote }}
             - name: GPU_MEMORY_FRACTION
               value: {{ .Values.diarization.gpuMemoryFraction | quote }}
+            {{- if .Values.diarization.cudaVisibleDevices }}
             - name: CUDA_VISIBLE_DEVICES
               value: {{ .Values.diarization.cudaVisibleDevices | quote }}
+            {{- end }}
           resources:
             {{- toYaml .Values.diarization.resources | nindent 12 }}
           volumeMounts:

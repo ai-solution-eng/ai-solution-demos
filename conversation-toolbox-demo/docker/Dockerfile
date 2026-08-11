@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y ffmpeg gcc && rm -rf /var/lib/apt/lists
 
 WORKDIR ${APP_HOME}
 
-COPY docker/requirements-lean.txt docker/requirements.txt ./
+COPY requirements-lean.txt requirements.txt ./
 RUN pip install --no-cache-dir -r requirements-lean.txt
 
 COPY src/speech_to_speech_tools/app.py ./
