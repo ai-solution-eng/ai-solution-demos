@@ -9,6 +9,8 @@
 
 ## Abstract
 
+**Important Note: Since this demo was first developed, [vLLM-Omni](https://github.com/vllm-project/vllm-omni) made the deployment of many TTS models on MLIS straightforward. We recommend leveraging it (for example to deploy Qwen-TTS, or Fish Audio S2 Pro models) rather than using the custom Chatterbox image used in this readme.**
+
 This demo mainly aims to prove that PCAI can host end-to-end voice agent solutions that not only can speak English, but any other language, as long these languages are supported by both the chat model, a Speech-To-Text (STT) model and a Text-To-Speech (TTS) model.
 Hence, the focus of this demo is not centered on the end application, but rather on the capabilities of the deployed models, defaulting to Open WebUI as application interface.
 

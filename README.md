@@ -24,7 +24,6 @@ These are the following:
 | [Realtime Live Voice Translation](realtime-live-voice-translation)                | A custom web application that captures the user's voice and provides transcription and translation in real time. Relies on Whisper ASR model and a generic LLM deployed on **MLIS**.|
 | [Text Document Analysis](text-document-analysis)                | A simple web application in which users can upload text and PDF files, ask or upload a list of questions and get answers for each document in an Excel sheet, after document analysis leveraging an LLM deployed using **MLIS**.           |
 | [Vision Analytics](vision-analytics)                        | A Gradio application using a VLM to analyze images, videos and/or streams. Files can be uploaded from the UI, or read from the filesystem. Relies on **MLIS** for model deployment.           |
-| [Voice Agent](voice-agent)                        | A custom Gradio application that connects to a chat model, Whisper for STT and XTTS-v2 for TTS, all deployed on **MLIS**, to provide a conversational assitant, able to discuss with the user in many different languages. Also includes a "chat with SQL data" scenario.           |
 
 The remaining demos are split between two folders:
 - **Vertical_demos**: Demos bound to a specific vertical, or which require provided data to be run (not runnable with your own data).
@@ -38,7 +37,6 @@ The following demos will be updated:
 
 New demos are being considered:
 - **Model Monitoring**
-- **Object Detection**
 - **RAG**
 
 ## Contributions
