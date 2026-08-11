@@ -189,7 +189,7 @@ plain JSON **object mapping a tool name to its MCP server config** — no
 
 **Note**:
   * Despite respectively leveraging vLLM and vLLM-Omni, neither the Cohere Transcribe deployment, nor the Fish Audio S2 pro one use official vLLM/vLLM-Omni images. Both official images are missing dependencies that have to be installed in order to leverage these models.
-  * This is the reason why the !!!!!!!!!!!!!!!!!! image has been built for the Cohere deployment, using the following content as Dockerfile:
+  * This is the reason why the ghcr.io/ai-solution-eng/vllm-audio-video:v1.0 image has been built for the Cohere deployment, using the following content as Dockerfile:
 ```
 FROM vllm/vllm-openai:latest
 
@@ -201,7 +201,7 @@ RUN apt-get update && apt-get install -y \
 # Add audio/video Python dependencies
 RUN uv pip install --system vllm[audio,video] av scipy soundfile librosa
 ```
-  * And the !!!!!!!!!!!!!!!!!!!! image for the Fish Audio S2 pro deployment, using this content as Dockerfile:
+  * And the ghcr.io/ai-solution-eng/vllm-omni-fish:v1.0 image for the Fish Audio S2 pro deployment, using this content as Dockerfile:
 ```
 FROM vllm/vllm-omni:latest
 
