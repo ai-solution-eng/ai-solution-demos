@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.deployment.name }}-configmap
+  namespace: {{ .Release.Namespace }}
+data:
+  ASR_BASE_URL: {{ .Values.config.asrBaseUrl | quote }}
+  HALLUCINATION_PATTERNS: {{ .Values.config.hallucinationPatterns | quote }}
+  LLM_BASE_URL: {{ .Values.config.llmBaseUrl | quote }}
+  SYSTEM_PROMPT: {{ .Values.config.systemPrompt | quote }}
+  TTS_BASE_URL: {{ .Values.config.ttsBaseUrl | quote }}
+  TTS_VOICE: {{ .Values.config.ttsVoice | quote }}
+  SAMPLE_RATE: {{ .Values.config.sampleRate | quote }}
+  VAD_AGGRESSION: {{ .Values.config.vadAggression | quote }}
+  BATCH_TRANSCRIPTION_WORKER_COUNT: {{ .Values.config.batchTranscriptionWorkerCount | quote }}
+  REDIS_URL: {{ .Values.redis.url | quote }}
+  DIARIZATION_BASE_URL: {{ .Values.diarization.baseUrl | quote }}

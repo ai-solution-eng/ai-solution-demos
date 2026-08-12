@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <title>MP3 File Transcription</title>
+    <style>
+        :root {
+            --primary: #01A982;
+            --primary-dark: #008567;
+            --success: #01A982;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+            --bg: #f5f7fa;
+            --surface: #ffffff;
+            --text: #1a1a1a;
+            --text-muted: #5e6b7a;
+            --border: #d4dce6;
+            --hpe-green: #01A982;
+            --hpe-dark: #1a1a1a;
+        }
+        [data-theme="dark"] {
+            --bg: #0f172a;
+            --surface: #1e293b;
+            --text: #e2e8f0;
+            --text-muted: #94a3b8;
+            --border: #334155;
+            --hpe-dark: #0a0f1e;
+        }
+        [data-theme="dark"] .upload-area:hover, [data-theme="dark"] .upload-area.dragover { background: #1a3a32; }
+        [data-theme="dark"] .error-message { background: #450a0a; border-color: #7f1d1d; color: #fca5a5; }
+        
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        
+        @font-face {
+            font-family: 'MetricHPE';
+            src: local('MetricHPE'), local('Metric HPE'), local('Arial');
+        }
+        
+        body {
+            font-family: 'MetricHPE', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, var(--hpe-green), var(--primary-dark));
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .header h1 { font-size: 1.5rem; margin-bottom: 8px; }
+        .header p { opacity: 0.9; font-size: 0.9rem; }
+        
+        .nav {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 0 24px;
+            background: var(--hpe-dark);
+            height: 48px;
+        }
+        .nav-brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-right: 16px;
+            text-decoration: none;
+            color: white;
+            font-weight: 600;
+            font-size: 0.85rem;
+            letter-spacing: 0.02em;
+            padding: 4px 0;
+            white-space: nowrap;
+        }
+        .nav-brand .hpe-element {
+            display: inline-block;
+            width: 18px;
+            height: 18px;
+            background: var(--hpe-green);
+            clip-path: polygon(25% 0%, 100% 0%, 75% 100%, 0% 100%);
+            flex-shrink: 0;
+        }
+        .nav a {
+            padding: 8px 14px;
+            border-radius: 6px;
+            text-decoration: none;
+            color: rgba(255,255,255,0.75);
+            font-weight: 500;
+            font-size: 0.8rem;
+            transition: all 0.15s;
+            white-space: nowrap;
+        }
+        .nav a:hover { background: rgba(255,255,255,0.1); color: white; }
+        .nav a.active { background: var(--hpe-green); color: white; }
+        
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .card {
+            background: var(--surface);
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            margin-bottom: 20px;
+        }
+        
+        .card h2 {
+            font-size: 1.1rem;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .upload-area {
+            border: 2px dashed var(--border);
+            border-radius: 12px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .upload-area:hover, .upload-area.dragover {
+            border-color: var(--primary);
+            background: #faf5ff;
+        }
+        
+        .upload-area .icon {
+            font-size: 3rem;
+            margin-bottom: 16px;
+        }
+        
+        .upload-area h3 {
+            margin-bottom: 8px;
+        }
+        
+        .upload-area p {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+        
+        input[type="file"] { display: none; }
+        
+        .file-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 16px;
+            background: var(--bg);
+            border-radius: 8px;
+            margin-top: 16px;
+        }
+        
+        .file-info .file-icon {
+            font-size: 2rem;
+        }
+        
+        .file-info .file-details {
+            flex: 1;
+        }
+        
+        .file-info .file-name {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        
+        .file-info .file-size {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+        
+        .file-info .remove-file {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: var(--text-muted);
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+        
+        .form-group select, .form-group input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 0.95rem;
+        }
+        
+        .btn {
+            padding: 14px 28px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 1rem;
+        }
+        
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-primary:hover { background: var(--primary-dark); }
+        .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+        .btn-success { background: var(--success); color: white; }
+        .btn-secondary { background: var(--bg); color: var(--text); border: 1px solid var(--border); }
+        
+        .progress-container {
+            margin-top: 20px;
+            display: none;
+        }
+        
+        .progress-bar {
+            height: 8px;
+            background: var(--bg);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: var(--primary);
+            width: 0%;
+            transition: width 0.3s;
+        }
+        
+        .progress-text {
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+        
+        .results-card {
+            display: none;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+        
+        .stat-box {
+            background: var(--bg);
+            padding: 16px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        
+        .stat-box .value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--primary);
+        }
+        
+        .stat-box .label {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+        
+        .transcript-display {
+            background: var(--bg);
+            border-radius: 8px;
+            padding: 20px;
+            max-height: 500px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            font-family: monospace;
+            line-height: 1.8;
+            margin-bottom: 20px;
+        }
+        
+        .speaker-segment {
+            margin-bottom: 16px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .speaker-segment:last-child {
+            border-bottom: none;
+        }
+        
+        .speaker-segment .speaker-label {
+            font-weight: 600;
+            color: var(--primary);
+            margin-bottom: 4px;
+        }
+        
+        .speaker-segment .timestamp {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+        
+        .speaker-segment .text {
+            margin-top: 8px;
+            line-height: 1.6;
+        }
+        
+        .actions {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        
+        .toast-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        
+        .toast {
+            padding: 12px 20px;
+            border-radius: 8px;
+            background: var(--surface);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            animation: slideIn 0.3s ease;
+        }
+        
+        .toast.success { border-left: 4px solid var(--success); }
+        .toast.error { border-left: 4px solid var(--danger); }
+        .toast.info { border-left: 4px solid var(--primary); }
+        
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        
+        .error-message {
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            color: #991b1b;
+            padding: 16px;
+            border-radius: 8px;
+            margin-top: 16px;
+            display: none;
+        }
+    </style>
+    <script>if(localStorage.getItem('dark-mode')==='true')document.documentElement.setAttribute('data-theme','dark')</script>
+</head>
+<body>
+    <div class="header">
+        <h1>📁 MP3 File Transcription</h1>
+        <p>Upload audio files with multiple speakers for transcription</p>
+    </div>
+    
+    <nav class="nav">
+        <a href="/" class="nav-brand">
+            <span class="hpe-element"></span>
+            <span>Hewlett Packard Enterprise</span>
+        </a>
+        <a href="/">Voice Assistant</a>
+        <a href="/voice-profiles">Voice Profiles</a>
+        <a href="/multi-user">Multi-User</a>
+        <a href="/transcribe-file" class="active">File Transcription</a>
+        <a href="/batch-transcription">Batch Transcription</a>
+            <button id="dark-mode-toggle" style="margin-left:auto;background:none;border:none;color:white;font-size:1.1rem;cursor:pointer;padding:8px;border-radius:6px;transition:background 0.15s;" title="Toggle dark mode">🌙</button>
+    </nav>
+    
+    <div class="container">
+        <!-- Upload Card -->
+        <div class="card">
+            <h2>📤 Upload Audio File</h2>
+            
+            <div class="upload-area" id="upload-area" onclick="document.getElementById('file-input').click()">
+                <div class="icon">🎵</div>
+                <h3>Click to upload or drag and drop</h3>
+                <p>MP3, WAV, M4A, FLAC, OGG, AAC, WMA, AIFF • Max 100MB</p>
+            </div>
+            
+            <input type="file" id="file-input" accept=".mp3,.wav,.m4a,.flac,.ogg,.aac,.wma,.aiff" onchange="handleFileSelect(event)">
+            
+            <div id="file-info" class="file-info" style="display: none;">
+                <div class="file-icon">🎵</div>
+                <div class="file-details">
+                    <div class="file-name" id="file-name"></div>
+                    <div class="file-size" id="file-size"></div>
+                </div>
+                <button class="remove-file" onclick="removeFile()">✕</button>
+            </div>
+            
+            <div class="form-group" style="margin-top: 20px;">
+                <label for="num-speakers">Number of Speakers (estimated)</label>
+                <select id="num-speakers">
+                    <option value="1" selected>1 Speaker</option>
+                    <option value="2">2 Speakers</option>
+                    <option value="3">3 Speakers</option>
+                    <option value="4">4 Speakers</option>
+                    <option value="5">5 Speakers</option>
+                    <option value="6">6+ Speakers</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="language">Language</label>
+                <select id="language">
+                    <option value="">Auto-detect</option>
+                    <option value="en">English (en)</option>
+                    <option value="es">Spanish (es)</option>
+                    <option value="fr">French (fr)</option>
+                    <option value="de">German (de)</option>
+                    <option value="zh">Chinese (zh)</option>
+                    <option value="ja">Japanese (ja)</option>
+                    <option value="ko">Korean (ko)</option>
+                    <option value="ru">Russian (ru)</option>
+                    <option value="ar">Arabic (ar)</option>
+                    <option value="pt">Portuguese (pt)</option>
+                    <option value="hi">Hindi (hi)</option>
+                    <option value="it">Italian (it)</option>
+                    <option value="nl">Dutch (nl)</option>
+                    <option value="pl">Polish (pl)</option>
+                    <option value="tr">Turkish (tr)</option>
+                </select>
+            </div>
+            
+            <div id="diarization-warning" class="error-message" style="display: none; margin-top: 12px;"></div>
+            
+            <button class="btn btn-primary" id="btn-transcribe" onclick="startTranscription()" disabled>
+                🎤 Start Transcription
+            </button>
+            
+            <div id="error-message" class="error-message"></div>
+            
+            <div class="progress-container" id="progress-container">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progress-fill"></div>
+                </div>
+                <div class="progress-text" id="progress-text">Preparing...</div>
+            </div>
+        </div>
+        
+        <!-- Results Card -->
+        <div class="card results-card" id="results-card">
+            <h2>📝 Transcription Results</h2>
+            
+            <div class="stats-grid">
+                <div class="stat-box">
+                    <div class="value" id="stat-speakers">0</div>
+                    <div class="label">Speakers Detected</div>
+                </div>
+                <div class="stat-box">
+                    <div class="value" id="stat-segments">0</div>
+                    <div class="label">Segments</div>
+                </div>
+                <div class="stat-box">
+                    <div class="value" id="stat-duration">0:00</div>
+                    <div class="label">Duration</div>
+                </div>
+            </div>
+            
+            <div class="transcript-display" id="transcript-display"></div>
+            
+            <div class="actions">
+                <button class="btn btn-success" onclick="downloadTranscript()">
+                    💾 Download Transcript
+                </button>
+                <button class="btn btn-secondary" onclick="copyTranscript()">
+                    📋 Copy to Clipboard
+                </button>
+                <button class="btn btn-secondary" onclick="resetTranscription()">
+                    🔄 New Transcription
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <div class="toast-container" id="toast-container"></div>
+    
+    <script>
+        let selectedFile = null;
+        let transcriptData = null;
+        
+        const uploadArea = document.getElementById('upload-area');
+        const fileInput = document.getElementById('file-input');
+        const fileInfo = document.getElementById('file-info');
+        const fileName = document.getElementById('file-name');
+        const fileSize = document.getElementById('file-size');
+        const btnTranscribe = document.getElementById('btn-transcribe');
+        const progressContainer = document.getElementById('progress-container');
+        const progressFill = document.getElementById('progress-fill');
+        const progressText = document.getElementById('progress-text');
+        const resultsCard = document.getElementById('results-card');
+        const transcriptDisplay = document.getElementById('transcript-display');
+        const errorMessage = document.getElementById('error-message');
+        const toastContainer = document.getElementById('toast-container');
+        
+        fetch('/api/config')
+            .then(r => r.ok ? r.json() : null)
+            .then(config => {
+                if (config && config.language) {
+                    document.getElementById('language').value = config.language;
+                }
+            })
+            .catch(() => {});
+        
+        // Drag and drop handlers
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            uploadArea.addEventListener(eventName, preventDefaults, false);
+        });
+        
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+        
+        ['dragenter', 'dragover'].forEach(eventName => {
+            uploadArea.addEventListener(eventName, () => uploadArea.classList.add('dragover'), false);
+        });
+        
+        ['dragleave', 'drop'].forEach(eventName => {
+            uploadArea.addEventListener(eventName, () => uploadArea.classList.remove('dragover'), false);
+        });
+        
+        uploadArea.addEventListener('drop', (e) => {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            if (files.length > 0) {
+                handleFile(files[0]);
+            }
+        });
+        
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) handleFile(file);
+        }
+        
+        function handleFile(file) {
+            const validTypes = ['audio/mpeg', 'audio/wav', 'audio/mp4', 'audio/x-m4a', 'audio/flac'];
+            const validExtensions = ['.mp3', '.wav', '.m4a', '.flac'];
+            
+            const ext = '.' + file.name.split('.').pop().toLowerCase();
+            
+            if (!validExtensions.includes(ext)) {
+                showError('Please upload an MP3, WAV, M4A, or FLAC file');
+                return;
+            }
+            
+            if (file.size > 100 * 1024 * 1024) {
+                showError('File size must be less than 100MB');
+                return;
+            }
+            
+            selectedFile = file;
+            fileName.textContent = file.name;
+            fileSize.textContent = formatFileSize(file.size);
+            fileInfo.style.display = 'flex';
+            btnTranscribe.disabled = false;
+            hideError();
+        }
+        
+        function removeFile() {
+            selectedFile = null;
+            fileInput.value = '';
+            fileInfo.style.display = 'none';
+            btnTranscribe.disabled = true;
+        }
+        
+        function formatFileSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        }
+        
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorMessage.style.display = 'block';
+        }
+        
+        function hideError() {
+            errorMessage.style.display = 'none';
+        }
+        
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            toastContainer.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+        
+        async function startTranscription() {
+            if (!selectedFile) return;
+            
+            const numSpeakers = parseInt(document.getElementById('num-speakers').value);
+            const language = document.getElementById('language').value;
+            document.getElementById('diarization-warning').style.display = 'none';
+            
+            btnTranscribe.disabled = true;
+            btnTranscribe.textContent = '⏳ Transcribing...';
+            progressContainer.style.display = 'block';
+            progressFill.style.width = '0%';
+            progressText.textContent = 'Uploading file...';
+            hideError();
+            
+            try {
+                // Simulate progress updates (real implementation would use Server-Sent Events)
+                let progress = 0;
+                const progressInterval = setInterval(() => {
+                    if (progress < 90) {
+                        progress += Math.random() * 10;
+                        progressFill.style.width = Math.min(progress, 90) + '%';
+                        progressText.textContent = `Transcribing... ${Math.round(progress)}%`;
+                    }
+                }, 500);
+                
+                const formData = new FormData();
+                formData.append('file', selectedFile);
+                formData.append('num_speakers', numSpeakers);
+                if (language) {
+                    formData.append('language', language);
+                }
+                
+                const response = await fetch('/api/transcribe-mp3', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                clearInterval(progressInterval);
+                
+                if (!response.ok) {
+                    let detail = 'Transcription failed';
+                    try {
+                        const error = await response.json();
+                        detail = error.detail || detail;
+                    } catch (e) {
+                        const text = await response.text();
+                        if (text) detail = text;
+                    }
+                    throw new Error(detail);
+                }
+                
+                transcriptData = await response.json();
+                
+                progressFill.style.width = '100%';
+                progressText.textContent = 'Complete!';
+                
+                displayResults(transcriptData);
+                showToast('Transcription complete!', 'success');
+                
+            } catch (error) {
+                showError(error.message);
+                showToast('Transcription failed', 'error');
+            } finally {
+                btnTranscribe.disabled = false;
+                btnTranscribe.textContent = '🎤 Start Transcription';
+            }
+        }
+        
+        function displayResults(data) {
+            const warningEl = document.getElementById('diarization-warning');
+            if ((data.requested_speakers || 1) > 1 && data.diarization_used === false) {
+                warningEl.textContent = '⚠️ Diarization is not enabled. Segments were split using energy-based analysis and speaker separation may be inaccurate.';
+                warningEl.style.display = 'block';
+            } else {
+                warningEl.style.display = 'none';
+            }
+            
+            // Update stats
+            document.getElementById('stat-speakers').textContent = data.speaker_count;
+            document.getElementById('stat-segments').textContent = data.segments.length;
+            
+            // Format transcript
+            let formattedTranscript = '';
+            data.segments.forEach(segment => {
+                const startTime = formatTime(segment.start);
+                const endTime = formatTime(segment.end);
+                formattedTranscript += `[${startTime} - ${endTime}] ${segment.speaker}: ${segment.text}\n\n`;
+            });
+            
+            transcriptDisplay.textContent = formattedTranscript;
+            
+            // Calculate total duration
+            if (data.segments.length > 0) {
+                const maxEnd = Math.max(...data.segments.map(s => s.end));
+                document.getElementById('stat-duration').textContent = formatTime(maxEnd);
+            }
+            
+            resultsCard.style.display = 'block';
+            resultsCard.scrollIntoView({ behavior: 'smooth' });
+        }
+        
+        function formatTime(seconds) {
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${mins}:${secs.toString().padStart(2, '0')}`;
+        }
+        
+        function downloadTranscript() {
+            if (!transcriptData) return;
+            
+            const content = transcriptData.transcript;
+            const blob = new Blob([content], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `transcript_${Date.now()}.txt`;
+            a.click();
+            URL.revokeObjectURL(url);
+            showToast('Transcript downloaded!', 'success');
+        }
+        
+        function copyTranscript() {
+            if (!transcriptData) return;
+            navigator.clipboard.writeText(transcriptData.transcript);
+            showToast('Copied to clipboard!', 'success');
+        }
+        
+        function resetTranscription() {
+            transcriptData = null;
+            selectedFile = null;
+            fileInput.value = '';
+            fileInfo.style.display = 'none';
+            btnTranscribe.disabled = true;
+            resultsCard.style.display = 'none';
+            progressContainer.style.display = 'none';
+            transcriptDisplay.textContent = '';
+            document.getElementById('diarization-warning').style.display = 'none';
+        }
+    </script>
+    <script>
+        (function() {
+            var toggle = document.getElementById('dark-mode-toggle');
+            if (toggle) {
+                toggle.textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️' : '🌙';
+                toggle.addEventListener('click', function() {
+                    var nowDark = document.documentElement.getAttribute('data-theme') === 'dark';
+                    if (nowDark) {
+                        document.documentElement.removeAttribute('data-theme');
+                        localStorage.setItem('dark-mode', 'false');
+                        toggle.textContent = '🌙';
+                    } else {
+                        document.documentElement.setAttribute('data-theme', 'dark');
+                        localStorage.setItem('dark-mode', 'true');
+                        toggle.textContent = '☀️';
+                    }
+                });
+            }
+        })();
+    </script>
+</body>
+</html>

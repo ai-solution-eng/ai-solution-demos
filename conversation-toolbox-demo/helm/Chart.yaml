@@ -1,0 +1,7 @@
+apiVersion: v2
+name: conversation-toolbox
+description: Speech to speech tools Helm chart
+type: application
+version: 4.4.2
+appVersion: "v4.4.2"
+icon: file://icon.ico

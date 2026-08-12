@@ -1,0 +1,4 @@
+# Scripts containing JWT tokens (eyJhbG...)
+src/speech_to_speech_tools/helper_scripts/key_export.sh
+src/speech_to_speech_tools/helper_scripts/test_agents_with_tools.py
+src/speech_to_speech_tools/utils/pcai_models.py

@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.deployment.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.deployment.appName }}
+spec:
+  # Recreate because the cluster's worker nodes are at pod-capacity (240
+  # per node). RollingUpdate's surge pods deadlock when no slots are free.
+  # Brief downtime during deploys is acceptable for this app.
+  strategy:
+    type: Recreate
+  replicas: {{ .Values.deployment.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Values.deployment.appName }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ toJson .Values.config | sha256sum }}
+      labels:
+        app: {{ .Values.deployment.appName }}
+    spec:
+      containers:
+        - name: {{ .Values.deployment.appName }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.service.targetPort }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Values.deployment.name }}-configmap
+            - secretRef:
+                name: {{ .Values.deployment.name }}-secrets
+          env:
+            {{- toYaml .Values.env | nindent 12 }}
+          resources: 
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- if .Values.livenessProbe.enabled }} 
+          livenessProbe: 
+            httpGet: 
+              path: {{ .Values.livenessProbe.path }} 
+              port: {{ .Values.livenessProbe.port }} 
+            initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }} 
+            periodSeconds: {{ .Values.livenessProbe.periodSeconds }} 
+            timeoutSeconds: {{ .Values.livenessProbe.timeoutSeconds }} 
+            failureThreshold: {{ .Values.livenessProbe.failureThreshold }} 
+          {{- end }} 
+          {{- if .Values.readinessProbe.enabled }} 
+          readinessProbe: 
+            httpGet: 
+              path: {{ .Values.readinessProbe.path }} 
+              port: {{ .Values.readinessProbe.port }} 
+            initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }} 
+            periodSeconds: {{ .Values.readinessProbe.periodSeconds }} 
+            timeoutSeconds: {{ .Values.readinessProbe.timeoutSeconds }} 
+            failureThreshold: {{ .Values.readinessProbe.failureThreshold }} 
+          {{- end }}
+          volumeMounts:
+            - name: recordings-volume
+              mountPath: /mnt/persistent/recordings
+            - name: transcripts-volume
+              mountPath: /mnt/persistent/transcripts
+      volumes:
+        - name: recordings-volume
+          persistentVolumeClaim:
+            claimName: {{ .Values.deployment.name }}-recordings-pvc
+          # emptyDir: {}
+        - name: transcripts-volume
+          persistentVolumeClaim:
+            claimName: {{ .Values.deployment.name }}-transcripts-pvc
+          # emptyDir: {}

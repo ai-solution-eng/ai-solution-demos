@@ -1,0 +1,76 @@
+{{- if .Values.workers.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.deployment.name }}-workers
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.deployment.name }}-workers
+    hpe-ezua/type: vendor-service
+    hpe-ezua/app: {{ .Chart.Name }}
+spec:
+  # Recreate: cluster worker nodes are at 240-pod capacity. RollingUpdate
+  # surge pods deadlock when no slots are free.
+  strategy:
+    type: Recreate
+  replicas: {{ .Values.workers.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Values.deployment.name }}-workers
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ toJson .Values.config | sha256sum }}
+      labels:
+        app: {{ .Values.deployment.name }}-workers
+    spec:
+      containers:
+      - name: worker
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command: ["arq", "workers.WorkerSettings"]
+        envFrom:
+          - configMapRef:
+              name: {{ .Values.deployment.name }}-configmap
+          - secretRef:
+              name: {{ .Values.deployment.name }}-secrets
+        env:
+          - name: REDIS_URL
+            value: {{ .Values.redis.url | default "redis://redis-service:6379/0" | quote }}
+        resources:
+          {{- toYaml .Values.workers.resources | nindent 10 }}
+        # arq runs a pure async event loop (no HTTP server), so probes
+        # are exec-based using bash's /dev/tcp pseudo-device — a raw TCP
+        # connect to Redis that runs INSIDE the pod (where cluster DNS
+        # resolves). tcpSocket probes with host= are resolved by kubelet
+        # on the node, which can't see cluster service names. A Python
+        # exec probe (import redis; ping()) works but costs ~200m CPU
+        # at idle from interpreter spawns. bash /dev/tcp is <1ms.
+        livenessProbe:
+          exec:
+            command:
+              - bash
+              - -c
+              - 'exec 3<>/dev/tcp/conversation-toolbox-redis/6379'
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          timeoutSeconds: 3
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+              - bash
+              - -c
+              - 'exec 3<>/dev/tcp/conversation-toolbox-redis/6379'
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+        volumeMounts:
+          - name: transcripts-volume
+            mountPath: /mnt/persistent/transcripts
+      volumes:
+        - name: transcripts-volume
+          persistentVolumeClaim:
+            claimName: {{ .Values.deployment.name }}-transcripts-pvc
+{{- end }}

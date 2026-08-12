@@ -15,6 +15,7 @@ These are the following:
 | --------------------------------------------------------------|----------------------------|
 | [Basic Agent Langflow](basic-agent-langflow)              | A **Langflow** setup defining a basic agentic flow to answer questions requiring informations from both local files, using RAG, and data from a SQL database. Relies on **MLIS** for model deployment. **MCP server** usage optional.           |
 | [Base Code Assistant - Opencode](basic-code-assistant-opencode)                          | An explanation on how to setup and use **Opencode**, an open source AI coding agent, in a **VS Code server**, leveraging models deployed using **MLIS**.            |
+| [Conversation Toolbox](conversation-toolbox-demo)                          | A custom web application connecting to a chat model, an ASR model and Fish Audio S2 pro TTS model, deployed using **MLIS**, to provide a multilingual AI voice assistant, as well as file transcriptions capabilities. Voice Assistant accepts connections to **MCP servers** to enrich its capabilities.           |
 | [Finetune Tool Calling LLM](finetune-tool-calling-llm)                | **Notebooks**, using **Nemo microservices** to fine-tune an LLM to improve its tool-calling capabilities.           |
 | [Image Generation - ComfyUI](image-generation-comfyui)                | An explanation of how to simply use **ComfyUI**, an AI creation engine enabling powerful media creation AI workflows, such as, but not limited to **image generation**, **image editing** and **video generation**.|
 | [Image Segmentation](image-segmentation)                      | Python scripts to fine-tune CNNs for segmentation tasks on provided datasets, expected to be executed in a **Jupyter notebook**, with experiment tracking on **MLflow**. Also includes a streamlit application to display segmentation results from any checkpoint saved, on any dataset image.           |
@@ -24,7 +25,6 @@ These are the following:
 | [Realtime Live Voice Translation](realtime-live-voice-translation)                | A custom web application that captures the user's voice and provides transcription and translation in real time. Relies on Whisper ASR model and a generic LLM deployed on **MLIS**.|
 | [Text Document Analysis](text-document-analysis)                | A simple web application in which users can upload text and PDF files, ask or upload a list of questions and get answers for each document in an Excel sheet, after document analysis leveraging an LLM deployed using **MLIS**.           |
 | [Vision Analytics](vision-analytics)                        | A Gradio application using a VLM to analyze images, videos and/or streams. Files can be uploaded from the UI, or read from the filesystem. Relies on **MLIS** for model deployment.           |
-| [Voice Agent](voice-agent)                        | A custom Gradio application that connects to a chat model, Whisper for STT and XTTS-v2 for TTS, all deployed on **MLIS**, to provide a conversational assitant, able to discuss with the user in many different languages. Also includes a "chat with SQL data" scenario.           |
 
 The remaining demos are split between two folders:
 - **Vertical_demos**: Demos bound to a specific vertical, or which require provided data to be run (not runnable with your own data).
@@ -34,11 +34,9 @@ The remaining demos are split between two folders:
 
 The following demos will be updated:
 - **Finetune Tool Calling LLM**
-- **Voice Agent**
 
 New demos are being considered:
 - **Model Monitoring**
-- **Object Detection**
 - **RAG**
 
 ## Contributions
