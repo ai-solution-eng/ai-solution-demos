@@ -9,14 +9,9 @@
 ## Abstract
 
 
-A speech‑to‑speech conversational AI and transcription platform built for PCAI.
-It provides a streaming, voice‑driven assistant with tool calling, real‑time
-multi‑user transcription rooms, single‑file and batched audio transcription
-(with optional ML speaker diarization), and Fish S2‑pro voice‑profile cloning.
+A speech‑to‑speech conversational AI and transcription platform built for PCAI. It provides a streaming, voice‑driven assistant with tool calling, real‑time multi‑user transcription rooms, single‑file and batched audio transcription (with optional ML speaker diarization), and Fish S2‑pro voice‑profile cloning.
 
-The backend is a single FastAPI service (`app.py`) backed by Redis and arq
-workers. All model inference (ASR, LLM, TTS) talks to external vLLM endpoints (expected to correspond to MLIS deployments)
-shown in the app as configurable base URLs — swap endpoints without rebuilding.
+The backend is a single FastAPI service (`app.py`) backed by Redis and arq workers. All model inference (ASR, LLM, TTS) talks to external vLLM endpoints (expected to correspond to MLIS deployments) shown in the app as configurable base URLs — swap endpoints without rebuilding.
 
 This demo features:
 * **HPE Machine Learning Inference Software (MLIS)** to deploy the following models:
@@ -58,7 +53,7 @@ Assuming, like with our previous voice agents demos, that the bottleneck for nat
 
 In practice, you should **always create a new voice profile** using a sample spoken in the language you plan to use the application with, **unless you plan to use a "Tier 1" supported language**.
 
-**Note: Despite 80+ languages being officially supported by Fish Audio S2‑pro, the voice quality may left to be desired for some languages, even with quality voice samples provided for voice cloning. For those cases, you may still want to try our [previous voice agent demo](archived_demos/voice-agent-xtts/doc)**
+**Note: Despite 80+ languages being officially supported by Fish Audio S2‑pro, the voice quality may left to be desired for some languages, even with quality voice samples provided for voice cloning. For those cases, you may still want to try our [previous voice agent demo](../archived-demos/voice-agent-xtts/doc)**
 
 
 **Recordings**:
@@ -71,7 +66,7 @@ In practice, you should **always create a new voice profile** using a sample spo
 
 The main use of this demo is the conversational voice assistant that relies on Cohere to transcribe the demo user queries into text, on a standard chat model (gemma-4-31B-it-FP8-block) for interpreting the queries and respond to them, and on Fish Audio S2 Pro to generate an oral response from the text output. Those three models need to be deployed to MLIS, and the demo user is expected to connect them to the application, by providing their URLs and API keys, either during the application deployment (changing values.yaml) or after, directly from the UI.
 
-Input language (expected by Coehere for its transcription) can be selected from the application UI. Output language will match whatever language the chat model responds in, which can be changed, as its system prompt is made visible and editable from the UI.
+Input language (expected by Cohere for its transcription) can be selected from the application UI. Output language will match whatever language the chat model responds in, which can be changed, as its system prompt is made visible and editable from the UI.
 
 Voice to be used for generating the audio response can also be selected from the UI. Fish Audio S2 Pro supports voice cloning, and this demo allows for that: you can upload a clean voice sample (30s max) to the application (and its transcription), and the cloned voice will be available for selection for future conversations with the agent. This is actually heavily recommended for non-english demos. For convenience, if you do not have a voice sample and its transcription at hand, you can also record yourself from the application to clone your voice, and an auto-transcribe button (leveraging Cohere) is available to avoid having to type what you said/is said in your provided sample.
 
@@ -86,19 +81,19 @@ The web app this demo leverages also includes a multi-user live transcription se
 #### Basic Demo Workflow
 
 The actual demo workflow is quite simple, open the app, go the Voice Assistant tab and check the settings first:
-* Language, under "General Settings" refers to the language your speech will be transcribed as by Cohere.
-* Review the System Prompt under the LLM Model Configuration Section. This is especially important if you want the model to respond to you in a language different from the one you speak or if you want to leverage Fish Audio S2‑pro tags (the LLM must output them in order for the TTS model to use them).
+* **Language**, under **General Settings** refers to the language your speech will be transcribed as by Cohere.
+* Review the **System Prompt** under the **LLM Model Configuration** section. This is especially important if you want the model to respond to you in a language different from the one you speak or if you want to leverage Fish Audio S2‑pro tags (the LLM must output them in order for the TTS model to use them).
   * Note that these tags may not be as impactful for all languages: you may want to remove them from the system prompt, depending on your language.
-* Chose the TTS Voice, under the TTS Model Configuration section. A **voice cloned from a sample in the language you expect as output is highly recommended**.
+* Chose the **TTS Voice**, under the **TTS Model Configuration** section. A **voice cloned from a sample in the language you expect as output is highly recommended**.
 * If the demo was set up properly, no change should be required in either of Base URL or API Key from the ASR, LLM or TTS Model Configuration Sections. The **Test Connection** button, in the Local Storage section can be pressed to check all models are reachable.
-* (Optional) Add tools you want the LLM to leverage in the Tool Calling Response-API Json field. See the "Provide tools to the LLM" section for details.
+* (Optional) Add tools you want the LLM to leverage in the **Tool Calling Response-API Json** field. See the "Provide tools to the LLM" section for details.
 
 Once done, you can start chatting with the Voice Assistant:
-* Click on "Start Conversation"
+* Click on **Start Conversation**
 * Either start talking, or write down your questions, and the LLM will generate a response, using your provided system prompt. Shortly after, the audio will automatically play.
-* Click "Stop Conversation" when you are done
-* During the conversation, click on the "Interrupt AI" to end the audio answer that is being played (e.g. the answer is too long, or not interesting). If "Voice Interrupt" is set to ON, you can also interrupt the audio answer whenever you say something, which is then passed to the LLM to generate a new response.
-* Don't hesitate to adjust the Noise Floor setting, under the Audio Settings section: reduce its value if you feel that you have to speak too loud for your speech to be processed. On the opposite, increase it if you feel the application is too noise sensitve and tends to interpret background noise as something to transcribe.
+* Click **Stop Conversation** when you are done
+* During the conversation, click on the **Interrupt AI** to end the audio answer that is being played (e.g. the answer is too long, or not interesting). If "Voice Interrupt" is set to ON, you can also interrupt the audio answer whenever you say something, which is then passed to the LLM to generate a new response.
+* Don't hesitate to adjust the **Noise Floor** setting, under the Audio Settings section: reduce its value if you feel that you have to speak too loud for your speech to be processed. On the opposite, increase it if you feel the application is too noise sensitve and tends to interpret background noise as something to transcribe.
 * To apply changes, you have to stop and restart the conversation.
 
 The other features of this application (multi-user live transcription, file/batch transcription) are not the focus of this demo, but should work out-of-the-box, as long as Cohere/the STT model is connected.
@@ -128,7 +123,7 @@ The other features of this application (multi-user live transcription, file/batc
   * **CohereLabs/cohere-transcribe-03-2026** MLIS configuration:
     * Registry: None
     * Model Format: Custom
-	* Image: TOBEREPLACEDWITHNEWIMAGE
+	* Image: ghcr.io/ai-solution-eng/vllm-audio-video:v1.0
 	* Resources:
 	  * CPU: 4 to 8 (flexible, lower values may work)
 	  * Memory: 20Gi to 40Gi (flexible, lower values may work)
@@ -138,7 +133,7 @@ The other features of this application (multi-user live transcription, file/batc
   * **fishaudio/s2-pro** MLIS configuration:
     * Registry: None
     * Model Format: Custom
-	* Image: TOBEREPLACEDWITHNEWIMAGE
+	* Image: ghcr.io/ai-solution-eng/vllm-omni-fish:v1.0
 	* Resources:
 	  * CPU: 4 to 8 (flexible, lower values may work)
 	  * Memory: 32Gi to 64Gi (flexible, lower values may work)
@@ -163,10 +158,7 @@ To use those models, an API token will have to be generated for each of the thre
 
 **3. (Optional) Provide tools to the LLM**:
 
-* Tools are passed to the LLM as the **"Tool Calling Response-API Json"** in the
-homepage configuration. The expected shape is a
-plain JSON **object mapping a tool name to its MCP server config** — no
-`description`/`definition` fields are needed. Some examples, for reference:
+* Tools are passed to the LLM as the **"Tool Calling Response-API Json"** in the homepage configuration. The expected shape is a plain JSON **object mapping a tool name to its MCP server config** — no `description`/`definition` fields are needed. Some examples, for reference:
 
 ```json
 {
@@ -219,5 +211,5 @@ ENTRYPOINT ["vllm", "serve"]
 ## Limitations
 
 * We expect the TTS model to be the quality bottleneck when it comes to delivering this demo in non-english languages. To make the most out of Fish Audio S2 pro model, you should always create a new voice profile using a sample speaking the voice you are willing to get as output.
-* If even a voice profile created from a high-quality sample does not sound good, swapping Fish Audio S2 pro with another TTS model would be a solution, but that TTS replacement would need to allow for voice cloning in order to keep using this same application. In the meantime, you may still want to try our [previous voice agent demo](archived_demos/voice-agent-xtts/doc)
+* If even a voice profile created from a high-quality sample does not sound good, swapping Fish Audio S2 pro with another TTS model would be a solution, but that TTS replacement would need to allow for voice cloning in order to keep using this same application. In the meantime, you may still want to try our [previous voice agent demo](../archived-demos/voice-agent-xtts/doc)
 * The provided application is meant for demo purposes only. As such, it may not be exempt of bugs/instability at times.
