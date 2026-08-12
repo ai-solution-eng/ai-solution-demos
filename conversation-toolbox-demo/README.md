@@ -98,6 +98,10 @@ Once done, you can start chatting with the Voice Assistant:
 
 The other features of this application (multi-user live transcription, file/batch transcription) are not the focus of this demo, but should work out-of-the-box, as long as Cohere/the STT model is connected.
 
+### Application Interface
+
+![interface](images/app-interface.png)
+
 ## Deployment
 
 ### Prerequisites
