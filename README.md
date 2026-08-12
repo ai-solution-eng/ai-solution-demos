@@ -15,6 +15,7 @@ These are the following:
 | --------------------------------------------------------------|----------------------------|
 | [Basic Agent Langflow](basic-agent-langflow)              | A **Langflow** setup defining a basic agentic flow to answer questions requiring informations from both local files, using RAG, and data from a SQL database. Relies on **MLIS** for model deployment. **MCP server** usage optional.           |
 | [Base Code Assistant - Opencode](basic-code-assistant-opencode)                          | An explanation on how to setup and use **Opencode**, an open source AI coding agent, in a **VS Code server**, leveraging models deployed using **MLIS**.            |
+| [Conversation Toolbox](conversation-toolbox-demo)                          | A custom web application connecting to a chat model, an ASR model and Fish Audio S2 pro TTS model, deployed using **MLIS**, to provide a multilingual AI voice assistant, as well as file transcriptions capabilities. Voice Assistant accepts connections to **MCP servers** to enrich its capabilities.           |
 | [Finetune Tool Calling LLM](finetune-tool-calling-llm)                | **Notebooks**, using **Nemo microservices** to fine-tune an LLM to improve its tool-calling capabilities.           |
 | [Image Generation - ComfyUI](image-generation-comfyui)                | An explanation of how to simply use **ComfyUI**, an AI creation engine enabling powerful media creation AI workflows, such as, but not limited to **image generation**, **image editing** and **video generation**.|
 | [Image Segmentation](image-segmentation)                      | Python scripts to fine-tune CNNs for segmentation tasks on provided datasets, expected to be executed in a **Jupyter notebook**, with experiment tracking on **MLflow**. Also includes a streamlit application to display segmentation results from any checkpoint saved, on any dataset image.           |
@@ -33,7 +34,6 @@ The remaining demos are split between two folders:
 
 The following demos will be updated:
 - **Finetune Tool Calling LLM**
-- **Voice Agent**
 
 New demos are being considered:
 - **Model Monitoring**
