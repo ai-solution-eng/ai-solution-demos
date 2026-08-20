@@ -8,6 +8,8 @@ from collections.abc import Awaitable, Callable, Sequence
 from math import ceil
 from typing import Any, overload
 
+import httpx
+
 from openai.types.create_embedding_response import CreateEmbeddingResponse
 
 from .general_tools import list_chunker, sync_wrapper_safe
@@ -875,17 +877,25 @@ class _QueryBatcher:
         texts = [t for t, _ in batch]
         futs = [f for _, f in batch]
 
-        try:
-            embeddings = await self._embed_fn(texts)
-            if len(embeddings) != len(futs):
-                raise RuntimeError(f"Batch embedding returned {len(embeddings)} results for {len(futs)} queries")
-            for fut, emb in zip(futs, embeddings):
-                if not fut.done():
-                    fut.set_result(emb)
-        except Exception as exc:
-            for fut in futs:
-                if not fut.done():
-                    fut.set_exception(exc)
+        # Settle every caller's future from the embedding result — even if the
+        # task that triggered this flush is cancelled (e.g. a client disconnect),
+        # so no queued caller is left hanging forever.
+        def _settle(f: asyncio.Future) -> None:
+            try:
+                embeddings = f.result()
+                if len(embeddings) != len(futs):
+                    raise RuntimeError(f"Batch embedding returned {len(embeddings)} results for {len(futs)} queries")
+                for fut, emb in zip(futs, embeddings):
+                    if not fut.done():
+                        fut.set_result(emb)
+            except BaseException as exc:  # settle callers regardless
+                for fut in futs:
+                    if not fut.done():
+                        fut.set_exception(exc)
+
+        embed_task: asyncio.Future[list[list[float]]] = asyncio.ensure_future(self._embed_fn(texts))
+        embed_task.add_done_callback(_settle)
+        await asyncio.shield(embed_task)
 
 
 class MultiModalEmbeddings:
@@ -920,6 +930,13 @@ class MultiModalEmbeddings:
         self._batchers: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, _QueryBatcher] = (
             weakref.WeakKeyDictionary()
         )
+        # Optional shared (cross-process) embedding query batcher.  When set,
+        # text-only queries are POSTed here instead of being aggregated in
+        # this process's local _QueryBatcher.  The remote aggregator collects
+        # queries from every worker/pod into one /v1/embeddings call, so
+        # batch size is independent of the number of app processes.
+        self._batch_url = os.environ.get("RAG_EMBED_BATCH_URL", "").rstrip("/")
+        self._batch_client: httpx.AsyncClient | None = None
 
     async def _embed_single_message_async(self, input_dict: list[dict[str, Any]]) -> list[float]:
         """Helper to hit your endpoint for a single input_dict fragment."""
@@ -1001,6 +1018,24 @@ class MultiModalEmbeddings:
             },
         )
         return [d.embedding for d in response.data]
+
+    # -- remote (shared) query batcher -----------------------------------------
+
+    def _batch_http_client(self) -> httpx.AsyncClient:
+        if self._batch_client is None:
+            self._batch_client = httpx.AsyncClient(timeout=300.0)
+        return self._batch_client
+
+    async def _aembed_query_remote(self, text: str) -> list[float]:
+        """Embed a single query via the shared cross-process batcher.
+
+        The batcher aggregates concurrent queries from every worker/pod into
+        one ``/v1/embeddings`` call to the embedding endpoint, so batch size
+        does not depend on the number of app processes.
+        """
+        resp = await self._batch_http_client().post(self._batch_url, json={"text": text})
+        resp.raise_for_status()
+        return resp.json()["embedding"]
 
     # -- embed_documents --------------------------------------------------------
     # First call is the Langchain expected input.
@@ -1114,6 +1149,13 @@ class MultiModalEmbeddings:
         """
         # Text-only fast path: batch with other concurrent queries
         if isinstance(text, str) and self._is_text_only(text):
+            if self._batch_url:
+                try:
+                    return await self._aembed_query_remote(text)
+                except Exception as exc:
+                    # Shared batcher down? Fall back to the local per-loop
+                    # batcher so search keeps working during an outage.
+                    logger.warning("Shared embed batcher unavailable (%s); falling back to local batching", exc)
             loop = asyncio.get_running_loop()
             batcher = self._batchers.get(loop)
             if batcher is None:
@@ -1227,7 +1269,7 @@ class MultiModalReranker:
             "/score",
             cast_to=list,
             body={
-                "model": "Qwen/Qwen3-VL-Reranker-8B",
+                "model": self.emb.model_name,
                 "text_1": query,
                 "text_2": documents,
                 "mm_processor_kwargs": self.emb.mm_processor_kwargs,
@@ -1302,7 +1344,7 @@ class MultiModalReranker:
             "/rerank",
             cast_to=list,
             body={
-                "model": "Qwen/Qwen3-VL-Reranker-8B",
+                "model": self.emb.model_name,
                 "query": query,
                 "documents": documents,
                 "mm_processor_kwargs": self.emb.mm_processor_kwargs,

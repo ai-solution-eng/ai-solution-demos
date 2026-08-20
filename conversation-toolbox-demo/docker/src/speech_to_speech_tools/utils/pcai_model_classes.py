@@ -11,6 +11,7 @@ from functools import cached_property, partial
 from typing import Any, Literal
 
 import httpx
+import httpx2
 from openai import AsyncOpenAI, OpenAI
 
 try:
@@ -39,14 +40,16 @@ _NOT_DEPLOYED = ""
 def _pool_limits_from_env() -> httpx.Limits:
     """Build httpx connection-pool limits from env vars.
 
-    Defaults (30 / 10) match the original single-replica chart.  The
-    scale chart raises these so the embedder — on every search's critical
-    path — is not the bottleneck at high concurrency.
+    Default (128) tracks the benchmark target: concurrency levels are chosen
+    so the client is never the bottleneck, and SGLang servers are typically
+    configured with ``--max-running-requests`` up to 128.  Override with
+    ``MODEL_POOL_MAX_CONNECTIONS`` (and ``MODEL_POOL_MAX_KEEPALIVE_CONNECTIONS``)
+    for other deployments (e.g. the original single-replica chart used 30/10).
     """
     try:
-        max_conn = int(os.environ.get("MODEL_POOL_MAX_CONNECTIONS", "30"))
+        max_conn = int(os.environ.get("MODEL_POOL_MAX_CONNECTIONS", "128"))
     except (TypeError, ValueError):
-        max_conn = 30
+        max_conn = 128
     try:
         max_keepalive = int(os.environ.get("MODEL_POOL_MAX_KEEPALIVE_CONNECTIONS", "10"))
     except (TypeError, ValueError):
@@ -58,10 +61,35 @@ def _pool_limits_from_env() -> httpx.Limits:
     )
 
 
+# TLS verification for "remote" model endpoints.  PCAI endpoints use
+# self-signed certs, so the legacy default is verify=False; operators who
+# can pin the platform CA should set REMOTE_CA_BUNDLE to a .crt/.pem bundle
+# and verification will be performed against it (strictly better — it also
+# protects the bearer API keys in flight).
+_REMOTE_CA_BUNDLE = os.environ.get("REMOTE_CA_BUNDLE", "")
+
+
+def _remote_verify() -> str | bool:
+    """TLS verification setting for *remote* model endpoints.
+
+    Returns the pinned CA bundle when configured, else ``False`` (the
+    legacy self-signed-PCAI behaviour).  Local in-cluster endpoints keep
+    normal system-CA verification.
+    """
+    if _REMOTE_CA_BUNDLE and os.path.exists(_REMOTE_CA_BUNDLE):
+        return _REMOTE_CA_BUNDLE
+    return False
+
+
+def _client_verify(remote: bool) -> str | bool:
+    """TLS verification for a client talking to a model endpoint."""
+    return _remote_verify() if remote else True
+
+
 # Sync clients are thread-safe and can be shared globally.
 _SHARED_HTTP_CLIENT = httpx.Client()
 _SHARED_REMOTE_HTTP_CLIENT = httpx.Client(
-    verify=False,
+    verify=_client_verify(remote=True),
     limits=_pool_limits_from_env(),
 )
 
@@ -73,12 +101,20 @@ _async_client_cache: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 _async_remote_client_cache: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 _async_client_lock = threading.Lock()
 
+# Fallback async client used when no event loop is running.  A single
+# process-global instance is reused (and lives for the process) so this
+# rare path never leaks a fresh client+sockets per call.
+_async_client_fallback: httpx.AsyncClient | None = None
+_async_client_fallback_lock = threading.Lock()
+
 # Cache of discovered model names keyed by the ``{base_url}/models`` URL.
 # Only successful lookups are stored so a temporarily-down endpoint is
 # retried on the next construction. Sessions rebuild ASR/LLM/TTS frequently,
-# so this avoids redundant /v1/models round-trips per session.
+# so this avoids redundant /v1/models round-trips per session.  Bounded to
+# prevent unbounded growth across many distinct endpoints.
 _discovered_model_names: dict[str, str] = {}
 _discovered_model_lock = threading.Lock()
+_MAX_DISCOVERED_MODEL_NAMES = max(64, int(os.environ.get("DISCOVERED_MODEL_CACHE_MAX", "512")))
 
 
 def discover_model_name(base_url: str, api_key: str = "", remote: bool = True) -> str:
@@ -112,6 +148,8 @@ def discover_model_name(base_url: str, api_key: str = "", remote: bool = True) -
             )
             with _discovered_model_lock:
                 _discovered_model_names[url] = ids[0]
+                if len(_discovered_model_names) > _MAX_DISCOVERED_MODEL_NAMES:
+                    _discovered_model_names.pop(next(iter(_discovered_model_names)))
             return ids[0]
         logger.warning("No models listed at %s; leaving model_name empty.", url)
     except Exception as e:
@@ -130,19 +168,23 @@ def _get_async_client(remote: bool = False) -> httpx.AsyncClient:
     except RuntimeError:
         loop = None
     if loop is None:
-        # No running loop — create a short-lived client.  Caller is
-        # responsible for closing it.
-        return httpx.AsyncClient(
-            verify=not remote,
-            timeout=httpx.Timeout(300.0, connect=30.0),
-            limits=_pool_limits_from_env(),
-        )
+        # No running loop — reuse a single process-global client instead of
+        # leaking a fresh client (and its sockets) on every call.
+        global _async_client_fallback
+        with _async_client_fallback_lock:
+            if _async_client_fallback is None:
+                _async_client_fallback = httpx.AsyncClient(
+                    verify=_client_verify(remote),
+                    timeout=httpx.Timeout(300.0, connect=30.0),
+                    limits=_pool_limits_from_env(),
+                )
+            return _async_client_fallback
     cache = _async_remote_client_cache if remote else _async_client_cache
     with _async_client_lock:
         client = cache.get(loop)
         if client is None:
             client = httpx.AsyncClient(
-                verify=not remote,
+                verify=_client_verify(remote),
                 timeout=httpx.Timeout(300.0, connect=30.0),
                 limits=_pool_limits_from_env(),
             )
@@ -161,7 +203,10 @@ __all__ = [
     "strip_tool_markers",
 ]
 
-_TOOL_CALL_BLOCK = re.compile(r"<\|?\s*tool_call\s*\|?>.*$", re.DOTALL)
+# Strip from a tool-call marker through its closing `</tool_call>` (when
+# present) so a real answer emitted after a *closed* wrapper survives.
+# Unterminated wrappers (the common case) still strip to end-of-text.
+_TOOL_CALL_BLOCK = re.compile(r"<\|?\s*tool_call\s*\|?>.*?(?:</tool_call\s*>|$)", re.DOTALL)
 _INTERNAL_FILE_REF = re.compile(r"(?im)^[ \t]*input_files?\.[0-9\w\-.]+[.\w]*\s*$")
 _GENERIC_ANGLE = re.compile(r"<\|[a-z_]+\|>")
 
@@ -253,13 +298,13 @@ async def _get_mcp_servers(
 
 def _streamable_http_factory(
     headers: dict[str, str] | None = None,
-    timeout: httpx.Timeout | None = None,
-    auth: httpx.Auth | None = None,
-) -> httpx.AsyncClient:
-    """httpx client factory for MCPServerStreamableHttp that disables TLS
-    verification - required for the PCAI ingress which serves self-signed
-    certs. Mirrors the default factory signature so it can be dropped in
-    via params['httpx_client_factory']."""
+    timeout: httpx2.Timeout | None = None,
+    auth: httpx2.Auth | None = None,
+) -> httpx2.AsyncClient:
+    """httpx2 client factory for MCPServerStreamableHttp (MCP Python SDK v2)
+    that disables TLS verification - required for the PCAI ingress which
+    serves self-signed certs. Mirrors the default factory signature so it
+    can be dropped in via params['httpx_client_factory']."""
     kwargs: dict = {"follow_redirects": False, "verify": False}
     if timeout is not None:
         kwargs["timeout"] = timeout
@@ -267,7 +312,7 @@ def _streamable_http_factory(
         kwargs["headers"] = headers
     if auth is not None:
         kwargs["auth"] = auth
-    return httpx.AsyncClient(**kwargs)
+    return httpx2.AsyncClient(**kwargs)
 
 
 class _NamedBytesIO(io.BytesIO):
@@ -502,11 +547,6 @@ class ChatModel(BaseModel):
     #   "responses" — /v1/responses via OpenAIResponsesModel (e.g. real OpenAI).
     transport: str = "chat-completions"
 
-    @cached_property
-    def model(self):
-        m = super().model
-        return m
-
     @staticmethod
     def _fix_chat_inputs(messages: messages_dtype) -> list[dict[str, Any]]:
         """Normalise arbitrary caller input into OpenAI chat messages.
@@ -555,7 +595,10 @@ class ChatModel(BaseModel):
         for m in messages:
             if not isinstance(m, dict):
                 continue
-            if "role" in m and ("content" in m or "image" in m or "text" in m):
+            if "role" in m or "content" in m:
+                # A dict carrying `role` and/or `content` is a message; a
+                # missing role defaults to "user".  Handles OpenAI-style
+                # messages that were passed in without a role.
                 m2 = {**m, "role": m.get("role") or "user"}
                 content = m2.get("content")
                 if content is None or (isinstance(content, list) and not content):
@@ -568,7 +611,7 @@ class ChatModel(BaseModel):
                         m2.pop(k, None)
                 fixed.append(m2)
             else:
-                # role-less input: wrap as a user message.
+                # role-less, content-less input: wrap as a user message.
                 fixed.append({"role": "user", "content": _parts_for(m)})
         return fixed
 
@@ -738,6 +781,21 @@ class VoiceModel(BaseModel):
         # shadow it with a cached_property of the same name (that returns the
         # descriptor object on access, breaking any iteration over the voices).
         super().__post_init__()
+        # Seed: the init-provided voices.  ``_clear_cached_class_elements``
+        # pops ``tts_supported_voices`` (it's listed in ``_cached_properties``)
+        # — but it's a plain field, not a cached_property, so the pop leaves a
+        # dangling attribute that raises AttributeError on the next access.
+        # Keep the seed so the override below can restore the field.
+        self._tts_voices_seed: set[str] = set(self.tts_supported_voices)
+
+    def _clear_cached_class_elements(self) -> None:
+        super()._clear_cached_class_elements()
+        # Restore ``tts_supported_voices`` after the generic clear popped it
+        # (it is a plain dataclass field listed in ``_cached_properties``).
+        # Restoring to the seed means: with init-provided voices they survive a
+        # transport switch; without them, the next ``_get_available_voices``
+        # re-fetches using the updated endpoint.
+        self.__dict__["tts_supported_voices"] = set(self._tts_voices_seed)
 
     def _get_available_voices(self) -> set[str]:
         """Return the TTS voices available for this model.
