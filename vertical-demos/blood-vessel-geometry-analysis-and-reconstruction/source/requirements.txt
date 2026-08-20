@@ -1,5 +1,5 @@
 matplotlib
-streamlit
+streamlit>=1.33
 numpy
 open3d
 scikit-image

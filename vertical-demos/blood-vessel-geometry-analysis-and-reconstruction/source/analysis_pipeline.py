@@ -5,7 +5,6 @@ from scipy import ndimage
 from skimage import measure
 from pathlib import Path
 import traceback
-import time
 from typing import TypedDict, Dict, Any, Callable, Optional
 
 # Import from existing utils
@@ -14,6 +13,24 @@ from utils.metrics_utils import (
     compute_reconstruction_quality_metrics,
 )
 from utils.plot_utils import create_flat_disc
+
+
+def _normalize_ct_to_uint8_rgb(ct_volume: np.ndarray) -> np.ndarray:
+    """
+    Apply volume-wide min-max normalization to a uint8 RGB volume (H, W, D, 3).
+
+    Volume-wide normalization keeps brightness consistent across slices, which
+    is what radiologists expect. A per-slice normalization (the previous
+    behavior) caused flicker when scrolling because each slice was mapped to
+    its own [min, max] range.
+    """
+    ct_min = float(ct_volume.min())
+    ct_max = float(ct_volume.max())
+    if ct_max - ct_min < 1e-6:
+        ct_max = ct_min + 1.0
+    normalized = ((ct_volume - ct_min) / (ct_max - ct_min) * 255).astype(np.uint8)
+    # Broadcast grayscale to RGB by repeating the last axis.
+    return np.repeat(normalized[..., np.newaxis], 3, axis=-1)
 
 
 # --- NEW: Define serializable types for geometries ---
@@ -47,6 +64,8 @@ class PointCloudData(TypedDict):
 
 
 class AnalysisResult(TypedDict):
+    ct_rgb_volume: Optional[np.ndarray]  # (H, W, D, 3) uint8 - pre-normalized for fast slice rendering
+    segmentation: Optional[np.ndarray]
     point_cloud: Optional[PointCloudData]
     vessels: Dict[str, VesselData]
 
@@ -61,11 +80,16 @@ def enhanced_vessel_reconstruction_analysis(
 ) -> AnalysisResult:
     """
     Main analysis function adapted for Streamlit. Now returns serializable data.
+    CT volume is pre-normalized to a uint8 RGB volume for consistent brightness
+    across slices and O(1) slice rendering in the UI.
     """
-    results: AnalysisResult = {"ct_scan": None, "segmentation": None, "vessels": {}}
+    results: AnalysisResult = {
+        "ct_rgb_volume": None,
+        "segmentation": None,
+        "vessels": {},
+    }
 
     status_callback("Loading data...")
-    time.sleep(0.5)
 
     try:
         seg_data = np.load(segmentation_file)
@@ -95,7 +119,6 @@ def enhanced_vessel_reconstruction_analysis(
 
     if points is not None:
         status_callback("Mapping point cloud to segmentation labels...")
-        time.sleep(0.5)
         points_homogeneous = np.c_[points, np.ones(points.shape[0])]
         voxel_coords = (points_homogeneous @ inv_affine.T)[:, :3]
         voxel_coords = np.round(voxel_coords).astype(int)
@@ -108,7 +131,7 @@ def enhanced_vessel_reconstruction_analysis(
     else:
         point_labels = None
 
-    results["ct_scan"] = scan_data.get_fdata()
+    results["ct_rgb_volume"] = _normalize_ct_to_uint8_rgb(scan_data.get_fdata())
     results["segmentation"] = new_seg_scan
 
     colors_rgb = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
@@ -116,7 +139,6 @@ def enhanced_vessel_reconstruction_analysis(
 
     for label_idx, (color, name) in enumerate(zip(colors_rgb, names), start=1):
         status_callback(f"Processing: {name} (Label {label_idx})...")
-        time.sleep(0.5)
 
         mask = new_seg_scan == label_idx
         if not np.any(mask):
@@ -231,6 +253,5 @@ def enhanced_vessel_reconstruction_analysis(
         }
 
     status_callback("Analysis complete!")
-    time.sleep(1)
 
     return results

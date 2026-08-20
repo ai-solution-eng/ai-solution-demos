@@ -55,7 +55,7 @@ At this point, please complete data preparation as shown in the notebook [datapr
 
 
 ## Codebase Structure
-The codebase contains the application code and Dockerfile used to containerize this application. The latest docker image is available at `fcaliva/vessel-analysis-app:0.0.10`. This codebase also contains the Helm chart to deploy this application in PCAI.
+The codebase contains the application code and Dockerfile used to containerize this application. The latest docker image is available at `fcaliva/vessel-analysis-app:0.0.11`. This codebase also contains the Helm chart to deploy this application in PCAI.
 
 ## Helm Chart Structure
 The application is packaged as a Helm chart with the following structure:
