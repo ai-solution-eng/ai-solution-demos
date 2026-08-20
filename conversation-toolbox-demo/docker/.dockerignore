@@ -1,0 +1,13 @@
+.git
+.gitignore
+.mypy_cache
+.ruff_cache
+__pycache__
+*.pyc
+.env
+.venv
+venv
+*.md
+helm
+k8s
+src/speech_to_speech_tools/utils/pcai_models.py

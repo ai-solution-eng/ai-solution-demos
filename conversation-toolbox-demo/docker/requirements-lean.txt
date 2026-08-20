@@ -1,0 +1,36 @@
+# Web framework
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.9
+pydantic>=2.0.0
+jinja2>=3.1.0
+
+# LLM
+openai
+openai-agents>=0.20.0
+mcp>=2.0.0
+httpx2>=2.0.0
+
+# Audio processing
+numpy>=1.26.0
+pydub>=0.25.1
+webrtcvad>=2.0.10
+
+# HTTP & async
+httpx>=0.27.0
+aiohttp>=3.9.0
+requests>=2.31.0
+aiofiles>=23.0.0
+
+# Redis / arq (for batch transcription workers)
+redis[hiredis]>=5.0.0
+arq>=0.26.0
+
+# Vision / media
+Pillow>=10.0.0
+av>=10.0.0
+
+# Utilities
+psutil>=5.9.0
+pyyaml>=6.0
+setuptools>=70.0.0,<81

@@ -1,0 +1,15 @@
+{{- if .Values.diarization.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.deployment.name }}-diarization
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app: {{ .Values.deployment.appName }}-diarization
+  ports:
+    - protocol: TCP
+      port: 8001
+      targetPort: 8001
+  type: ClusterIP
+{{- end }}

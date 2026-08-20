@@ -1,0 +1,43 @@
+{{- if .Values.workers.autoscaling.keda.enabled }}
+# KEDA ScaledObject — scales workers based on Redis arq:queue depth.
+#
+# Unlike the HPA (which uses CPU/memory as proxy metrics), KEDA reads
+# the actual job queue length directly from Redis and scales pods
+# proportionally. This is the RIGHT scaling mechanism for this I/O-bound
+# workload: "big queue → more pods" instead of "high CPU → more pods"
+# (CPU stays low even when the worker is saturated with ASR HTTP calls).
+#
+# Prerequisites:
+#   1. KEDA must be installed on the cluster:
+#      helm repo add kedacore https://kedacore.github.io/charts
+#      helm install keda kedacore/keda -n keda-system --create-namespace
+#   2. Set workers.autoscaling.keda.enabled=true and
+#      workers.autoscaling.enabled=false in values.yaml
+#
+# The ScaledObject replaces the HPA — only one should be active at a time.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ .Values.deployment.name }}-workers
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.deployment.name }}-workers
+    hpe-ezua/app: {{ .Chart.Name }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ .Values.deployment.name }}-workers
+  minReplicaCount: {{ .Values.workers.autoscaling.minReplicas }}
+  maxReplicaCount: {{ .Values.workers.autoscaling.maxReplicas }}
+  pollingInterval: 10          # check Redis every 10s
+  cooldownPeriod: 300          # wait 5min before scaling down
+  triggers:
+  - type: redis
+    metadata:
+      address: {{ .Values.redis.url | replace "redis://" "" | quote }}
+      # arq stores jobs in a Redis list named "arq:queue"
+      listName: arq:queue
+      listLength: "5"           # scale up when 5+ jobs queued per pod
+      enableSecondary: "false"
+{{- end }}

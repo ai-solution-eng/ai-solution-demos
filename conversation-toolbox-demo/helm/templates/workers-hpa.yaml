@@ -1,0 +1,52 @@
+{{- if .Values.workers.enabled }}
+{{- if and .Values.workers.autoscaling.enabled (not .Values.workers.autoscaling.keda.enabled) }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ .Values.deployment.name }}-workers
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.deployment.name }}-workers
+    hpe-ezua/type: vendor-service
+    hpe-ezua/app: {{ .Chart.Name }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ .Values.deployment.name }}-workers
+  minReplicas: {{ .Values.workers.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.workers.autoscaling.maxReplicas }}
+  metrics:
+  # Memory ONLY: the primary signal for this I/O-bound workload. Batch
+  # transcription loads audio segments into RAM (segment.audio_data), and
+  # the bounded queue allows up to 75% memory usage before backpressure.
+  # Scaling at 70% headroom lets a second pod absorb new jobs before the
+  # first pod hits its memory limit.
+  #
+  # CPU is intentionally omitted. The worker is I/O-bound (HTTP to vLLM
+  # ASR/TTS endpoints), and its baseline CPU — Python interpreter + agents
+  # SDK + MCP keepalive + exec probes — is high enough relative to any
+  # reasonable request that a CPU utilization target triggers false
+  # scale-outs at idle. If queue-depth scaling is needed later, install
+  # KEDA and use a ScaledObject on the `arq:queue` Redis list length.
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: {{ .Values.workers.autoscaling.memoryTarget }}
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 30
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+{{- end }}
+{{- end }}

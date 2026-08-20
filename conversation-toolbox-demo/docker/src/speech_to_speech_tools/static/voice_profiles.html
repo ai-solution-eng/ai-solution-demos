@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <title>Voice Profiles</title>
+    <script>if(localStorage.getItem('dark-mode')==='true')document.documentElement.setAttribute('data-theme','dark')</script>
+    <style>
+        :root {
+            --primary: #01A982;
+            --primary-dark: #008567;
+            --primary-light: #e6f7f2;
+            --danger: #ef4444;
+            --danger-dark: #b91c1c;
+            --success: #01A982;
+            --warning: #f59e0b;
+            --bg: #f5f7fa;
+            --surface: #ffffff;
+            --text: #1a1a1a;
+            --text-muted: #5e6b7a;
+            --border: #d4dce6;
+            --hpe-green: #01A982;
+            --hpe-black: #000000;
+            --hpe-dark: #1a1a1a;
+        }
+        [data-theme="dark"] {
+            --bg: #0f172a;
+            --surface: #1e293b;
+            --text: #e2e8f0;
+            --text-muted: #94a3b8;
+            --border: #334155;
+            --primary-light: #1a3a32;
+            --hpe-dark: #0a0f1e;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'MetricHPE', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+        }
+        @font-face { font-family: 'MetricHPE'; src: local('MetricHPE'), local('Metric HPE'), local('Arial'); }
+
+        .nav {
+            display: flex; align-items: center; gap: 4px; padding: 0 24px;
+            background: var(--hpe-dark); height: 48px; flex-shrink: 0;
+        }
+        .nav-brand {
+            display: flex; align-items: center; gap: 10px; margin-right: 16px;
+            text-decoration: none; color: white; font-weight: 600;
+            font-size: 0.85rem; letter-spacing: 0.02em; padding: 4px 0;
+        }
+        .nav-brand .hpe-element {
+            display: inline-block; width: 18px; height: 18px; background: var(--hpe-green);
+            clip-path: polygon(25% 0%, 100% 0%, 75% 100%, 0% 100%); flex-shrink: 0;
+        }
+        .nav-brand span { white-space: nowrap; }
+        .nav a {
+            padding: 8px 14px; border-radius: 6px; text-decoration: none;
+            color: rgba(255,255,255,0.75); font-weight: 500; font-size: 0.8rem;
+            transition: all 0.15s; white-space: nowrap;
+        }
+        .nav a:hover { background: rgba(255,255,255,0.1); color: white; }
+        .nav a.active { background: var(--hpe-green); color: white; }
+
+        .container { max-width: 1100px; margin: 0 auto; padding: 28px 24px 60px; }
+
+        h1 { font-size: 1.5rem; margin-bottom: 4px; }
+        .subtitle { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 24px; }
+
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-top: 8px; }
+        @media (max-width: 920px) { .grid { grid-template-columns: 1fr; } }
+
+        .card {
+            background: var(--surface); border: 1px solid var(--border);
+            border-radius: 10px; padding: 20px;
+        }
+        .card h2 { font-size: 1.05rem; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+        .card h3 { font-size: 0.9rem; margin: 14px 0 8px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+
+        label { display: block; font-size: 0.8rem; font-weight: 600; margin-bottom: 4px; color: var(--text-muted); }
+        input[type="text"], input[type="password"], input[type="url"], input[type="file"], select, textarea {
+            width: 100%; padding: 9px 11px; border: 1px solid var(--border); border-radius: 7px;
+            background: var(--surface); color: var(--text); font-size: 0.88rem; font-family: inherit;
+        }
+        input:focus, select:focus, textarea:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-light); }
+        textarea { resize: vertical; min-height: 54px; }
+        .field { margin-bottom: 14px; }
+        .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .hint { font-size: 0.72rem; color: var(--text-muted); margin-top: 3px; }
+        .req { color: var(--danger); }
+
+        button {
+            padding: 9px 16px; border: none; border-radius: 7px; font-size: 0.85rem;
+            font-weight: 600; cursor: pointer; transition: all 0.15s; font-family: inherit;
+        }
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-primary:hover { background: var(--primary-dark); }
+        .btn-primary:disabled { background: var(--border); color: var(--text-muted); cursor: not-allowed; }
+        .btn-secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+        .btn-secondary:hover { background: var(--bg); }
+        .btn-danger { background: transparent; color: var(--danger); border: 1px solid var(--danger); padding: 6px 10px; font-size: 0.78rem; }
+        .btn-danger:hover { background: var(--danger); color: white; }
+        .btn-small { padding: 6px 10px; font-size: 0.78rem; }
+
+        .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
+        #voices-body .btn-row > * { flex: 1 1 0; min-width: 70px; text-align: center; }
+
+        .tabs { display: flex; gap: 6px; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
+        .tab { padding: 9px 16px; cursor: pointer; font-size: 0.85rem; font-weight: 600; color: var(--text-muted); border-bottom: 2px solid transparent; }
+        .tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+        #record-controls { display: none; flex-direction: column; gap: 12px; }
+        #file-controls.hidden, #record-controls.hidden { display: none; }
+        .rec-btn {
+            width: 84px; height: 84px; border-radius: 50%; background: var(--surface);
+            border: 3px solid var(--danger); color: var(--danger); font-size: 0.75rem;
+            font-weight: 700; cursor: pointer; align-self: flex-start; transition: all 0.15s;
+        }
+        .rec-btn:hover { background: var(--danger); color: white; }
+        .rec-btn.recording { background: var(--danger); color: white; animation: pulse 1.4s infinite; }
+        @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.5); } 50% { box-shadow: 0 0 0 14px rgba(239,68,68,0); } }
+        .rec-timer { font-variant-numeric: tabular-nums; font-size: 0.85rem; color: var(--text-muted); }
+
+        .selected-audio {
+            margin-top: 10px; padding: 10px 12px; background: var(--primary-light);
+            border-radius: 7px; font-size: 0.8rem; display: none; align-items: center; gap: 10px;
+        }
+        .selected-audio audio { height: 32px; flex: 1; }
+
+        table { width: 100%; border-collapse: collapse; font-size: 0.83rem; }
+        th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+        th { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
+        tr:hover td { background: var(--bg); }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem; font-weight: 600; }
+        .badge-built { background: var(--border); color: var(--text-muted); }
+        .badge-cloned { background: var(--primary-light); color: var(--primary-dark); }
+        .voice-name { font-weight: 600; }
+
+        .toast {
+            position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+            background: var(--hpe-dark); color: white; padding: 12px 22px; border-radius: 8px;
+            font-size: 0.85rem; opacity: 0; transition: opacity 0.25s; pointer-events: none; z-index: 1000;
+        }
+        .toast.show { opacity: 1; }
+        .toast.error { background: var(--danger-dark); }
+        .toast.success { background: var(--primary-dark); }
+
+        .empty { text-align: center; color: var(--text-muted); padding: 28px; font-size: 0.85rem; }
+        .spinner { display: inline-block; width: 13px; height: 13px; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin 0.7s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .consent-box { display: flex; align-items: flex-start; gap: 9px; padding: 11px; background: var(--bg); border-radius: 7px; margin-bottom: 14px; }
+        .consent-box input[type="checkbox"] { width: 17px; height: 17px; margin-top: 1px; flex-shrink: 0; }
+        .consent-box label { margin: 0; font-size: 0.8rem; color: var(--text); font-weight: 500; line-height: 1.4; }
+        .config-toggle { font-size: 0.78rem; color: var(--primary); cursor: pointer; background: none; border: none; padding: 0; font-weight: 600; }
+        #config-card { display: none; }
+        .footer-note { font-size: 0.75rem; color: var(--text-muted); margin-top: 26px; line-height: 1.5; }
+    </style>
+</head>
+<body>
+    <nav class="nav">
+        <a href="/" class="nav-brand">
+            <span class="hpe-element"></span>
+            <span>Hewlett Packard Enterprise</span>
+        </a>
+        <a href="/">Voice Assistant</a>
+        <a href="/voice-profiles" class="active">Voice Profiles</a>
+        <a href="/multi-user">Multi-User</a>
+        <a href="/transcribe-file">File Transcription</a>
+        <a href="/batch-transcription">Batch Transcription</a>
+        <button id="dark-mode-toggle" style="margin-left:auto;background:none;border:none;color:white;font-size:1.1rem;cursor:pointer;padding:8px;border-radius:6px;" title="Toggle dark mode">🌙</button>
+    </nav>
+
+    <div class="container">
+        <h1>Voice Profiles</h1>
+        <p class="subtitle">Upload or record a voice sample to create reusable voice profiles for TTS cloning. Profiles are stored on the TTS server and reused by name — no need to re-send audio on each request.</p>
+
+        <div class="btn-row" style="margin-bottom: 16px;">
+            <button class="config-toggle" id="toggle-config">⚙️ Configure TTS endpoint</button>
+        </div>
+
+        <div class="card" id="config-card">
+            <h2>⚙️ TTS Endpoint Configuration</h2>
+            <div class="field">
+                <label for="tts-base-url">TTS Base URL</label>
+                <input type="url" id="tts-base-url" placeholder="https://host.serving.../v1 endpoint root (no /v1 suffix)">
+            </div>
+            <div class="field">
+                <label for="tts-api-key">API Key 🔑</label>
+                <input type="password" id="tts-api-key" placeholder="Bearer token — leave blank to use server default" autocomplete="off">
+                <div class="hint" id="tts-key-hint">Stored only in this browser. Leave blank to fall back to the server-configured key.</div>
+            </div>
+            <div class="field">
+                <label for="test-task-type">Default Task Type (for preview)</label>
+                <select id="test-task-type">
+                    <option value="">Auto (omit)</option>
+                    <option value="Base" selected>Base (voice clone)</option>
+                    <option value="CustomVoice">CustomVoice</option>
+                    <option value="VoiceDesign">VoiceDesign</option>
+                </select>
+                <div class="hint">Voice cloning uses the <strong>Base</strong> task. Fish Speech / CosyVoice may prefer "Auto".</div>
+            </div>
+            <div class="btn-row">
+                <button class="btn-primary" id="save-config">Save</button>
+                <button class="btn-secondary" id="clear-config">Clear</button>
+            </div>
+        </div>
+
+        <div class="grid">
+            <!-- Left: create / upload -->
+            <div class="card">
+                <h2>🎧 Create Voice Profile</h2>
+
+                <div class="tabs">
+                    <div class="tab active" id="tab-file">Upload File</div>
+                    <div class="tab" id="tab-record">Record</div>
+                </div>
+
+                <div id="file-controls">
+                    <div class="field">
+                        <label for="audio-file">Audio File <span class="req">*</span></label>
+                        <input type="file" id="audio-file" accept="audio/*">
+                        <div class="hint">wav, mp3, flac, ogg, aac, webm, m4a — max 10MB. 5–30s of clear speech works best.</div>
+                    </div>
+                </div>
+
+                <div id="record-controls">
+                    <div style="display:flex; align-items:center; gap:16px;">
+                        <button class="rec-btn" id="rec-btn">REC</button>
+                        <div>
+                            <div class="rec-timer" id="rec-timer">00:00</div>
+                            <div class="hint" id="rec-hint">Click REC to start recording from your microphone.</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="selected-audio" id="selected-audio">
+                    <span id="selected-label">Selected:</span>
+                    <audio id="selected-player" controls></audio>
+                    <button class="btn-danger btn-small" id="clear-audio">✕</button>
+                </div>
+
+                <div class="field-row">
+                    <div class="field">
+                        <label for="voice-name">Profile Name <span class="req">*</span></label>
+                        <input type="text" id="voice-name" placeholder="e.g. andrew">
+                    </div>
+                    <div class="field">
+                        <label for="consent-id">Consent ID</label>
+                        <input type="text" id="consent-id" placeholder="auto-generated if blank">
+                    </div>
+                </div>
+
+                <div class="field">
+                    <label for="asr-language">Language <span style="color:var(--text-muted);font-weight:normal;">(for auto-transcribe)</span></label>
+                    <select id="asr-language">
+                        <option value="">Auto-detect</option>
+                        <option value="en">English (en)</option>
+                        <option value="es">Spanish (es)</option>
+                        <option value="fr">French (fr)</option>
+                        <option value="de">German (de)</option>
+                        <option value="zh">Chinese (zh)</option>
+                        <option value="ja">Japanese (ja)</option>
+                        <option value="ko">Korean (ko)</option>
+                        <option value="ru">Russian (ru)</option>
+                        <option value="ar">Arabic (ar)</option>
+                        <option value="pt">Portuguese (pt)</option>
+                        <option value="hi">Hindi (hi)</option>
+                        <option value="it">Italian (it)</option>
+                        <option value="nl">Dutch (nl)</option>
+                        <option value="pl">Polish (pl)</option>
+                        <option value="tr">Turkish (tr)</option>
+                    </select>
+                </div>
+
+                <div class="field">
+                    <label for="ref-text">Reference Transcript <span style="color:var(--danger);">*required</span></label>
+                    <textarea id="ref-text" placeholder="Exact transcript of what is spoken in the audio — fish s2 pro needs this to clone the voice."></textarea>
+                    <button class="btn-secondary btn-small" id="auto-transcribe" style="margin-top:6px;">🎙️ Auto-transcribe from audio</button>
+                </div>
+                <div class="field">
+                    <label for="speaker-desc">Description (optional)</label>
+                    <input type="text" id="speaker-desc" placeholder="e.g. warm narrator, energetic presenter">
+                </div>
+
+                <div class="consent-box">
+                    <input type="checkbox" id="consent-check">
+                    <label for="consent-check">I confirm I have the speaker's consent to clone this voice.</label>
+                </div>
+
+                <button class="btn-primary" id="save-voice" style="width:100%;">Save Voice Profile</button>
+            </div>
+
+            <!-- Right: list -->
+            <div class="card">
+                <h2>📋 Saved Voices <button class="btn-secondary btn-small" id="refresh-voices" style="margin-left:auto;">↻ Refresh</button></h2>
+                <div id="voices-table-wrap">
+                    <div class="empty" id="voices-empty">Configure the TTS endpoint and click Refresh.</div>
+                    <table id="voices-table" style="display:none;">
+                        <thead>
+                            <tr><th>Name</th><th>Type</th><th>Details</th><th>Actions</th></tr>
+                        </thead>
+                        <tbody id="voices-body"></tbody>
+                    </table>
+                </div>
+                <audio id="preview-player" style="width:100%; margin-top:14px; display:none;" controls></audio>
+            </div>
+        </div>
+
+        <p class="footer-note">
+            Voice profiles persist on the TTS model pod. Original audio samples are saved on the app's PVC and can be downloaded from the table above.
+        </p>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+        const CONFIG_KEY = 'voice-profiles-config';
+        const $ = (id) => document.getElementById(id);
+        const serverDefaults = {
+            ttsBaseUrl: {{ tts_base_url | tojson }},
+            ttsVoice: {{ tts_voice | tojson }},
+            ttsKeyConfigured: {{ tts_key_configured | tojson }},
+        };
+
+        let config = { ttsBaseUrl: '', ttsApiKey: '', taskType: 'Base', asrLanguage: '' };
+        let selectedBlob = null;   // File or Blob chosen for upload
+        let selectedName = null;
+        let mediaRecorder = null;
+        let recChunks = [];
+        let recTimerId = null;
+        const MAX_REC_MS = 30000;
+        let recStartTs = 0;
+        let recording = false;
+
+        // ---------- config ----------
+        function loadConfig() {
+            let saved = null;
+            try { saved = JSON.parse(localStorage.getItem(CONFIG_KEY) || 'null'); } catch (e) {}
+            config = Object.assign(config, saved || {});
+            $('tts-base-url').value = config.ttsBaseUrl || serverDefaults.ttsBaseUrl || '';
+            $('tts-api-key').value = config.ttsApiKey || '';
+            $('test-task-type').value = config.taskType || 'Base';
+            $('asr-language').value = config.asrLanguage || '';
+            const hint = $('tts-key-hint');
+            if (serverDefaults.ttsKeyConfigured) {
+                hint.textContent = 'A server-configured key is available — leave blank to use it. Any entry here overrides it and is stored only in this browser.';
+            } else {
+                hint.textContent = 'No server-configured key available — enter a Bearer token here. Stored only in this browser.';
+            }
+        }
+        function persistConfig() {
+            config.ttsBaseUrl = $('tts-base-url').value.trim();
+            config.ttsApiKey = $('tts-api-key').value.trim();
+            config.taskType =             $('test-task-type').value;
+            config.asrLanguage = $('asr-language').value;
+            localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+        }
+        function authHeader() {
+            const key = $('tts-api-key').value.trim();
+            return key ? { 'Authorization': 'Bearer ' + key } : {};
+        }
+        $('save-config').addEventListener('click', () => { persistConfig(); toast('Configuration saved', 'success'); });
+        $('clear-config').addEventListener('click', () => {
+            localStorage.removeItem(CONFIG_KEY);
+            config = { ttsBaseUrl: serverDefaults.ttsBaseUrl || '', ttsApiKey: '', taskType: 'Base', asrLanguage: '' };
+            loadConfig();
+            toast('Configuration cleared');
+        });
+        $('toggle-config').addEventListener('click', () => {
+            const c = $('config-card');
+            c.style.display = (c.style.display === 'none' || !c.style.display) ? 'block' : 'none';
+        });
+
+        // ---------- toast ----------
+        let toastTimer = null;
+        function toast(msg, kind) {
+            const t = $('toast');
+            t.textContent = msg;
+            t.className = 'toast show' + (kind ? ' ' + kind : '');
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => { t.className = 'toast'; }, 3200);
+        }
+
+        // ---------- tabs ----------
+        function showTab(which) {
+            const isFile = which === 'file';
+            $('tab-file').classList.toggle('active', isFile);
+            $('tab-record').classList.toggle('active', !isFile);
+            $('file-controls').classList.toggle('hidden', !isFile);
+            $('record-controls').classList.toggle('hidden', isFile);
+            $('record-controls').style.display = isFile ? 'none' : 'flex';
+        }
+        $('tab-file').addEventListener('click', () => showTab('file'));
+        $('tab-record').addEventListener('click', () => showTab('record'));
+
+        // ---------- selected audio state ----------
+        function setSelectedAudio(blob, label) {
+            selectedBlob = blob;
+            selectedName = label || (blob && blob.name) || 'recording.webm';
+            const box = $('selected-audio');
+            if (!blob) { box.style.display = 'none'; $('selected-player').src = ''; return; }
+            $('selected-label').textContent = 'Selected: ' + selectedName;
+            $('selected-player').src = URL.createObjectURL(blob);
+            box.style.display = 'flex';
+        }
+        $('clear-audio').addEventListener('click', () => {
+            setSelectedAudio(null);
+            $('audio-file').value = '';
+        });
+        $('audio-file').addEventListener('change', (e) => {
+            const f = e.target.files && e.target.files[0];
+            if (f) setSelectedAudio(f, f.name);
+        });
+
+        // ---------- recording ----------
+        $('rec-btn').addEventListener('click', async () => {
+            if (recording) { stopRecording(); }
+            else { await startRecording(); }
+        });
+        async function startRecording() {
+            let stream;
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            } catch (err) {
+                toast('Microphone access denied: ' + err.message, 'error');
+                return;
+            }
+            recChunks = [];
+            const mime = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm'
+                : (MediaRecorder.isTypeSupported('audio/ogg') ? 'audio/ogg' : '');
+            try {
+                mediaRecorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+            } catch (err) {
+                toast('Could not start recorder: ' + err.message, 'error');
+                stream.getTracks().forEach(t => t.stop());
+                return;
+            }
+            mediaRecorder.ondataavailable = (ev) => { if (ev.data && ev.data.size) recChunks.push(ev.data); };
+            mediaRecorder.onstop = () => {
+                const blob = new Blob(recChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+                setSelectedAudio(blob, 'recording.' + ((mediaRecorder.mimeType || 'audio/webm').split('/')[1] || 'webm'));
+                stream.getTracks().forEach(t => t.stop());
+            };
+            mediaRecorder.start();
+            recording = true;
+            $('rec-btn').classList.add('recording');
+            $('rec-btn').textContent = 'STOP';
+            $('rec-hint').textContent = 'Recording… click STOP when done.';
+            recStartTs = Date.now();
+            recTimerId = setInterval(() => {
+                const elapsed = Date.now() - recStartTs;
+                if (elapsed >= MAX_REC_MS) { stopRecording(); return; }
+                const s = Math.floor(elapsed / 1000);
+                $('rec-timer').textContent = String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+            }, 500);
+        }
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+            recording = false;
+            $('rec-btn').classList.remove('recording');
+            $('rec-btn').textContent = 'REC';
+            $('rec-hint').textContent = 'Click REC to start recording from your microphone.';
+            clearInterval(recTimerId);
+        }
+
+        // ---------- voices list ----------
+        async function fetchVoices() {
+            const base = $('tts-base-url').value.trim();
+            if (!base) { toast('Set the TTS Base URL first', 'error'); $('toggle-config').click(); return; }
+            const btn = $('refresh-voices'); btn.innerHTML = '<span class="spinner"></span>'; btn.disabled = true;
+            const qs = new URLSearchParams({ tts_base_url: base });
+            try {
+                const r = await fetch('/api/voices?' + qs.toString(), { headers: authHeader() });
+                const j = await r.json();
+                if (!r.ok) throw new Error(j.detail || j.error || ('HTTP ' + r.status));
+                renderVoices(j);
+            } catch (err) {
+                toast('Failed to list voices: ' + err.message, 'error');
+                $('voices-table').style.display = 'none';
+                $('voices-empty').textContent = 'Could not reach TTS endpoint.';
+            } finally {
+                btn.innerHTML = '↻ Refresh'; btn.disabled = false;
+            }
+        }
+        function fmtSize(n) { if (!n) return ''; if (n < 1024) return n + ' B'; if (n < 1048576) return (n / 1024).toFixed(1) + ' KB'; return (n / 1048576).toFixed(1) + ' MB'; }
+        function fmtDate(ts) { if (!ts) return ''; const d = new Date(ts * 1000); return isNaN(d) ? '' : d.toLocaleString(); }
+        function renderVoices(j) {
+            const body = $('voices-body');
+            body.innerHTML = '';
+            const built = Array.isArray(j.voices) ? j.voices : [];
+            const uploaded = Array.isArray(j.uploaded_voices) ? j.uploaded_voices : [];
+            // fish s2 pro returns uploaded voice names in both `voices` (strings)
+            // and `uploaded_voices` (objects). Deduplicate: only show built-in
+            // entries that are NOT also in uploaded_voices.
+            const uploadedNames = new Set(uploaded.map(v => (typeof v === 'string' ? v : v.name)));
+            const trueBuiltins = built.filter(v => {
+                const n = typeof v === 'string' ? v : v.name;
+                return !uploadedNames.has(n);
+            }).sort((a, b) => {
+                const na = typeof a === 'string' ? a : a.name;
+                const nb = typeof b === 'string' ? b : b.name;
+                return na.localeCompare(nb);
+            });
+            if (!trueBuiltins.length && !uploaded.length) {
+                $('voices-table').style.display = 'none';
+                $('voices-empty').textContent = 'No voices found. Create one on the left.';
+                $('voices-empty').style.display = 'block';
+                return;
+            }
+            $('voices-empty').style.display = 'none';
+            $('voices-table').style.display = '';
+            trueBuiltins.forEach(v => body.appendChild(voicetr({ name: v }, false)));
+            uploaded.sort((a, b) => (a.name || '').localeCompare(b.name || '')).forEach(v => body.appendChild(voicetr(v, true)));
+        }
+        function voicetr(v, isClone) {
+            const tr = document.createElement('tr');
+            const details = [];
+            if (v.ref_text) {
+                details.push('<span title="' + escapeHtml(v.ref_text) + '">' + escapeHtml(truncate(v.ref_text, 30)) + '</span>');
+            } else if (isClone) {
+                details.push('<span style="color:var(--danger);" title="This voice has no reference transcript — synthesis will fail. Delete and re-upload with a transcript.">⚠ no ref_text</span>');
+            }
+            if (v.speaker_description) details.push(escapeHtml(v.speaker_description));
+            if (v.file_size) details.push(fmtSize(v.file_size));
+            if (v.created_at) details.push(fmtDate(v.created_at));
+            const dlBtn = (isClone && v.has_original)
+                ? '<a class="btn-secondary btn-small" href="/api/voices/' + encodeURIComponent(v.name) + '/original" download>⬇ Download</a>'
+                : '';
+            tr.innerHTML = ''
+                + '<td><span class="voice-name">' + escapeHtml(v.name) + '</span></td>'
+                + '<td><span class="badge ' + (isClone ? 'badge-cloned' : 'badge-built') + '">' + (isClone ? 'cloned' : 'builtin') + '</span></td>'
+                + '<td style="color:var(--text-muted);font-size:0.78rem;">' + (details.join(' · ') || '—') + '</td>'
+                + '<td><div class="btn-row">'
+                +   '<button class="btn-secondary btn-small play-btn" data-name="' + escapeAttr(v.name) + '">▶ Play</button>'
+                +   dlBtn
+                +   (isClone ? '<button class="btn-danger btn-small del-btn" data-name="' + escapeAttr(v.name) + '">Delete</button>' : '')
+                + '</div></td>';
+            return tr;
+        }
+        function truncate(s, n) { return (s && s.length > n) ? s.slice(0, n) + '…' : s; }
+        function escapeHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&', '<': '<', '>': '>', '"': '"', "'": '&#39;' }[c])); }
+        function escapeAttr(s) { return escapeHtml(s); }
+
+        $('refresh-voices').addEventListener('click', fetchVoices);
+
+        document.addEventListener('click', async (e) => {
+            const play = e.target.closest('.play-btn');
+            const del = e.target.closest('.del-btn');
+            if (play) await previewVoice(play.dataset.name);
+            if (del) await deleteVoice(del.dataset.name);
+        });
+
+        // ---------- preview ----------
+        async function previewVoice(name) {
+            const payload = {
+                ttsBaseUrl: $('tts-base-url').value.trim(),
+                voice: name,
+                input: 'Hello, this is a preview of the ' + name + ' voice profile.',
+            };
+            const tt = $('test-task-type').value;
+            if (tt) payload.task_type = tt;
+            const p = $('preview-player');
+            p.style.display = 'none';
+            try {
+                const r = await fetch('/api/voices/test', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, authHeader()), body: JSON.stringify(payload) });
+                if (!r.ok) {
+                    let msg = 'HTTP ' + r.status;
+                    try { const j = await r.json(); msg = j.detail || j.error?.message || msg; } catch (_) {}
+                    throw new Error(msg);
+                }
+                const blob = await r.blob();
+                p.src = URL.createObjectURL(blob);
+                p.style.display = '';
+                p.play();
+            } catch (err) {
+                toast('Preview failed: ' + err.message, 'error');
+            }
+        }
+
+        // ---------- delete ----------
+        async function deleteVoice(name) {
+            if (!confirm('Delete voice profile "' + name + '"?')) return;
+            const qs = new URLSearchParams({ tts_base_url: $('tts-base-url').value.trim() });
+            try {
+                const r = await fetch('/api/voices/' + encodeURIComponent(name) + '?' + qs.toString(), { method: 'DELETE', headers: authHeader() });
+                const j = await r.json();
+                if (!r.ok) throw new Error(j.detail || j.error || ('HTTP ' + r.status));
+                toast('Deleted ' + name, 'success');
+                fetchVoices();
+            } catch (err) {
+                toast('Delete failed: ' + err.message, 'error');
+            }
+        }
+
+        // ---------- auto-transcribe ----------
+        async function autoTranscribe({ showSuccessToast = true } = {}) {
+            if (!selectedBlob) {
+                toast('Select or record an audio sample first', 'error');
+                return false;
+            }
+            const btn = $('auto-transcribe');
+            const orig = btn.textContent;
+            btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Transcribing…';
+            try {
+                const fd = new FormData();
+                fd.append('file', selectedBlob, selectedName || 'sample.webm');
+                const lang = $('asr-language').value;
+                if (lang) fd.append('language', lang);
+                const r = await fetch('/api/transcribe-clip', { method: 'POST', body: fd });
+                const j = await r.json();
+                if (!r.ok) throw new Error(j.detail || ('HTTP ' + r.status));
+                $('ref-text').value = j.text;
+                if (showSuccessToast) {
+                    toast('Transcript generated — review and edit if needed', 'success');
+                }
+                return true;
+            } catch (err) {
+                toast('Transcription failed: ' + err.message, 'error');
+                return false;
+            } finally {
+                btn.disabled = false; btn.textContent = orig;
+            }
+        }
+        $('auto-transcribe').addEventListener('click', () => autoTranscribe());
+
+        // ---------- upload ----------
+        $('save-voice').addEventListener('click', async () => {
+            const name = $('voice-name').value.trim();
+            if (!name) { toast('Profile name is required', 'error'); return; }
+            if (!selectedBlob) { toast('Select or record an audio sample first', 'error'); return; }
+            if (!$('consent-check').checked) { toast('Consent confirmation is required', 'error'); return; }
+            let refText = $('ref-text').value.trim();
+            if (!refText) {
+                // Reference transcript is required by fish s2 pro — but the user can leave
+                // it blank and we'll auto-generate it from the reference audio.
+                toast('No transcript provided — generating from audio…', 'success');
+                const ok = await autoTranscribe({ showSuccessToast: false });
+                if (!ok) {
+                    toast('Auto-transcription failed — enter a transcript manually.', 'error');
+                    return;
+                }
+                refText = $('ref-text').value.trim();
+                if (!refText) {
+                    toast('Auto-transcription returned empty — enter a transcript manually.', 'error');
+                    return;
+                }
+            }
+            const base = $('tts-base-url').value.trim();
+            if (!base) { toast('Set the TTS Base URL first', 'error'); $('toggle-config').click(); return; }
+
+            const fd = new FormData();
+            fd.append('tts_base_url', base);
+            fd.append('name', name);
+            let consent = $('consent-id').value.trim();
+            if (!consent) consent = 'user-' + name + '-' + Math.floor(Date.now() / 1000);
+            fd.append('consent', consent);
+            fd.append('ref_text', refText);
+            const desc = $('speaker-desc').value.trim();
+            if (desc) fd.append('speaker_description', desc);
+            fd.append('audio_sample', selectedBlob, selectedName || 'sample.webm');
+
+            const btn = $('save-voice');
+            const orig = btn.textContent;
+            btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Uploading…';
+            try {
+                const r = await fetch('/api/voices', { method: 'POST', headers: authHeader(), body: fd });
+                const j = await r.json();
+                if (!r.ok) throw new Error(j.detail || j.error?.message || ('HTTP ' + r.status));
+                toast('Voice profile "' + name + '" saved', 'success');
+                $('voice-name').value = ''; $('ref-text').value = ''; $('speaker-desc').value = ''; $('consent-id').value = '';
+                $('consent-check').checked = false;
+                setSelectedAudio(null); $('audio-file').value = '';
+                fetchVoices();
+            } catch (err) {
+                toast('Upload failed: ' + err.message, 'error');
+            } finally {
+                btn.disabled = false; btn.textContent = orig;
+            }
+        });
+
+        // ---------- dark mode ----------
+        const darkBtn = $('dark-mode-toggle');
+        function applyTheme(dark) {
+            document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+            darkBtn.textContent = dark ? '☀️' : '🌙';
+            localStorage.setItem('dark-mode', dark ? 'true' : 'false');
+        }
+        darkBtn.addEventListener('click', () => applyTheme(document.documentElement.getAttribute('data-theme') !== 'dark'));
+        applyTheme(localStorage.getItem('dark-mode') === 'true');
+
+        // ---------- init ----------
+        loadConfig();
+        showTab('file');
+        // If config present, auto-load voices.
+        if ($('tts-base-url').value.trim()) fetchVoices();
+    </script>
+</body>
+</html>

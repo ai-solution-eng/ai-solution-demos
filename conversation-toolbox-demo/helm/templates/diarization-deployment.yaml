@@ -1,0 +1,77 @@
+{{- if .Values.diarization.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.deployment.name }}-diarization
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.deployment.appName }}-diarization
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Values.deployment.appName }}-diarization
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.deployment.appName }}-diarization
+    spec:
+      {{- if .Values.diarization.nodeName }}
+      nodeName: {{ .Values.diarization.nodeName }}
+      {{- end }}
+      {{- if .Values.diarization.tolerations }}
+      tolerations:
+        {{- toYaml .Values.diarization.tolerations | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: hf-cache
+          persistentVolumeClaim:
+            claimName: {{ .Values.deployment.name }}-hf-cache-pvc
+      containers:
+        - name: diarization
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}-diarization"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8001
+          env:
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.deployment.name }}-secrets
+                  key: HF_TOKEN
+            - name: HF_HOME
+              value: {{ .Values.persistence.hf_cache_dir.mountPath }}
+            - name: DIARIZATION_PIPELINE
+              value: {{ .Values.diarization.pipeline | quote }}
+            - name: GPU_MEMORY_FRACTION
+              value: {{ .Values.diarization.gpuMemoryFraction | quote }}
+            {{- if .Values.diarization.cudaVisibleDevices }}
+            - name: CUDA_VISIBLE_DEVICES
+              value: {{ .Values.diarization.cudaVisibleDevices | quote }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.diarization.resources | nindent 12 }}
+          volumeMounts:
+            - name: hf-cache
+              mountPath: {{ .Values.persistence.hf_cache_dir.mountPath }}
+          {{- if .Values.diarization.livenessProbe.enabled }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.diarization.livenessProbe.path }}
+              port: {{ .Values.diarization.livenessProbe.port }}
+            initialDelaySeconds: {{ .Values.diarization.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.diarization.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.diarization.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.diarization.livenessProbe.failureThreshold }}
+          {{- end }}
+          {{- if .Values.diarization.readinessProbe.enabled }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.diarization.readinessProbe.path }}
+              port: {{ .Values.diarization.readinessProbe.port }}
+            initialDelaySeconds: {{ .Values.diarization.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.diarization.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.diarization.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.diarization.readinessProbe.failureThreshold }}
+          {{- end }}
+{{- end }}
