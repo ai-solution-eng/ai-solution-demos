@@ -1,0 +1,81 @@
+# -----------------------------------------------------------------------------
+# Water Utility Ranker — repo hygiene
+# -----------------------------------------------------------------------------
+
+# ---- Python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+
+# ---- Virtual environments ---------------------------------------------------
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# ---- Jupyter ---------------------------------------------------------------
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+profile_default/
+ipython_config.py
+
+# ---- Generated data (notebook 00 produces these; do not commit) -------------
+shared/
+*.parquet
+DATA_PROVENANCE.md
+
+# ---- Trained model artefacts (notebook 01 produces these) -------------------
+ranker_v1.json
+feature_importance.png
+
+# ---- BentoML build artefacts (notebook 02 produces these) -------------------
+bento-stage/
+*.bento
+.bentoml/
+
+# ---- MLflow local runs (autolog writes here if MLFLOW_TRACKING_URI unset) ---
+mlruns/
+mlartifacts/
+
+# ---- Docker build context (containerize can leave temp files) ---------------
+.docker/
+
+# ---- Secrets — NEVER commit these -------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+secrets/
+*.token
+
+# ---- IDE / editors ----------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.claude/
+
+# ---- OS-generated -----------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- Logs -------------------------------------------------------------------
+*.log
+logs/
+
+# ---- Coverage / testing (unlikely but standard) -----------------------------
+.coverage
+.pytest_cache/
+htmlcov/
