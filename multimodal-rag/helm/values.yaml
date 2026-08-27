@@ -148,7 +148,7 @@ extraEnv: {}
 
 security:
   apiKey: ""
-  mediaTokenSecret: "48b00cdf6d0979891ada5b3e51a5dd883ee752a5a1256b578c8271c30569944d"
+  mediaTokenSecret: ""
   mediaTokenTtl: 3600
   ingestAllowHosts: ""
   blockPrivateHosts: true
