@@ -30,7 +30,7 @@ Features:
 Recordings:
 
 - [Part 1 - Intro & Live agent chat walkthrough [~7 min]](https://storage.googleapis.com/ai-solution-engineering-videos/public/Water%20Utility%20Agentic%20Planner%20-%20Short.mp4)
-- *[Part 2 - Workflow technical deep dive ]* — TBD, upload URL to be added
+- *[Part 2 - Workflow technical deep dive ]* — TBD
 
 ## Description
 
@@ -88,9 +88,9 @@ Access needed:
 
 Not required:
 
-- ❌ GPU (XGBoost CPU is fast enough)
-- ❌ Kubernetes cluster admin (all steps are self-service through AIE UI + Jupyter + `kubectl exec`)
-- ❌ Shell access to the EzPresto coordinator config directory (we use `file` metastore, no HMS pod)
+- GPU (XGBoost CPU is fast enough)
+- Kubernetes cluster admin (all steps are self-service through AIE UI + Jupyter + `kubectl exec`)
+- Shell access to the EzPresto coordinator config directory (we use `file` metastore, no HMS pod)
 
 ### Installation and configuration
 
@@ -212,7 +212,7 @@ LEFT JOIN waterutility.default.work_orders w ON p.pipe_id = w.pipe_id
 WHERE w.work_order_id IS NULL;                            -- Expected: ~1660
 ```
 
-⚠️ Do NOT use `USING (pipe_id)` on that LEFT JOIN — Presto merges the join key and the subsequent `WHERE w.pipe_id IS NULL` fails to resolve. Use explicit `ON` and filter on a non-key right-side column (`w.work_order_id`).
+Do NOT use `USING (pipe_id)` on that LEFT JOIN — Presto merges the join key and the subsequent `WHERE w.pipe_id IS NULL` fails to resolve. Use explicit `ON` and filter on a non-key right-side column (`w.work_order_id`).
 
 **Step 4 — Grab a fresh MCP bearer token**
 
@@ -314,7 +314,7 @@ Expected trace: `explain_pipe(pipe_id="<top-id-from-beat-1>")` — SHAP-style to
 
 Expected: the LLM investigates by chaining several `ezpresto_sql` and `explain_pipe` calls to characterise the model's behaviour across the district, then answers with nuance — historical incidents dominate, tree proximity matters only at very close range, age and material carry the rest.
 
-**Beat 4 — the federation moment ⭐**
+**Beat 4 — the federation moment **
 
 > Of the 50 pipes you just ranked, how many have never had a work order logged?
 
@@ -352,7 +352,7 @@ ORDER BY cnt DESC;
 
 Vitrified clay (VC) dominates the register and accounts for most incidents — matches published research on root-invasive failure modes.
 
-**3. The federation query ⭐**
+**3. The federation query **
 
 ```sql
 SELECT COUNT(*) AS never_inspected
