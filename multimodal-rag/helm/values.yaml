@@ -1,0 +1,181 @@
+---
+# NOTE: MEDIA_TOKEN_SECRET is required for password protected dataset file retrieval. Use:
+#   python -c "import secrets; print(secrets.token_hex(32))"
+# to generate. See security.mediaTokenSecret to fill in the value.
+
+
+# -- Global settings ----------------------------------------------------------
+replicaCount: 1
+image:
+  repository: ghcr.io/ai-solution-eng/multimodal-rag-mcp
+  tag: v2.4.0
+  pullPolicy: IfNotPresent
+
+deployment:
+  name: rag-mcp-server
+  appName: rag-mcp-server
+
+
+# -- Persistence ---------------------------------------------------------------
+persistence:
+  data:
+    size: 50Gi
+    storageClass: "gl4f-filesystem"
+    accessMode: ReadWriteMany
+  qdrant:
+    size: 50Gi
+    storageClass: "gl4f-filesystem"
+    accessMode: ReadWriteMany
+    # When true, the API server pod mounts the Qdrant PVC read-only at
+    # /qdrant-storage so it can report Qdrant disk usage on the management
+    # page. Requires a single Qdrant PVC (single-replica chart only).
+    mountReadOnly: true
+
+
+# -- Model configuration ------------------------------------------------------
+# Each model role has a URL (required to enable), an optional name (auto-
+# detected from the endpoint's /v1/models listing when omitted), an optional
+# className, and optional extra kwargs (serialised as JSON into the ConfigMap).
+# API keys are set separately via `modelSecrets` (Kubernetes Secret).
+# Set url to "" to disable a component.
+models:
+  embedder:
+    name: "Qwen/Qwen3-VL-Embedding-8B"
+    url: ""
+    className: "MultiModalEmbeddings"
+    extra:
+      embedding_dim: 4096
+      chunk_size: 2048
+      chunk_overlap: 256
+      code_chunk_size: 8192
+      code_chunk_overlap: 512
+      tokenizer_name: "Qwen/Qwen3-VL-Embedding-8B"
+      tokenizer_type: "HuggingFace"
+  reranker:
+    name: "Qwen/Qwen3-VL-Reranker-8B"
+    url: ""
+    className: "MultiModalReranker"
+    extra: {}
+  vlm:
+    name: "Qwen/Qwen3.8-27B-FP8"
+    url: ""
+    extra: {}
+  asr:
+    name: "CohereLabs/cohere-transcribe-03-2026"
+    url: ""
+    extra: {}
+
+# -- Model API keys (sensitive) -----------------------------------------------
+# These are stored in a Kubernetes Secret, not the ConfigMap.
+# Provide via --set or a separate encrypted values file.
+modelSecrets:
+  embedderApiKey: ""
+  rerankerApiKey: ""
+  vlmApiKey: ""
+  asrApiKey: ""
+
+# -- S3 / MinIO configuration --------------------------------------------------
+# Endpoint URL is stored in the ConfigMap (not sensitive).
+# Access keys are stored in the Kubernetes Secret.
+s3:
+  endpointUrl: "http://minio.minio.svc.cluster.local:9000"
+  accessKeyId: ""
+  secretAccessKey: ""
+
+# -- RAG parameters -----------------------------------------------------------
+rag:
+  captionWithAsr: true  # Caption video audio tracks via ASR at ingest (auto-disables without an ASR model)
+  captionWithVlm: true  # Caption images/videos via VLM at ingest (enables VLM-skip at retrieval; auto-disables if no VLM)
+  remote: false         # Use remote model URLs (vs in-cluster .svc.cluster.local)
+  dedupThreshold: 0.995  # Cosine similarity above which a doc is considered a duplicate (0.0–1.0)
+
+# -- Qdrant configuration -----------------------------------------------------
+# Qdrant runs as a sidecar StatefulSet.  The API server connects to it
+# over the in-cluster DNS name.
+qdrant:
+  image:
+    repository: qdrant/qdrant
+    tag: v1.19.0
+    pullPolicy: IfNotPresent
+  grpcPort: 6334
+  httpPort: 6333
+
+
+# -- MCP server (optional sidecar) --------------------------------------------
+# Runs alongside the API server and exposes the same retrieval pipeline
+# as MCP tools over SSE transport.
+mcp:
+  enabled: true
+  port: 9090
+
+# -- Service configuration ----------------------------------------------------
+service:
+  api:
+    type: ClusterIP
+    port: 80
+    targetPort: 8000
+  mcp:
+    type: ClusterIP
+
+
+# -- Resource limits ----------------------------------------------------------
+resources:
+  app:
+    requests:
+      memory: "2Gi"
+      cpu: 2
+    limits:
+      memory: "8Gi"
+      cpu: 4
+  qdrant:
+    requests:
+      memory: "16Gi"
+      cpu: "4"
+    limits:
+      memory: "32Gi"
+      cpu: "8"
+
+# -- Environment variables (extra) --------------------------------------------
+# Extra env vars for both the API and MCP containers. e.g.
+#   extraEnv:
+#     MEMORY_MAX_TOKENS: "8192"   # per-memory token cap in add_memory
+extraEnv: {}
+
+# -- Security hardening -------------------------------------------------------
+# `mediaTokenSecret` is REQUIRED: both the API and MCP containers refuse to
+# start without it (media URLs are served via short-lived HMAC tokens, never
+# a clear ?password=). The other guards default to their safe setting.
+
+security:
+  apiKey: ""
+  mediaTokenSecret: "48b00cdf6d0979891ada5b3e51a5dd883ee752a5a1256b578c8271c30569944d"
+  mediaTokenTtl: 3600
+  ingestAllowHosts: ""
+  blockPrivateHosts: true
+  maxDownloadBytes: 536870912
+  archiveMaxTotalBytes: 2147483648
+  archiveMaxMemberBytes: 1073741824
+  archiveMaxEntries: 10000
+  mediaAllowPathPrefixes: "/data/datasets:/data/staging"
+  pwMaxFailures: 10
+  pwFailWindow: 300
+
+# -- PCAI ---------------------------------------------------------------------
+ezua:
+  enabled: true
+  domainName: "${DOMAIN_NAME}"
+  # configure the application endpoint
+
+  virtualService:
+    endpoint: "rag-mcp-server.${DOMAIN_NAME}"
+    istioGateway: "istio-system/ezaf-gateway"
+    timeout: 300s          # Default for normal API calls (search, list, read)
+    longTimeout: 3600s     # For batch uploads, SSE streams, and MCP
+
+  # configure the authorization policy
+  authorizationPolicy:
+    enabled: true
+    namespace: "istio-system"
+    providerName: "oauth2-proxy"
+
+

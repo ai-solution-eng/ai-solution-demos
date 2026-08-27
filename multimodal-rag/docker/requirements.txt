@@ -1,0 +1,73 @@
+# API server
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+gunicorn>=21.2.0
+jinja2>=3.1.0
+python-multipart>=0.0.9
+aiofiles>=23.0.0
+
+# Vector store
+# qdrant-client>=1.19: the gRPC auth interceptor only guards the deprecated
+# `asyncio.iscoroutinefunction` call since 1.19, so pin the floor to keep the
+# Python 3.14 DeprecationWarning ("asyncio.iscoroutinefunction is deprecated")
+# from being logged once per search on older releases.
+qdrant-client>=1.19.0,<2
+
+# LLM
+openai
+openai-agents>=0.20.0
+
+# MCP server
+mcp>=2.0.0
+httpx2>=2.0.0
+
+# Async HTTP
+httpx>=0.27.0
+
+# Tokenization for token-count chunking (standalone, CPU-only)
+tokenizers>=0.15,<1
+
+# Audio processing (VAD for preprocessor)
+webrtcvad>=2.0.10
+
+# PDF processing
+PyMuPDF>=1.24.0
+
+# Image processing
+Pillow>=10.0.0
+
+# Video processing (ffmpeg binary required separately)
+av>=10.0.0
+numpy>=1.26.0
+
+# Tabular data
+pandas>=1.5.0
+
+# Excel .xlsx support
+openpyxl>=3.1.0
+
+# OpenDocument .ods and .odt/.odp support
+odfpy>=1.4.1
+
+# Office documents (.docx, .pptx)
+python-docx>=1.1.0
+python-pptx>=1.0.0
+
+# HTML parsing
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+
+# XML parsing (safe against XXE / billion-laughs)
+defusedxml>=0.7.1
+
+# YAML parsing
+pyyaml>=6.0
+
+# RAR archive support
+rarfile>=4.0
+
+# S3 support (optional — for s3:// URLs)
+boto3>=1.34.0
+
+# Redis (optional — cross-pod unlock cache when running multiple replicas)
+redis>=5.0.0

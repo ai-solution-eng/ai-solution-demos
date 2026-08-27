@@ -1,0 +1,49 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.deployment.name }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.deployment.appName }}
+data:
+  # NAME entries are optional: empty → auto-discovered via /v1/models.
+  # Embedder
+  MODEL_EMBEDDER_NAME: {{ .Values.models.embedder.name | quote }}
+  MODEL_EMBEDDER_URL: {{ .Values.models.embedder.url | quote }}
+  MODEL_EMBEDDER_CLASS: {{ .Values.models.embedder.className | quote }}
+  MODEL_EMBEDDER_EXTRA: {{ .Values.models.embedder.extra | toJson | quote }}
+  # Reranker
+  MODEL_RERANKER_NAME: {{ .Values.models.reranker.name | quote }}
+  MODEL_RERANKER_URL: {{ .Values.models.reranker.url | quote }}
+  MODEL_RERANKER_CLASS: {{ .Values.models.reranker.className | quote }}
+  MODEL_RERANKER_EXTRA: {{ .Values.models.reranker.extra | toJson | quote }}
+  # VLM
+  MODEL_VLM_NAME: {{ .Values.models.vlm.name | quote }}
+  MODEL_VLM_URL: {{ .Values.models.vlm.url | quote }}
+  MODEL_VLM_EXTRA: {{ .Values.models.vlm.extra | toJson | quote }}
+  # ASR
+  MODEL_ASR_NAME: {{ .Values.models.asr.name | quote }}
+  MODEL_ASR_URL: {{ .Values.models.asr.url | quote }}
+  MODEL_ASR_EXTRA: {{ .Values.models.asr.extra | toJson | quote }}
+  # RAG pipeline
+  RAG_CAPTION_WITH_ASR: {{ .Values.rag.captionWithAsr | quote }}
+  RAG_CAPTION_WITH_VLM: {{ .Values.rag.captionWithVlm | quote }}
+  RAG_REMOTE: {{ .Values.rag.remote | quote }}
+  RAG_DEDUP_THRESHOLD: {{ .Values.rag.dedupThreshold | quote }}
+  # Media base URL (for PVC-to-HTTP conversion in MCP search results)
+  MEDIA_BASE_URL: {{ printf "https://%s" .Values.ezua.virtualService.endpoint | quote }}
+  # S3 / MinIO endpoint (not sensitive — just a URL).  Optional: leave
+  # empty to use the default boto3 credential chain (IAM, ~/.aws/…).
+  S3_ENDPOINT_URL: {{ (.Values.s3.endpointUrl) | default "" | quote }}
+
+  # -- Security hardening (opt-in; see .Values.security) ----------------------
+  INGEST_ALLOW_HOSTS: {{ .Values.security.ingestAllowHosts | default "" | quote }}
+  INGEST_BLOCK_PRIVATE_HOSTS: {{ .Values.security.blockPrivateHosts | default false | quote }}
+  MAX_REMOTE_DOWNLOAD_BYTES: {{ int (.Values.security.maxDownloadBytes | default 536870912) | quote }}
+  ARCHIVE_MAX_TOTAL_BYTES: {{ int (.Values.security.archiveMaxTotalBytes | default 2147483648) | quote }}
+  ARCHIVE_MAX_MEMBER_BYTES: {{ int (.Values.security.archiveMaxMemberBytes | default 1073741824) | quote }}
+  ARCHIVE_MAX_ENTRIES: {{ int (.Values.security.archiveMaxEntries | default 10000) | quote }}
+  MEDIA_ALLOW_PATH_PREFIXES: {{ .Values.security.mediaAllowPathPrefixes | default "" | quote }}
+  MEDIA_TOKEN_TTL: {{ int (.Values.security.mediaTokenTtl | default 3600) | quote }}
+  PW_MAX_FAILURES: {{ int (.Values.security.pwMaxFailures | default 10) | quote }}
+  PW_FAIL_WINDOW: {{ int (.Values.security.pwFailWindow | default 300) | quote }}
