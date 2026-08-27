@@ -38,7 +38,7 @@ Recordings:
 
 The demo is built as four planes, composed at inference time by the LLM. PCAI-native components (Open WebUI, EzPresto, MLIS, MCP server) are used out of the box. The Bento service, OWU tool file, Hive catalog registration, and OWU model preset are what we authored.
 
-![Architecture](./assets/architect.png)
+![Architecture](./assets/architecture.png)
 
 ### Workflow
 
