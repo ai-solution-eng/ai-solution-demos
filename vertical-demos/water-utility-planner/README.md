@@ -29,7 +29,7 @@ Features:
 
 Recordings:
 
-- [Part 1 - Intro & Live agent chat walkthrough [~7 min]](https://storage.googleapis.com/ai-solution-engineering-videos/public/Water%20Utility%20Agentic%20Planner%20-%20Short.mp4)
+- [Part 1 - Intro & Live agent chat walkthrough [~7 min]](https://storage.googleapis.com/ai-solution-engineering-videos/public/Water%20Utility%20Agentic%20Planner%20-%20Short%20version.mp4)
 - *[Part 2 - Workflow technical deep dive ]* — TBD
 
 ## Description
