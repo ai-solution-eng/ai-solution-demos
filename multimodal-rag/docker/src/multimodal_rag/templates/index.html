@@ -1,0 +1,2074 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" type="image/png" href="/favicon.png">
+<title>Multimodal RAG — HPE Dataset Manager</title>
+<script>
+  (function() {
+    var t = localStorage.getItem('theme') || 'light';
+    if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+  })();
+</script>
+<style>
+  :root, [data-theme="light"] {
+    --bg: #f4f6f9;
+    --surface: #ffffff;
+    --surface-2: #eef0f5;
+    --border: #d1d5db;
+    --text: #1f2937;
+    --text-muted: #6b7280;
+    --accent: #01a982;
+    --accent-hover: #02c99a;
+    --green: #059669;
+    --red: #dc2626;
+    --yellow: #d97706;
+    --radius: 6px;
+  }
+  [data-theme="dark"] {
+    --bg: #0b0e14;
+    --surface: #161a24;
+    --surface-2: #1e2432;
+    --border: #2a3142;
+    --text: #e0e4ed;
+    --text-muted: #8891a8;
+    --accent: #01a982;
+    --accent-hover: #02c99a;
+    --green: #34d399;
+    --red: #f87171;
+    --yellow: #fbbf24;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    padding: 24px;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  .hpe-header {
+    display: flex; align-items: center; margin-bottom: 28px; padding-bottom: 20px; border-bottom: 1px solid var(--border);
+  }
+  .hpe-header-left {
+    display: flex; align-items: center; gap: 20px;
+  }
+  .hpe-brand {
+    display: flex; flex-direction: column;
+  }
+  .hpe-brand-name {
+    font-size: 0.7rem; font-weight: 500; color: var(--text-muted); text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1px;
+  }
+  .hpe-brand-title {
+    font-size: 1.3rem; font-weight: 600; color: var(--text);
+  }
+  .hpe-brand-sub {
+    font-size: 0.8rem; color: var(--text-muted); margin-top: 2px;
+  }
+  h2 { font-size: 1.1rem; font-weight: 500; margin-bottom: 12px; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+  .card-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 16px;
+  }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 800px) { .grid-2 { grid-template-columns: 1fr; } }
+
+  label { display: block; font-size: 0.85rem; font-weight: 500; margin-bottom: 6px; color: var(--text-muted); }
+  input, textarea, select {
+    width: 100%; padding: 10px 12px; border-radius: 4px;
+    border: 1px solid var(--border); background: var(--surface-2);
+    color: var(--text); font-size: 0.9rem; font-family: inherit;
+  }
+  input:focus, textarea:focus { outline: none; border-color: var(--accent); }
+  textarea { resize: vertical; min-height: 80px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.85rem; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 18px; border-radius: 4px; border: none;
+    font-size: 0.85rem; font-weight: 500; cursor: pointer; transition: all .15s;
+  }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-danger { background: var(--red); color: #fff; }
+  .btn-danger:hover { opacity: .85; }
+  .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  .btn-outline:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-sm { padding: 5px 12px; font-size: .8rem; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .file-pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 5px 12px; border-radius: 20px; border: 1px solid var(--border);
+    font-size: .8rem; cursor: pointer; transition: all .15s; background: var(--surface-2);
+    color: var(--text-muted);
+  }
+  .file-pill:hover { border-color: var(--accent); color: var(--accent); }
+  .file-pill.has-file { border-color: var(--accent); color: var(--accent); background: rgba(1, 169, 130, .08); }
+
+  .form-group { margin-bottom: 14px; }
+  .form-row { display: flex; gap: 12px; align-items: flex-end; }
+  .form-row > * { flex: 1; }
+  .form-row .btn { flex: 0 0 auto; }
+
+  .drop-zone {
+    border: 2px dashed var(--border); border-radius: var(--radius);
+    padding: 40px 20px; text-align: center; cursor: pointer; transition: all .2s;
+    background: var(--surface-2);
+  }
+  .drop-zone:hover, .drop-zone.drag-over { border-color: var(--accent); background: rgba(1, 169, 130, .06); }
+  .drop-zone p { color: var(--text-muted); font-size: .9rem; }
+  .drop-zone .icon { font-size: 2rem; margin-bottom: 8px; }
+
+  .dataset-item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 16px; border: 1px solid var(--border); border-radius: 4px;
+    margin-bottom: 8px; transition: background .15s;
+  }
+  .dataset-item:hover { background: var(--surface-2); }
+  .dataset-info { flex: 1; }
+  .dataset-name { font-weight: 500; }
+  .dataset-meta { font-size: .8rem; color: var(--text-muted); }
+  .dataset-actions { display: flex; gap: 8px; }
+
+  .tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid var(--border); }
+  .tab {
+    padding: 8px 16px; cursor: pointer; border-bottom: 2px solid transparent;
+    font-size: .85rem; color: var(--text-muted); transition: all .15s;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  .toast {
+    position: fixed; bottom: 24px; right: 24px; padding: 12px 20px;
+    border-radius: var(--radius); background: var(--surface); border: 1px solid var(--border);
+    box-shadow: 0 8px 24px rgba(0,0,0,.4); font-size: .9rem;
+    opacity: 0; transform: translateY(12px); transition: all .3s; z-index: 1000;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.success { border-color: var(--accent); }
+  .toast.error { border-color: var(--red); }
+
+  .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .6s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .results-list { max-height: 400px; overflow-y: auto; }
+  .result-item { padding: 12px; border: 1px solid var(--border); border-radius: 4px; margin-bottom: 8px; background: var(--surface-2); }
+  .result-item .score { font-size: .8rem; color: var(--accent); font-weight: 600; }
+  .result-item pre { font-size: .8rem; white-space: pre-wrap; word-break: break-all; margin-top: 4px; color: var(--text-muted); }
+
+  .inline-code {
+    background: var(--surface-2); padding: 2px 6px; border-radius: 4px;
+    font-family: 'SF Mono', 'Fira Code', monospace; font-size: .8rem;
+  }
+
+  .empty-state { text-align: center; padding: 40px 20px; color: var(--text-muted); }
+
+  .payload-table { width: 100%; font-size: .8rem; border-collapse: collapse; }
+  .payload-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .payload-table td:first-child { color: var(--text-muted); white-space: nowrap; width: 100px; }
+  .payload-table .truncate { max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: middle; }
+
+  .modal-overlay {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center;
+    z-index: 999; opacity: 0; pointer-events: none; transition: opacity .2s;
+  }
+  .modal-overlay.show { opacity: 1; pointer-events: auto; }
+  .modal { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto; }
+  .modal h3 { margin-bottom: 16px; }
+
+  .reader-overlay {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,.85); display: flex; align-items: center; justify-content: center;
+    z-index: 1100; opacity: 0; pointer-events: none; transition: opacity .2s;
+  }
+  .reader-overlay.show { opacity: 1; pointer-events: auto; }
+  .reader-panel {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    width: 95%; height: 92%; max-width: 1100px; display: flex; flex-direction: column;
+    box-shadow: 0 12px 40px rgba(0,0,0,.6); overflow: hidden;
+  }
+  .reader-header {
+    display: flex; justify-content: space-between; align-items: center; gap: 8px;
+    padding: 12px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+  }
+  .reader-header .reader-title { font-size: .85rem; color: var(--text-muted); font-weight: 600; }
+  .reader-actions { display: flex; gap: 8px; align-items: center; }
+  .reader-body { flex: 1; overflow-y: auto; padding: 20px 24px; }
+  .reader-body pre { white-space: pre-wrap; word-break: break-all; font-size: .9rem; line-height: 1.5; margin: 0; color: var(--text); }
+
+  .theme-toggle {
+    display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;
+    font-size: .75rem; color: var(--text-muted);
+  }
+  .theme-toggle-track {
+    position: relative; width: 36px; height: 20px; border-radius: 10px;
+    background: var(--border); transition: background .2s; flex-shrink: 0;
+  }
+  .theme-toggle-thumb {
+    position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+    border-radius: 50%; background: var(--accent); transition: transform .2s;
+    box-shadow: 0 1px 3px rgba(0,0,0,.25);
+  }
+  [data-theme="dark"] .theme-toggle-track { background: var(--accent); }
+  [data-theme="dark"] .theme-toggle-thumb { transform: translateX(16px); background: #fff; }
+</style>
+</head>
+<body>
+
+<div class="hpe-header">
+  <div class="hpe-header-left">
+    <svg xmlns="http://www.w3.org/2000/svg" width="240" height="160" viewBox="0 0 432 288" style="flex-shrink:0">
+      <path fill="#01a982" d="M126.617,109.327v15.861h55.218v-15.861H126.617z M178.384,121.737h-48.316v-8.959h48.316V121.737z"/>
+      <path fill="var(--text)" d="M136.668,158.173v1.93h-7.843v4.849h7.132v1.878h-7.132v5.279h7.843v1.929h-10.051v-15.864H136.668z
+        M142.123,174.037h-2.157v-11.676h2.03v2.184c0.837-1.473,2.183-2.438,3.909-2.438c2.716,0,4.315,1.776,4.315,4.442v7.487h-2.158
+        V166.6c0-1.547-0.812-2.462-2.614-2.462c-1.548,0-2.868,1.041-3.325,2.438V174.037z M159.051,174.291c-2.919,0-4.086-1.271-4.086-3.579
+        v-6.446h-2.462v-1.904h2.462v-3.02h2.157v3.02h3.325v1.904h-3.325v6.244c0,1.396,0.787,1.775,2.133,1.775c0.354,0,0.71-0.049,1.015-0.152
+        h0.177v1.904C160.117,174.163,159.659,174.291,159.051,174.291z M168.541,174.291c-3.883,0-6.345-2.284-6.345-5.965
+        c0-3.655,2.285-6.219,5.635-6.219c3.451,0,5.203,2.312,5.203,5.737v1.143h-8.604c0.305,2.282,1.929,3.35,4.137,3.35
+        c1.371,0,2.412-0.229,3.427-0.964h0.228v1.853C171.182,174.012,169.836,174.291,168.541,174.291z M164.456,167.285h6.472
+        c-0.077-2.131-1.193-3.273-3.071-3.273S164.735,165.383,164.456,167.285z M182.474,164.569c-0.305-0.15-0.762-0.254-1.243-0.254
+        c-1.372,0-2.463,0.967-2.919,2.538v7.184h-2.157v-11.676h2.03v2.514c0.686-1.904,1.929-2.691,3.325-2.691
+        c0.507,0,0.964,0.077,1.142,0.178v2.208H182.474z M186.965,172.133v6.193h-2.157v-15.965h2.03v2.006
+        c0.686-1.194,2.03-2.26,3.832-2.26c3.528,0,5.381,2.792,5.381,5.965c0,3.249-1.854,6.091-5.381,6.091
+        C188.996,174.163,187.676,173.25,186.965,172.133z M193.843,168.072c0-2.36-1.319-3.935-3.68-3.935c-1.395,0-2.512,0.737-3.197,2.006
+        v4.011c0.686,1.243,1.802,2.005,3.197,2.005C192.523,172.159,193.843,170.534,193.843,168.072z M205.619,164.569
+        c-0.305-0.15-0.762-0.254-1.244-0.254c-1.371,0-2.462,0.967-2.918,2.538v7.184h-2.157v-11.676h2.03v2.514
+        c0.685-1.904,1.929-2.691,3.324-2.691c0.508,0,0.965,0.077,1.143,0.178v2.208H205.619z M209.297,161.194
+        c-0.813,0-1.548-0.686-1.548-1.523c0-0.837,0.735-1.498,1.548-1.498c0.837,0,1.548,0.661,1.548,1.498
+        C210.845,160.509,210.135,161.194,209.297,161.194z M210.363,174.037h-2.157v-11.676h2.157V174.037z M213.865,171.27h0.204
+        c0.964,0.787,2.386,1.193,3.73,1.193c1.269,0,2.386-0.481,2.386-1.521c0-1.041-0.939-1.271-2.791-1.878
+        c-1.65-0.56-3.504-1.144-3.504-3.352c0-2.31,1.878-3.604,4.291-3.604c1.37,0,2.589,0.279,3.603,0.965v1.98h-0.228
+        c-0.914-0.686-2.005-1.117-3.351-1.117c-1.37,0-2.132,0.609-2.132,1.473c0,0.964,0.812,1.219,2.716,1.801
+        c1.699,0.56,3.579,1.219,3.579,3.427c0,2.412-1.981,3.655-4.543,3.655c-1.549,0-3.097-0.38-3.96-1.065V171.27z
+        M231.147,174.291c-3.883,0-6.345-2.284-6.345-5.965c0-3.655,2.284-6.219,5.635-6.219c3.453,0,5.204,2.312,5.204,5.737v1.143h-8.605
+        c0.305,2.282,1.929,3.35,4.139,3.35c1.369,0,2.41-0.229,3.426-0.964h0.228v1.853C233.787,174.012,232.442,174.291,231.147,174.291z
+        M227.062,167.285h6.473c-0.076-2.131-1.193-3.273-3.071-3.273C228.585,164.012,227.341,165.383,227.062,167.285z M139.942,135.543
+        v15.863h-3.452v-6.574h-6.421v6.574h-3.451v-15.863h3.451v6.269h6.421v-6.269H139.942z M149.306,151.686c-4.366,0-6.701-2.361-6.701-6.168
+        c0-3.807,2.436-6.32,5.964-6.32c3.807,0,5.711,2.386,5.711,5.965v1.344h-8.122c0.253,1.956,1.802,2.462,3.324,2.462
+        c1.372,0,2.437-0.177,3.555-0.784h0.38v2.486C152.402,151.406,150.778,151.686,149.306,151.686z M146.133,144.325h4.747
+        c-0.102-1.777-0.863-2.564-2.259-2.564C147.428,141.761,146.361,142.32,146.133,144.325z M158.339,151.406l-2.488-11.522v-0.406h3.198
+        l1.346,7.259l0.33,2.334l0.457-2.334l1.624-7.259h3.63l1.6,7.259l0.482,2.334l0.381-2.334l1.345-7.259h3.046v0.406l-2.513,11.522h-4.417
+        l-1.421-6.37l-0.406-2.386l-0.406,2.386l-1.396,6.37H158.339z M179.378,151.686c-2.538,0-3.807-1.167-3.807-3.884v-12.258h3.452v12.03
+        c0,0.838,0.355,1.117,1.167,1.117c0.254,0,0.661-0.076,0.914-0.151h0.051v2.867C180.774,151.534,180.038,151.686,179.378,151.686z
+        M188.87,151.686c-4.366,0-6.701-2.361-6.701-6.168c0-3.807,2.437-6.32,5.965-6.32c3.808,0,5.71,2.386,5.71,5.965v1.344h-8.122
+        c0.254,1.956,1.802,2.462,3.325,2.462c1.37,0,2.437-0.177,3.553-0.784h0.381v2.486C191.965,151.406,190.341,151.686,188.87,151.686z
+        M185.696,144.325h4.746c-0.101-1.777-0.862-2.564-2.258-2.564C186.991,141.761,185.925,142.32,185.696,144.325z M205.542,147.066
+        v-4.747h-5.051v4.594c0,1.219,0.406,1.776,1.549,1.776c0.33,0,0.761-0.102,0.989-0.202h0.331v2.842
+        c-0.458,0.152-1.143,0.355-2.158,0.355c-2.918,0-4.162-1.396-4.162-4.619v-4.747h-2.056v-2.842h2.056v-2.894h3.452v2.894h5.051
+        v-2.894h3.452v2.894h2.868v2.842h-2.868v4.594c0,1.219,0.406,1.776,1.548,1.776c0.33,0,0.762-0.102,0.99-0.202h0.33v2.842
+        c-0.457,0.152-1.142,0.355-2.157,0.355C206.787,151.686,205.542,150.289,205.542,147.066z M222.011,146.507v4.899h-3.425v-15.863h6.167
+        c3.503,0,5.812,1.929,5.812,5.507c0,3.527-2.31,5.456-5.812,5.456H222.011z M224.475,138.462h-2.464v5.127h2.464
+        c1.749,0,2.588-1.041,2.588-2.538C227.062,139.502,226.224,138.462,224.475,138.462z M239.345,149.63
+        c-0.71,1.32-2.005,1.904-3.604,1.904c-2.208,0-4.036-1.271-4.036-3.631c0-2.359,1.599-3.73,4.62-3.73c0.989,0,1.979,0.101,2.919,0.279
+        v-0.686c0-1.269-0.889-1.827-2.666-1.827c-1.32,0-2.411,0.279-3.324,0.735h-0.382v-2.589c0.915-0.481,2.539-0.888,4.112-0.888
+        c3.732,0,5.661,1.701,5.661,4.645v7.563h-3.301V149.63z M239.244,147.676v-1.523c-0.585-0.177-1.345-0.228-1.956-0.228
+        c-1.395,0-2.106,0.533-2.106,1.623c0,1.091,0.712,1.522,1.751,1.522C237.976,149.07,238.913,148.564,239.244,147.676z
+        M245.18,145.468c0-3.858,2.716-6.27,6.246-6.27c1.445,0,2.562,0.331,3.323,0.838v2.995h-0.355c-0.735-0.558-1.547-0.812-2.588-0.812
+        c-1.702,0-3.071,1.192-3.071,3.249c0,2.03,1.369,3.197,3.071,3.197c1.041,0,1.853-0.254,2.588-0.812h0.355v2.995
+        c-0.761,0.506-1.878,0.837-3.323,0.837C247.896,151.686,245.18,149.3,245.18,145.468z M260.864,145.619v5.787h-3.451v-15.863h3.451
+        v9.035l0.812-1.217l3.173-3.883h3.655v0.406l-4.416,5l4.416,6.115v0.407h-3.883l-2.945-4.366L260.864,145.619z M276.953,149.63
+        c-0.71,1.32-2.005,1.904-3.604,1.904c-2.208,0-4.036-1.271-4.036-3.631c0-2.359,1.599-3.73,4.62-3.73c0.989,0,1.979,0.101,2.919,0.279
+        v-0.686c0-1.269-0.889-1.827-2.665-1.827c-1.319,0-2.412,0.279-3.324,0.735h-0.381v-2.589c0.913-0.481,2.537-0.888,4.11-0.888
+        c3.732,0,5.661,1.701,5.661,4.645v7.563h-3.301V149.63z M276.853,147.676v-1.523c-0.585-0.177-1.345-0.228-1.954-0.228
+        c-1.396,0-2.106,0.533-2.106,1.623c0,1.091,0.71,1.522,1.751,1.522S276.521,148.564,276.853,147.676z M286.698,141.889
+        c0.636-1.777,1.98-2.539,3.35-2.539c0.459,0,0.839,0.127,0.991,0.203v3.274h-0.355c-0.354-0.177-0.71-0.28-1.193-0.28
+        c-1.371,0-2.36,0.635-2.64,1.98v6.878h-3.451v-11.929h3.299V141.889z M301.013,149.731c-0.787,1.243-2.032,1.954-3.579,1.954
+        c-3.249,0-5.254-2.615-5.254-6.218c0-3.63,2.005-6.27,5.254-6.27c1.446,0,2.64,0.635,3.427,1.726v-5.38h3.451v15.863h-3.299V149.731z
+        M300.86,147.523v-4.163c-0.635-0.914-1.498-1.346-2.487-1.346c-1.573,0-2.639,1.218-2.639,3.453c0,2.208,1.065,3.4,2.639,3.4
+        C299.362,148.868,300.226,148.437,300.86,147.523z"/>
+    </svg>
+    <div class="hpe-brand">
+      <div class="hpe-brand-name">Hewlett Packard Enterprise</div>
+      <div class="hpe-brand-title">Multimodal RAG</div>
+      <div class="hpe-brand-sub">Dataset Manager — create, upload, and search multimodal datasets</div>
+    </div>
+  </div>
+  <div style="margin-left:auto;display:flex;gap:12px;align-items:center">
+    <div class="theme-toggle" onclick="toggleTheme()" title="Toggle dark/light mode">
+      <span id="theme-label">Light</span>
+      <div class="theme-toggle-track">
+        <div class="theme-toggle-thumb"></div>
+      </div>
+    </div>
+    <a href="/" style="color:var(--text-muted);font-size:.85rem;text-decoration:none">Datasets</a>
+    <a href="/manage" style="color:var(--text-muted);font-size:.85rem;text-decoration:none">Manage</a>
+  </div>
+</div>
+
+<div id="manage-view" style="display:none">
+  <div style="margin-bottom:16px">
+    <a href="/" style="color:var(--accent);font-size:.9rem;text-decoration:none">← Back to Datasets</a>
+  </div>
+  <div class="card">
+    <h2>Storage & Management</h2>
+
+    <!-- Live health stats (refreshed every 10s) -->
+    <div id="manage-health" style="margin-bottom:20px">
+      <div style="font-size:.75rem;color:var(--text-muted);margin-bottom:8px">
+        Live stats — refreshing every 10s
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
+        <div id="health-cpu" style="background:var(--surface-2);padding:12px;border-radius:4px">
+          <div style="font-weight:500;margin-bottom:6px;font-size:.85rem">CPU</div>
+          <div style="text-align:center;padding:8px"><span class="spinner"></span></div>
+        </div>
+        <div id="health-mem" style="background:var(--surface-2);padding:12px;border-radius:4px">
+          <div style="font-weight:500;margin-bottom:6px;font-size:.85rem">Memory</div>
+          <div style="text-align:center;padding:8px"><span class="spinner"></span></div>
+        </div>
+        <div id="health-qdrant" style="background:var(--surface-2);padding:12px;border-radius:4px">
+          <div style="font-weight:500;margin-bottom:6px;font-size:.85rem">Qdrant</div>
+          <div style="text-align:center;padding:8px"><span class="spinner"></span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Model connections (live embedder auto-check + manual test all) -->
+    <div id="manage-models" style="margin-top:20px;padding-top:20px;border-top:1px solid var(--border)">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;flex-wrap:wrap">
+        <div style="font-weight:500;font-size:.85rem">Model Connections</div>
+        <div id="embedder-live" style="font-size:.75rem;color:var(--text-muted)"></div>
+        <div style="flex:1"></div>
+        <button class="btn btn-outline btn-sm" onclick="testConnections()" id="test-connections-btn">Test connections</button>
+      </div>
+      <div style="font-size:.75rem;color:var(--text-muted);margin-bottom:8px">
+        Embedder is auto-checked every 60s; optional models (reranker, VLM, ASR) are checked on demand.
+      </div>
+      <div id="connections-results" style="font-size:.8rem"></div>
+    </div>
+
+    <!-- Detailed storage stats (loaded once) -->
+    <div id="manage-stats" style="font-size:.85rem;color:var(--text-muted);margin-top:20px">
+      <div style="text-align:center;padding:20px"><span class="spinner"></span></div>
+    </div>
+  </div>
+
+  <!-- Upload history (names + timestamps of uploaded files) -->
+  <div class="card" style="margin-top:16px">
+    <div class="card-header">
+      <h2>Upload History</h2>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input type="text" id="history-filter" placeholder="Filter by dataset or file..." style="width:240px;font-size:.8rem;padding:6px 10px" oninput="loadUploadHistory()">
+        <button class="btn btn-outline btn-sm" onclick="loadUploadHistory()">Refresh</button>
+        <button class="btn btn-outline btn-sm" onclick="clearUploadHistory()">Clear</button>
+      </div>
+    </div>
+    <div id="upload-history-table" style="font-size:.85rem">
+      <div style="text-align:center;padding:20px"><span class="spinner"></span></div>
+    </div>
+  </div>
+</div>
+
+<div id="main-view">
+<div class="grid-2">
+
+<!-- Left column: Create & Upload -->
+<div>
+
+  <!-- Create Dataset -->
+  <div class="card">
+    <h2>Create Dataset</h2>
+    <div class="form-group">
+      <label for="ds-name">Dataset name</label>
+      <div class="form-row">
+        <div>
+          <input type="text" id="ds-name" placeholder="e.g. research-papers" autocomplete="off">
+        </div>
+        <button class="btn btn-primary" onclick="createDataset()">Create</button>
+      </div>
+    </div>
+    <div class="form-group">
+      <label for="ds-desc">Description (optional)</label>
+      <input type="text" id="ds-desc" placeholder="e.g. My research paper collection" autocomplete="off">
+    </div>
+    <div class="form-group" style="margin-top:10px">
+      <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-weight:400" title="Transcribe audio tracks from videos via ASR at ingest time.">
+        Caption with ASR <input type="checkbox" id="ds-caption-asr">
+      </label>
+      <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-weight:400;margin-left:16px" title="Generate VLM descriptions of images/videos at ingest time. Enables VLM-skip at retrieval for generic queries.">
+        Caption with VLM <input type="checkbox" id="ds-caption-vlm">
+      </label>
+      <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-weight:400;margin-left:16px" title="Keep original full-quality files on disk after preprocessing. Uncheck to save disk space (preprocessed copies are retained).">
+        Keep originals <input type="checkbox" id="ds-keep-originals" checked>
+      </label>
+    </div>
+    <div class="form-group" style="margin-top:10px">
+      <label for="ds-password">Password (optional — protects dataset access)</label>
+      <div style="display:flex;align-items:center;gap:8px">
+        <input type="password" id="ds-password" placeholder="Leave blank for no password" autocomplete="off" style="flex:1">
+        <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;font-weight:400;font-size:.85rem;white-space:nowrap">
+          <input type="checkbox" id="ds-password-show" onchange="document.getElementById('ds-password').type = this.checked ? 'text' : 'password'"> Show
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- Datasets List -->
+  <div class="card">
+    <div class="card-header">
+      <h2>Datasets</h2>
+      <button class="btn btn-outline btn-sm" onclick="listDatasets()">Refresh</button>
+    </div>
+    <div id="dataset-list"><div class="empty-state">No datasets yet.</div></div>
+  </div>
+
+</div>
+
+<!-- Right column: Dataset actions -->
+<div>
+
+  <div class="card">
+    <h2>Dataset Actions</h2>
+    <p class="subtitle" style="margin-bottom:12px">Select a dataset above first, then use the tabs below.</p>
+
+    <div class="tabs">
+      <div class="tab active" data-tab="upload" onclick="switchTab('upload')">Upload Files</div>
+      <div class="tab" data-tab="text" onclick="switchTab('text')">Add Text</div>
+      <div class="tab" data-tab="urls" onclick="switchTab('urls')">S3 URLs</div>
+      <div class="tab" data-tab="search" onclick="switchTab('search')">Search</div>
+    </div>
+
+    <!-- Upload Tab -->
+    <div class="tab-content active" id="tab-upload">
+      <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
+        <div class="icon">📁</div>
+        <p>Drop files here or click to browse</p>
+        <p style="font-size:.8rem;margin-top:4px">PDF, images, videos, audio, text files supported</p>
+        <input type="file" id="file-input" multiple hidden onchange="handleFiles(this.files)">
+      </div>
+      <div id="upload-status" style="margin-top:12px"></div>
+      <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+        <button id="clear-upload-btn" onclick="clearUploadList()" title="Clear the uploaded-file list below" style="display:none;font-size:.8rem;padding:4px 12px;border-radius:4px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">✕ Clear List</button>
+        <button id="retry-btn" onclick="retryFailed()" style="display:none;font-size:.8rem;padding:4px 12px;border-radius:4px;border:1px solid var(--accent);background:transparent;color:var(--accent);cursor:pointer">↻ Retry Failed</button>
+      </div>
+    </div>
+
+    <!-- Text Tab -->
+    <div class="tab-content" id="tab-text">
+      <label for="text-input">Paste text or JSON (standardized format)</label>
+      <textarea id="text-input" rows="6" placeholder='e.g.&#10;&#10;"A woman shares a joyful moment with her golden retriever"&#10;&#10;or&#10;&#10;{"text":"A caption","image":"https://example.com/img.jpg"}&#10;&#10;or a JSON array of documents'></textarea>
+      <div style="margin-top:10px;display:flex;gap:8px">
+        <button class="btn btn-primary btn-sm" onclick="addText()">Add to Dataset</button>
+        <span id="text-status" style="font-size:.85rem;color:var(--text-muted);align-self:center"></span>
+      </div>
+    </div>
+
+    <!-- S3 URLs Tab -->
+    <div class="tab-content" id="tab-urls">
+      <label for="urls-input">Paste S3 or HTTP URLs (one per line)</label>
+      <textarea id="urls-input" rows="6" placeholder="s3://my-bucket/path/to/document1.pdf&#10;s3://my-bucket/path/to/image2.jpg&#10;https://example.com/report.docx&#10;&#10;# S3 directory prefixes (lists & processes all files):&#10;s3://my-bucket/reports/2024/"></textarea>
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="btn btn-primary btn-sm" onclick="addUrls()">Ingest URLs</button>
+        <span id="urls-status" style="font-size:.85rem;color:var(--text-muted);align-self:center"></span>
+      </div>
+      <div id="urls-progress" style="margin-top:12px"></div>
+    </div>
+
+    <!-- Search Tab -->
+    <div class="tab-content" id="tab-search">
+      <div class="form-row">
+        <div>
+          <label for="search-query">Query</label>
+          <input type="text" id="search-query" placeholder="Search your dataset...">
+        </div>
+        <div style="flex:0 0 80px">
+          <label for="search-topk">Top K</label>
+          <input type="number" id="search-topk" value="10" min="1" max="100">
+        </div>
+        <div style="flex:0 0 80px" id="search-reranker-topk-wrap">
+          <label for="search-reranker-topk">Rerank K</label>
+          <input type="number" id="search-reranker-topk" value="3" min="1" max="50">
+        </div>
+      </div>
+      <div style="margin-top:8px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        <label id="search-reranker-wrap" style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:.85rem">
+          <input type="checkbox" id="search-reranker"> Use reranker
+        </label>
+        <button class="btn btn-primary btn-sm" onclick="searchDataset()">Search</button>
+      </div>
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <label class="file-pill" onclick="document.getElementById('search-media-input').click()">
+          📎 <span id="search-media-label">Attach image, video, or audio</span>
+          <input type="file" id="search-media-input" accept="image/*,video/*,audio/*" hidden onchange="handleSearchMedia(this)">
+        </label>
+        <span id="search-media-info" style="font-size:.8rem;color:var(--text-muted)"></span>
+        <span id="search-media-clear" style="font-size:.8rem;color:var(--accent);cursor:pointer;display:none" onclick="clearSearchMedia()">✕ clear</span>
+      </div>
+      <div id="search-results" style="margin-top:12px"></div>
+    </div>
+
+  </div>
+
+  <!-- Selected dataset info -->
+  <div class="card" id="selected-info" style="display:none">
+    <div class="card-header">
+      <h2 id="selected-name"></h2>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-outline btn-sm" onclick="showDocs()">Documents</button>
+        <button class="btn btn-outline btn-sm" onclick="recreateDataset()" title="Drops the indexed vectors and re-embeds the original files from disk with the currently configured embedder">Recreate</button>
+        <button class="btn btn-outline btn-sm" onclick="downloadBackup()" title="Download the full dataset backup (.tar.gz: metadata + documents + files)">Backup</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteDataset()">Delete</button>
+      </div>
+    </div>
+    <div id="selected-meta" style="font-size:.85rem;color:var(--text-muted)"></div>
+    <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+      <input type="text" id="desc-edit" placeholder="Description"
+        style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:4px;background:var(--surface-2);color:var(--text);font-size:.85rem">
+      <button class="btn btn-primary btn-sm" onclick="saveDescription()">Save</button>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-weight:400;font-size:.85rem" title="Transcribe video audio tracks via ASR for NEW uploads to this dataset.">Caption with ASR <input type="checkbox" id="edit-caption-asr"></label>
+      <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-weight:400;font-size:.85rem;margin-left:8px" title="VLM-describe images/videos at ingest for NEW uploads. Enables VLM-skip at retrieval.">Caption with VLM <input type="checkbox" id="edit-caption-vlm"></label>
+      <button class="btn btn-primary btn-sm" onclick="saveDatasetSettings()" title="Apply captioning settings now — affects future ingests/retrievals">Save Captions</button>
+    </div>
+    <div id="doc-list" style="margin-top:12px"></div>
+  </div>
+
+</div>
+</div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+let selectedDataset = null;
+let datasets = [];
+let datasetPasswords = {};  // dataset name → password (empty string = no password)
+let mediaTokens = {};       // dataset name → { token, expires } for media ?token= URLs
+
+// Mint (and cache) a short-lived, dataset-scoped media token so <img>/<video>
+// URLs never carry the dataset password in their query string.
+async function ensureMediaToken(name) {
+  if (!datasetPasswords[name]) return '';          // public dataset — no token needed
+  const cached = mediaTokens[name];
+  if (cached && Date.now() < cached.expires) return cached.token;
+  try {
+    const res = await api('POST', `/api/datasets/${name}/media-token`);
+    if (res && res.token) {
+      const ttlMs = (res.ttl_seconds || 3600) * 1000;
+      // Keep a 60s safety margin so tokens aren't used right at expiry.
+      mediaTokens[name] = { token: res.token, expires: Date.now() + ttlMs - 60000 };
+      return res.token;
+    }
+  } catch (e) {
+    // Token unavailable — media links render without a token (they will 403
+    // for protected datasets) rather than leaking the password in the URL.
+  }
+  return '';
+}
+
+// -----------------------------------------------------------------------
+// API helpers
+// -----------------------------------------------------------------------
+
+function passwordHeader() {
+  const pw = datasetPasswords[selectedDataset];
+  return pw ? { 'X-Dataset-Password': pw } : {};
+}
+
+async function api(method, path, body, timeoutMs, extraHeaders) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs || 1200000);
+  const hdrs = {};
+  if (extraHeaders) Object.assign(hdrs, extraHeaders);
+  const opts = { method, headers: hdrs, signal: controller.signal };
+  if (body instanceof FormData) {
+    opts.body = body;
+  } else if (body !== undefined) {
+    hdrs['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  }
+  try {
+    const res = await fetch(path, opts);
+    clearTimeout(timeout);
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try {
+        const err = await res.json();
+        detail = err.detail || err.message || detail;
+      } catch {
+        const text = await res.text().catch(() => '');
+        if (text) detail = text;
+      }
+      throw new Error(detail);
+    }
+    return res.json();
+  } catch (e) {
+    clearTimeout(timeout);
+    if (e.name === 'AbortError') throw new Error('Request timed out');
+    throw e;
+  }
+}
+
+function toast(msg, type = 'success') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast ' + type;
+  setTimeout(() => el.classList.add('show'), 10);
+  setTimeout(() => el.classList.remove('show'), 3500);
+}
+
+// -----------------------------------------------------------------------
+// Datasets
+// -----------------------------------------------------------------------
+
+async function createDataset() {
+  const input = document.getElementById('ds-name');
+  const name = input.value.trim();
+  if (!name) { toast('Enter a dataset name', 'error'); return; }
+  const desc = document.getElementById('ds-desc').value.trim();
+  const captionWithAsr = document.getElementById('ds-caption-asr').checked;
+  const captionWithVlm = document.getElementById('ds-caption-vlm').checked;
+  const keepOriginals = document.getElementById('ds-keep-originals').checked;
+  const pw = document.getElementById('ds-password').value.trim();
+  input.disabled = true;
+  try {
+    const body = { name, caption_with_asr: captionWithAsr, caption_with_vlm: captionWithVlm, keep_originals: keepOriginals };
+    if (desc) body.description = desc;
+    if (pw) body.password = pw;
+    await api('POST', '/api/datasets', body);
+    toast(`Dataset "${name}" created`);
+    input.value = '';
+    document.getElementById('ds-desc').value = '';
+    document.getElementById('ds-password').value = '';
+    await listDatasets();
+    selectDataset(name);
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+  input.disabled = false;
+}
+
+async function listDatasets() {
+  const { datasets: ds } = await api('GET', '/api/datasets');
+  datasets = ds;
+  const container = document.getElementById('dataset-list');
+  if (ds.length === 0) {
+    container.innerHTML = '<div class="empty-state">No datasets yet.</div>';
+    return;
+  }
+  container.innerHTML = ds.map(d => `
+    <div class="dataset-item ${selectedDataset === d.name ? 'selected' : ''}"
+         onclick="selectDataset('${d.name}')" style="cursor:pointer">
+      <div class="dataset-info">
+        <div class="dataset-name">${d.has_password ? (datasetPasswords[d.name] ? '🔓 ' : '🔒 ') : ''}${escHtml(d.name)}</div>
+        <div class="dataset-meta">${d.document_count || 0} docs · ${d.created ? new Date(d.created).toLocaleDateString() : ''}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function selectDataset(name) {
+  selectedDataset = name;
+  document.querySelectorAll('.dataset-item').forEach(el => {
+    el.style.borderLeft = el.querySelector('.dataset-name')?.textContent === name ? '3px solid var(--accent)' : '';
+  });
+  const d = datasets.find(x => x.name === name);
+  if (!d) return;
+  const info = document.getElementById('selected-info');
+  info.style.display = 'block';
+  document.getElementById('selected-name').textContent = d.name;
+  document.getElementById('selected-meta').textContent =
+    `${d.document_count || 0} documents · ${d.description || 'no description'} · created ${d.created ? new Date(d.created).toLocaleDateString() : 'unknown'}`;
+  document.getElementById('desc-edit').value = d.description || '';
+  const cAsr = document.getElementById('edit-caption-asr');
+  const cVlm = document.getElementById('edit-caption-vlm');
+  if (cAsr) cAsr.checked = !!d.caption_with_asr;
+  if (cVlm) cVlm.checked = !!d.caption_with_vlm;
+  document.getElementById('doc-list').innerHTML = '';
+
+  // If dataset is password-protected and we don't have a password yet, prompt
+  if (d.has_password && !datasetPasswords[name]) {
+    const pw = prompt(`Enter password for dataset "${name}":`);
+    if (pw) {
+      // Verify the password
+      try {
+        await api('POST', `/api/datasets/${name}/verify-password`, { password: pw });
+        datasetPasswords[name] = pw;
+        delete mediaTokens[name];  // invalidate any token minted under the old password
+        await listDatasets();      // re-render so the lock icon becomes unlocked
+      } catch (e) {
+        toast('Incorrect password', 'error');
+        datasetPasswords[name] = '';  // mark as attempted
+        delete mediaTokens[name];
+      }
+    } else {
+      datasetPasswords[name] = '';  // user cancelled
+      delete mediaTokens[name];
+    }
+  }
+}
+
+function downloadBackup() {
+  if (!selectedDataset) return;
+  const pw = datasetPasswords[selectedDataset] || '';
+  const url = `/api/datasets/${selectedDataset}/export` + (pw ? `?password=${encodeURIComponent(pw)}` : '');
+  window.open(url, '_blank');
+}
+
+async function deleteDataset() {
+  if (!selectedDataset) return;
+  if (!confirm(`Delete dataset "${selectedDataset}"? This cannot be undone.`)) return;
+  try {
+    await api('DELETE', `/api/datasets/${selectedDataset}`);
+    toast(`Deleted "${selectedDataset}"`);
+    selectedDataset = null;
+    document.getElementById('selected-info').style.display = 'none';
+    await listDatasets();
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+async function recreateDataset() {
+  if (!selectedDataset) return;
+  if (!confirm(`Recreate "${selectedDataset}"?\n\nDrops the indexed vectors and re-embeds the original files from disk with the currently configured embedder.`)) return;
+  let jobId;
+  try {
+    const res = await api('POST', `/api/admin/datasets/${selectedDataset}/recreate`);
+    jobId = res.job_id;
+  } catch (e) {
+    toast(e.message, 'error');
+    return;
+  }
+  toast(`Recreating "${selectedDataset}"…`);
+  const poll = async () => {
+    try {
+      const job = await api('GET', `/api/datasets/${selectedDataset}/upload-status/${jobId}`, undefined, 15000);
+      if (job.status === 'complete') {
+        const n = job.result && job.result.file_count != null ? job.result.file_count : job.processed_files;
+        toast(`Recreated "${selectedDataset}" (${n} file${n === 1 ? '' : 's'})`);
+        await listDatasets();
+        await loadManageStats();
+        return;
+      }
+      if (job.status === 'error') {
+        toast(`Recreate failed: ${job.error || 'unknown error'}`, 'error');
+        return;
+      }
+      setTimeout(poll, 2000);
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  };
+  poll();
+}
+
+// -----------------------------------------------------------------------
+// File upload
+// -----------------------------------------------------------------------
+
+const dropZone = document.getElementById('drop-zone');
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  handleFiles(e.dataTransfer.files);
+});
+
+// Track files for retry: [{name, file, done: bool, ok: bool}]
+let _retryFiles = [];
+let _uploadSeq = 0;       // monotonic counter for unique per-file status lines
+let _uploadsActive = 0;   // in-flight batch uploads (disables Clear while busy)
+
+function _updateRetryButton() {
+  const btn = document.getElementById('retry-btn');
+  const failed = _retryFiles.filter(f => f.done && !f.ok);
+  if (failed.length > 0) {
+    btn.textContent = `↻ Retry Failed (${failed.length})`;
+    btn.style.display = 'inline-block';
+  } else {
+    btn.style.display = 'none';
+  }
+}
+
+function _updateClearButton() {
+  const btn = document.getElementById('clear-upload-btn');
+  const status = document.getElementById('upload-status');
+  if (!btn || !status) return;
+  const hasContent = status.childElementCount > 0;
+  btn.style.display = hasContent ? 'inline-block' : 'none';
+  btn.disabled = _uploadsActive > 0;
+}
+
+function clearUploadList() {
+  if (_uploadsActive > 0) { toast('Wait for the current uploads to finish', 'error'); return; }
+  document.getElementById('upload-status').innerHTML = '';
+  _retryFiles = [];
+  _updateRetryButton();
+  _updateClearButton();
+}
+
+async function handleFiles(files) {
+  if (!selectedDataset) { toast('Select a dataset first', 'error'); return; }
+  const status = document.getElementById('upload-status');
+  const fileArray = Array.from(files);
+  if (fileArray.length === 0) return;
+
+  _uploadsActive++;
+  _updateClearButton();
+
+  // Register these files for potential retry (skip ones already tracked as done+ok)
+  for (const f of fileArray) {
+    if (!_retryFiles.some(r => r.name === f.name && r.done && r.ok)) {
+      _retryFiles = _retryFiles.filter(r => r.name !== f.name);
+      _retryFiles.push({name: f.name, file: f, done: false, ok: false});
+    }
+  }
+
+  // Progress summary bar
+  const summary = document.createElement('div');
+  summary.style.marginBottom = '8px';
+  summary.style.fontSize = '.85rem';
+  summary.style.color = 'var(--text-muted)';
+  summary.textContent = `Uploading ${fileArray.length} file(s)...`;
+  status.appendChild(summary);
+
+  // Show all files as uploading.  Each line gets a unique key so files that
+  // share a name (re-uploads, same file picked twice) each keep their own
+  // status line instead of the first match stealing the updates.
+  const lineKeys = new Map(); // File object -> unique line key
+  for (const file of fileArray) {
+    const key = `f${++_uploadSeq}`;
+    lineKeys.set(file, key);
+    const line = document.createElement('div');
+    line.style.marginTop = '4px';
+    line.style.display = 'flex';
+    line.style.alignItems = 'center';
+    line.style.gap = '8px';
+    line.setAttribute('data-file-key', key);
+    line.innerHTML = `<span style="color:var(--text-muted);width:16px;flex-shrink:0">📤</span> ${escHtml(file.name)}`;
+    status.appendChild(line);
+  }
+  _updateClearButton();
+
+  const start = Date.now();
+  let totalChunks = 0;
+  const _fileChunkTotal = {};
+  const _fileChunkExpected = {};
+
+  // Helper: update a file's status line by its unique key
+  function _updateFileLine(fileKey, html) {
+    const matchLine = status.querySelector(`div[data-file-key="${fileKey}"]`);
+    if (matchLine) matchLine.innerHTML = html;
+  }
+
+  // Helper: update summary line
+  function _updateSummary() {
+    summary.innerHTML = `Processing ${fileArray.length} file(s) · ${totalChunks.toLocaleString()} chunk(s)`;
+  }
+
+  // Upload files — each file gets its own job, up to 3 concurrent
+  const _BATCH_CONCURRENCY = 3;
+  const fileQueue = [...fileArray];
+
+  async function uploadOne(file) {
+    const fileKey = lineKeys.get(file);
+    const fd = new FormData();
+    fd.append('files', file);
+    const pw = datasetPasswords[selectedDataset] || '';
+    if (pw) fd.append('password', pw);
+
+    try {
+      const resp = await fetch(`/api/datasets/${selectedDataset}/batch-files`, {
+        method: 'POST',
+        body: fd,
+      });
+      if (!resp.ok) {
+        let errMsg = `HTTP ${resp.status}`;
+        try { const e = await resp.json(); errMsg = e.detail || e.message || errMsg; } catch {}
+        _updateFileLine(fileKey, `<span style="color:var(--red);width:16px;flex-shrink:0">✗</span> ${escHtml(file.name)} — ${escHtml(errMsg)}`);
+        const rt = _retryFiles.find(r => r.name === file.name);
+        if (rt) { rt.done = true; rt.ok = false; }
+        return;
+      }
+      const { job_id } = await resp.json();
+      _updateFileLine(fileKey, `<span style="color:var(--accent);width:16px;flex-shrink:0">📦</span> ${escHtml(file.name)} <span style="color:var(--text-muted);font-size:.75rem">uploaded</span>`);
+      await pollJob(job_id, file.name, fileKey, _updateFileLine, _fileChunkTotal, _fileChunkExpected,
+        (fname, chunks) => { totalChunks += chunks; _updateSummary(); },
+        (fname) => { const rt = _retryFiles.find(r => r.name === fname); if (rt) { rt.done = true; rt.ok = true; } },
+        (fname) => { const rt = _retryFiles.find(r => r.name === fname); if (rt) { rt.done = true; rt.ok = false; } }
+      );
+    } catch (e) {
+      _updateFileLine(fileKey, `<span style="color:var(--red);width:16px;flex-shrink:0">✗</span> ${escHtml(file.name)} — ${escHtml(e.message)}`);
+      const rt = _retryFiles.find(r => r.name === file.name);
+      if (rt) { rt.done = true; rt.ok = false; }
+    }
+  }
+
+  // Process files with bounded concurrency
+  async function runUploads() {
+    const workers = [];
+    for (let i = 0; i < _BATCH_CONCURRENCY; i++) {
+      workers.push((async () => {
+        while (fileQueue.length > 0) {
+          const file = fileQueue.shift();
+          if (!file) break;
+          await uploadOne(file);
+        }
+      })());
+    }
+    await Promise.all(workers);
+  }
+
+  await runUploads();
+
+  summary.innerHTML = `<span style="color:var(--green)">Done</span> — ${totalChunks.toLocaleString()} chunk(s) stored from ${fileArray.length} file(s)`;
+  toast(`Uploaded ${fileArray.length} file(s), ${totalChunks.toLocaleString()} chunk(s)`);
+  _updateRetryButton();
+  _uploadsActive--;
+  _updateClearButton();
+  listDatasets();
+}
+
+// Poll an upload job until completion
+async function pollJob(jobId, fileLabel, fileKey, updateLine, chunkTotals, chunkExpected, onComplete, onOk, onFail) {
+  const POLL_INTERVAL = 2000;
+  let lastEventIdx = 0;
+
+  return new Promise((resolve) => {
+    const poll = async () => {
+      try {
+        const job = await api('GET', `/api/datasets/${selectedDataset}/upload-status/${jobId}`,
+          undefined, undefined, passwordHeader());
+
+        // Process new events
+        const events = job.events || [];
+        for (let i = lastEventIdx; i < events.length; i++) {
+          const data = events[i];
+          if (data.status === 'preprocessing') {
+            updateLine(fileKey, `<span style="color:var(--text-muted);width:16px;flex-shrink:0">⚙</span> ${escHtml(fileLabel)}`);
+          } else if (data.status === 'preprocessed') {
+            if (data.total) chunkExpected[fileKey] = data.total;
+            updateLine(fileKey, `<span style="color:var(--accent);width:16px;flex-shrink:0">◐</span> ${escHtml(fileLabel)}`);
+          } else if (data.status === 'embedding') {
+            const soFar = chunkTotals[fileKey] || 0;
+            const exp = chunkExpected[fileKey];
+            let chunkInfo;
+            if (soFar > 0 && exp) chunkInfo = `${soFar.toLocaleString()} / (est.) ${exp.toLocaleString()} chunks embedded…`;
+            else if (soFar > 0) chunkInfo = `${soFar.toLocaleString()} chunks embedded…`;
+            else chunkInfo = 'embedding…';
+            updateLine(fileKey, `<span class="spinner" style="width:16px;height:16px;flex-shrink:0"></span> ${escHtml(fileLabel)} <span style="color:var(--text-muted);font-size:.75rem">${chunkInfo}</span>`);
+          } else if (data.status === 'complete' && data.chunks !== undefined) {
+            chunkTotals[fileKey] = (chunkTotals[fileKey] || 0) + (data.chunks || 0);
+            const fileTotal = chunkTotals[fileKey];
+            const color = fileTotal > 0 ? 'var(--green)' : 'var(--text-muted)';
+            const icon = fileTotal > 0 ? '✓' : '⏭';
+            const label = fileTotal > 0 ? `${fileTotal.toLocaleString()} chunk(s)` : 'already in dataset';
+            updateLine(fileKey, `<span style="color:${color};width:16px;flex-shrink:0">${icon}</span> ${escHtml(fileLabel)} — ${label}`);
+            onComplete(fileLabel, data.chunks || 0);
+          } else if (data.status === 'error') {
+            updateLine(fileKey, `<span style="color:var(--red);width:16px;flex-shrink:0">✗</span> ${escHtml(fileLabel)} — ${escHtml(data.error || 'failed')}`);
+          }
+        }
+        lastEventIdx = events.length;
+
+        if (job.status === 'complete') {
+          const warns = (job.result && job.result.warnings) || [];
+          if (warns.length) {
+            const lineEl = document.querySelector('div[data-file-key="' + fileKey + '"]');
+            if (lineEl) {
+              const w = document.createElement('div');
+              w.style.marginTop = '2px'; w.style.fontSize = '.78rem'; w.style.color = '#b45309';
+              w.textContent = '⚠ ' + warns.length + ' caption(s) skipped — ' + warns[0] + (warns.length > 1 ? ' (+' + (warns.length - 1) + ' more)' : '');
+              lineEl.appendChild(w);
+            }
+          }
+          if (onOk) onOk(fileLabel);
+          resolve();
+          return;
+        } else if (job.status === 'error') {
+          if (onFail) onFail(fileLabel);
+          updateLine(fileKey, `<span style="color:var(--red);width:16px;flex-shrink:0">✗</span> ${escHtml(fileLabel)} — ${escHtml(job.error || 'failed')}`);
+          resolve();
+          return;
+        }
+        setTimeout(poll, POLL_INTERVAL);
+      } catch (e) {
+        // Keep polling on transient errors
+        setTimeout(poll, POLL_INTERVAL);
+      }
+    };
+    poll();
+  });
+}
+
+function retryFailed() {
+  const failed = _retryFiles.filter(f => f.done && !f.ok).map(f => f.file);
+  if (failed.length === 0) return;
+  document.getElementById('retry-btn').style.display = 'none';
+  handleFiles(failed);
+}
+
+// -----------------------------------------------------------------------
+// Text input
+// -----------------------------------------------------------------------
+
+async function addText() {
+  if (!selectedDataset) { toast('Select a dataset first', 'error'); return; }
+  const input = document.getElementById('text-input');
+  let raw = input.value.trim();
+  if (!raw) { toast('Enter some text or JSON', 'error'); return; }
+  const status = document.getElementById('text-status');
+  status.innerHTML = '<span class="spinner"></span>';
+
+  // Strip trailing commas (common when pasting from Python)
+  raw = raw.replace(/,(\s*[\]}])/g, '$1');
+
+  let payload;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    payload = raw;
+  }
+
+  const body = Array.isArray(payload) ? payload : [payload];
+  try {
+    const res = await api('POST', `/api/datasets/${selectedDataset}/documents`, body, undefined, passwordHeader());
+    status.innerHTML = `<span style="color:var(--green)">✓ ${res.count} document(s) stored</span>`;
+    if (res.warnings && res.warnings.length) {
+      const w = document.createElement('div');
+      w.style.marginTop = '4px'; w.style.fontSize = '.78rem'; w.style.color = '#b45309';
+      w.textContent = '⚠ ' + res.warnings.length + ' caption(s) skipped: ' + res.warnings.join('; ');
+      status.appendChild(w);
+    }
+    input.value = '';
+    await listDatasets();
+  } catch (e) {
+    status.textContent = '';
+    toast(e.message, 'error');
+  }
+}
+
+// -----------------------------------------------------------------------
+// S3 / URL ingestion
+// -----------------------------------------------------------------------
+
+async function addUrls() {
+  if (!selectedDataset) { toast('Select a dataset first', 'error'); return; }
+  const input = document.getElementById('urls-input');
+  const raw = input.value.trim();
+  if (!raw) { toast('Paste at least one URL', 'error'); return; }
+  const urls = raw.split('\n').map(s => s.trim()).filter(s => s.length > 0);
+  if (urls.length === 0) { toast('Paste at least one URL', 'error'); return; }
+
+  const status = document.getElementById('urls-status');
+  const progress = document.getElementById('urls-progress');
+  progress.innerHTML = '';
+  status.innerHTML = `<span class="spinner"></span> Preparing ${urls.length} URL(s)...`;
+
+  // Show all URLs as pending
+  for (const url of urls) {
+    const line = document.createElement('div');
+    line.style.marginTop = '4px';
+    line.style.display = 'flex';
+    line.style.alignItems = 'center';
+    line.style.gap = '8px';
+    line.setAttribute('data-url', url);
+    line.innerHTML = `<span style="color:var(--text-muted);width:16px;flex-shrink:0">⏳</span> <span style="font-size:.82rem;word-break:break-all">${escHtml(url)}</span>`;
+    progress.appendChild(line);
+  }
+
+  const start = Date.now();
+  const timer = setInterval(() => {
+    const secs = Math.floor((Date.now() - start) / 1000);
+    status.innerHTML = `<span class="spinner"></span> Ingesting ${urls.length} URL(s) ... ${secs}s`;
+  }, 1000);
+
+  try {
+    const resp = await fetch(`/api/datasets/${selectedDataset}/batch-urls`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...passwordHeader() },
+      body: JSON.stringify({ urls }),
+    });
+
+    if (!resp.ok) {
+      clearInterval(timer);
+      let errMsg = `HTTP ${resp.status}`;
+      try { const e = await resp.json(); errMsg = e.detail || e.message || errMsg; } catch {}
+      status.innerHTML = `<span style="color:var(--red)">✗</span> ${escHtml(errMsg)}`;
+      toast(errMsg, 'error');
+      return;
+    }
+
+    const { job_id } = await resp.json();
+
+    // Poll for progress
+    let totalChunks = 0;
+    let _urlFileChunkTotal = {};
+    let _urlFileChunkExpected = {};
+    let lastEventIdx = 0;
+
+    await new Promise((resolve) => {
+      const poll = async () => {
+        try {
+          const job = await api('GET', `/api/datasets/${selectedDataset}/upload-status/${job_id}`,
+            undefined, undefined, passwordHeader());
+
+          const events = job.events || [];
+          for (let i = lastEventIdx; i < events.length; i++) {
+            const data = events[i];
+
+            let matchLine = Array.from(progress.querySelectorAll('div[data-url]')).find(
+              el => el.getAttribute('data-url') === data.file
+            );
+            if (!matchLine) {
+              matchLine = document.createElement('div');
+              matchLine.style.marginTop = '4px';
+              matchLine.style.display = 'flex';
+              matchLine.style.alignItems = 'center';
+              matchLine.style.gap = '8px';
+              matchLine.setAttribute('data-url', data.file);
+              progress.appendChild(matchLine);
+            }
+
+            if (data.status === 'listed') {
+              for (const el of progress.querySelectorAll('div[data-url]')) {
+                const url = el.getAttribute('data-url') || '';
+                if (el.textContent?.includes('⏳') && url !== data.file &&
+                    (url.endsWith('/') || url !== data.file)) {
+                  el.innerHTML = `<span style="color:var(--accent);width:16px;flex-shrink:0">📂</span> <span style="font-size:.82rem;word-break:break-all">${escHtml(url)}</span> <span style="color:var(--text-muted);font-size:.75rem">expanded</span>`;
+                }
+              }
+              matchLine.innerHTML = `<span style="color:var(--text-muted);width:16px;flex-shrink:0">⏳</span> <span style="font-size:.82rem;word-break:break-all">${escHtml(data.file)}</span>`;
+            } else if (data.status === 'preprocessing') {
+              matchLine.innerHTML = `<span style="color:var(--text-muted);width:16px;flex-shrink:0">⚙</span> <span style="font-size:.82rem;word-break:break-all">${escHtml(data.file)}</span>`;
+            } else if (data.status === 'preprocessed') {
+              if (data.total) _urlFileChunkExpected[data.file] = data.total;
+              matchLine.innerHTML = `<span style="color:var(--accent);width:16px;flex-shrink:0">◐</span> <span style="font-size:.82rem;word-break:break-all">${escHtml(data.file)}</span>`;
+            } else if (data.status === 'embedding') {
+              const soFar = _urlFileChunkTotal[data.file] || 0;
+              const exp = _urlFileChunkExpected[data.file];
+              let chunkInfo;
+              if (soFar > 0 && exp) chunkInfo = `${soFar.toLocaleString()} / (est.) ${exp.toLocaleString()} chunks embedded…`;
+              else if (soFar > 0) chunkInfo = `${soFar.toLocaleString()} chunks embedded…`;
+              else chunkInfo = 'embedding…';
+              matchLine.innerHTML = `<span class="spinner" style="width:16px;height:16px;flex-shrink:0"></span> <span style="font-size:.82rem;word-break:break-all">${escHtml(data.file)}</span> <span style="color:var(--text-muted);font-size:.75rem">${chunkInfo}</span>`;
+            } else if (data.status === 'complete' && data.chunks !== undefined) {
+              _urlFileChunkTotal[data.file] = (_urlFileChunkTotal[data.file] || 0) + (data.chunks || 0);
+              const fileTotal = _urlFileChunkTotal[data.file];
+              const color = fileTotal > 0 ? 'var(--green)' : 'var(--text-muted)';
+              const icon = fileTotal > 0 ? '✓' : '⏭';
+              const label = fileTotal > 0 ? `${fileTotal.toLocaleString()} chunk(s)` : 'already in dataset';
+              matchLine.innerHTML = `<span style="color:${color};width:16px;flex-shrink:0">${icon}</span> <span style="font-size:.82rem;word-break:break-all">${escHtml(data.file)}</span> — ${label}`;
+              totalChunks += data.chunks || 0;
+            } else if (data.status === 'error') {
+              matchLine.innerHTML = `<span style="color:var(--red);width:16px;flex-shrink:0">✗</span> <span style="font-size:.82rem;word-break:break-all">${escHtml(data.file)}</span> — ${escHtml(data.error || 'failed')}`;
+            }
+
+            const fileListed = progress.querySelectorAll('div[data-url]').length;
+            status.innerHTML = `Processing ${fileListed} file(s) · ${totalChunks.toLocaleString()} chunk(s)`;
+          }
+          lastEventIdx = events.length;
+
+          if (job.status === 'complete') {
+            clearInterval(timer);
+            const result = job.result || {};
+            const fileCount = result.file_count || urls.length;
+            status.innerHTML = `<span style="color:var(--green)">Done</span> — ${totalChunks.toLocaleString()} chunk(s) stored from ${fileCount} file(s)`;
+            toast(`Ingested ${fileCount} URL(s), ${totalChunks.toLocaleString()} chunk(s)`);
+            input.value = '';
+            resolve();
+            return;
+          } else if (job.status === 'error') {
+            clearInterval(timer);
+            status.innerHTML = `<span style="color:var(--red)">Failed</span> — ${escHtml(job.error || 'Unknown error')}`;
+            toast(job.error || 'Ingestion failed', 'error');
+            resolve();
+            return;
+          }
+          setTimeout(poll, 2000);
+        } catch (e) {
+          setTimeout(poll, 2000);
+        }
+      };
+      poll();
+    });
+
+    await listDatasets();
+  } catch (e) {
+    clearInterval(timer);
+    for (const el of progress.querySelectorAll('div')) {
+      if (el.querySelector('.spinner') || el.textContent?.includes('⏳') || el.textContent?.includes('⚙') || el.textContent?.includes('◐')) {
+        el.innerHTML = `<span style="color:var(--red);width:16px;flex-shrink:0">✗</span> <span style="font-size:.82rem;word-break:break-all">${el.textContent?.trim() || 'URL'}</span> — ${escHtml(e.message)}`;
+      }
+    }
+    status.innerHTML = `<span style="color:var(--red)">Failed</span> — ${escHtml(e.message)}`;
+    toast(e.message, 'error');
+  }
+}
+
+// -----------------------------------------------------------------------
+// Search media helpers
+// -----------------------------------------------------------------------
+
+let _searchMediaDataUrl = null;
+let _searchMediaType = null;
+
+async function handleSearchMedia(input) {
+  const file = input.files[0];
+  const label = document.getElementById('search-media-label');
+  const info = document.getElementById('search-media-info');
+  const clearBtn = document.getElementById('search-media-clear');
+  if (!file) {
+    _searchMediaDataUrl = null;
+    _searchMediaType = null;
+    label.textContent = 'Attach image, video, or audio';
+    input.parentElement.classList.remove('has-file');
+    info.textContent = '';
+    clearBtn.style.display = 'none';
+    return;
+  }
+  // Detect type from MIME
+  if (file.type.startsWith('image/')) _searchMediaType = 'image';
+  else if (file.type.startsWith('video/')) _searchMediaType = 'video';
+  else if (file.type.startsWith('audio/')) _searchMediaType = 'audio';
+  else { toast('Unsupported file type', 'error'); return; }
+
+  label.textContent = file.name;
+  input.parentElement.classList.add('has-file');
+  clearBtn.style.display = 'inline';
+
+  if (_searchMediaType === 'image') {
+    // Resize image to 720×720 max in-browser before sending — avoids
+    // uploading multi-MB phone photos for a search query.
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      const img = new Image();
+      img.onload = function() {
+        const MAX_PIXELS = 720 * 720;
+        const w = img.width, h = img.height;
+        if (w * h <= MAX_PIXELS) {
+          _searchMediaDataUrl = e.target.result;
+          info.textContent = 'image';
+          return;
+        }
+        const scale = Math.sqrt(MAX_PIXELS / (w * h));
+        const nw = Math.max(1, Math.round(w * scale));
+        const nh = Math.max(1, Math.round(h * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = nw;
+        canvas.height = nh;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, nw, nh);
+        const mime = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+        _searchMediaDataUrl = canvas.toDataURL(mime, 0.92);
+        info.textContent = 'image';
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  } else if (_searchMediaType === 'video') {
+    // Downscale video in-browser: first 30s, ≤720×720 per frame, 1 fps.
+    // Uses canvas + MediaRecorder to produce a small webm data URL.
+    info.textContent = 'video — processing…';
+    try {
+      const url = URL.createObjectURL(file);
+      const video = document.createElement('video');
+      video.muted = true;
+      video.playsInline = true;
+      video.src = url;
+      await new Promise((res, rej) => {
+        video.onloadedmetadata = res;
+        video.onerror = () => rej(new Error('Could not load video'));
+      });
+
+      const MAX_DURATION = 30;
+      const MAX_PIXELS = 720 * 720;
+      const TARGET_FPS = 1;
+      const duration = Math.min(video.duration || MAX_DURATION, MAX_DURATION);
+
+      const vw = video.videoWidth, vh = video.videoHeight;
+      let scale = 1;
+      if (vw * vh > MAX_PIXELS) scale = Math.sqrt(MAX_PIXELS / (vw * vh));
+      const nw = Math.max(2, Math.round(vw * scale / 2) * 2);
+      const nh = Math.max(2, Math.round(vh * scale / 2) * 2);
+
+      const canvas = document.createElement('canvas');
+      canvas.width = nw;
+      canvas.height = nh;
+      const ctx = canvas.getContext('2d');
+
+      const stream = canvas.captureStream(TARGET_FPS);
+      const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+        ? 'video/webm;codecs=vp9' : 'video/webm';
+      const recorder = new MediaRecorder(stream, { mimeType });
+      const chunks = [];
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+      const stopped = new Promise((r) => { recorder.onstop = () => r(); });
+      recorder.start();
+
+      // Play at accelerated rate so 30s of video doesn't take 30s to process
+      const playbackRate = Math.min(8, Math.max(2, (video.duration || duration) / 8));
+      video.playbackRate = playbackRate;
+      await video.play();
+
+      const endTime = Math.min(duration, video.duration || duration);
+      await new Promise((resolve) => {
+        const draw = () => {
+          if (video.currentTime >= endTime || video.ended) {
+            video.pause();
+            resolve();
+            return;
+          }
+          ctx.drawImage(video, 0, 0, nw, nh);
+          requestAnimationFrame(draw);
+        };
+        requestAnimationFrame(draw);
+      });
+
+      await new Promise((r) => setTimeout(r, 300));
+      recorder.stop();
+      await stopped;
+      URL.revokeObjectURL(url);
+
+      const blob = new Blob(chunks, { type: 'video/webm' });
+      _searchMediaDataUrl = await new Promise((r) => {
+        const reader = new FileReader();
+        reader.onload = (e) => r(e.target.result);
+        reader.readAsDataURL(blob);
+      });
+      info.textContent = 'video';
+    } catch (err) {
+      console.warn('Video preprocessing failed, sending original', err);
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        _searchMediaDataUrl = e.target.result;
+        info.textContent = 'video';
+      };
+      reader.readAsDataURL(file);
+    }
+  } else {
+    // Audio — send as-is (no client-side transcode)
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      _searchMediaDataUrl = e.target.result;
+      info.textContent = _searchMediaType;
+    };
+    reader.readAsDataURL(file);
+  }
+}
+
+function clearSearchMedia() {
+  _searchMediaDataUrl = null;
+  _searchMediaType = null;
+  document.getElementById('search-media-input').value = '';
+  const label = document.getElementById('search-media-label');
+  label.textContent = 'Attach image, video, or audio';
+  document.getElementById('search-media-input').parentElement.classList.remove('has-file');
+  document.getElementById('search-media-info').textContent = '';
+  document.getElementById('search-media-clear').style.display = 'none';
+}
+
+// -----------------------------------------------------------------------
+// Search
+// -----------------------------------------------------------------------
+
+async function searchDataset() {
+  if (!selectedDataset) { toast('Select a dataset first', 'error'); return; }
+  const q = document.getElementById('search-query').value.trim();
+  if (!q && !_searchMediaDataUrl) {
+    toast('Enter a query or select a media file', 'error'); return;
+  }
+  const top_k = parseInt(document.getElementById('search-topk').value) || 10;
+  const use_reranker = document.getElementById('search-reranker').checked;
+  const reranker_top_k = parseInt(document.getElementById('search-reranker-topk').value) || 3;
+
+  const container = document.getElementById('search-results');
+  container.innerHTML = '<div style="text-align:center;padding:20px"><span class="spinner"></span></div>';
+
+  try {
+    // Build multimodal query
+    const query = {};
+    if (q) query.text = q;
+    if (_searchMediaDataUrl && _searchMediaType) {
+      query[_searchMediaType] = _searchMediaDataUrl;
+    }
+
+    const body = { query, top_k, use_reranker, reranker_top_k };
+    const pw = datasetPasswords[selectedDataset];
+    if (pw) body.password = pw;
+
+    const data = await api('POST',
+      `/api/datasets/${selectedDataset}/search`,
+      body, undefined, passwordHeader());
+    const results = data.results || [];
+    if (results.length === 0) {
+      container.innerHTML = '<div class="empty-state">No results found.</div>';
+      return;
+    }
+    // Pre-mint a media token (once per dataset) so file URLs carry ?token=
+    // instead of the dataset password.
+    const mediaToken = await ensureMediaToken(selectedDataset);
+    container.innerHTML = `<div class="results-list">${results.map((r, i) => {
+      const c = r.content;
+      let mediaHtml = '';
+      if (typeof c === 'object' && c !== null) {
+        const _fileUrl = (url) => {
+          if (!url.startsWith('file://')) return url;
+          const base = '/api/datasets/' + selectedDataset + '/files/' + encodeURIComponent(url.replace('file://', '').split('/').pop());
+          return mediaToken ? base + '?token=' + encodeURIComponent(mediaToken) : base;
+        };
+        const _toArr = (v) => Array.isArray(v) ? v : (v ? [v] : []);
+        const _isExt = (url, exts) => { const p = url.split('?')[0].toLowerCase(); return exts.some(e => p.endsWith(e)); };
+        const _renderMedia = (urls, exts, img) => {
+          let html = '';
+          for (const url of _toArr(urls)) {
+            if (_isExt(url, exts)) {
+              const displayUrl = _fileUrl(url);
+              if (img) {
+                html += `<div style="margin:6px 0"><a href="${escHtml(displayUrl)}" target="_blank" rel="noopener"><img src="${escHtml(displayUrl)}" style="max-width:100%;max-height:200px;border-radius:4px;cursor:pointer" loading="lazy"></a></div>`;
+              } else {
+                html += `<div style="margin:6px 0"><a href="${escHtml(displayUrl)}" target="_blank" rel="noopener">▶ View media</a></div>`;
+              }
+            } else {
+              const displayUrl = _fileUrl(url);
+              html += `<div style="margin:6px 0"><a href="${escHtml(displayUrl)}" target="_blank" rel="noopener" style="font-size:.8rem;color:var(--accent)">📎 View attached media</a></div>`;
+            }
+          }
+          return html;
+        };
+        mediaHtml += _renderMedia(c.preprocessed_image || c.original_image || c.image, ['.png','.jpg','.jpeg','.gif','.webp','.bmp','.tiff'], true);
+        mediaHtml += _renderMedia(c.preprocessed_video || c.original_video || c.video, ['.mp4','.webm','.mov','.avi','.mkv'], false);
+        mediaHtml += _renderMedia(c.preprocessed_audio || c.original_audio || c.audio, ['.mp3','.wav','.ogg','.m4a','.flac','.wma'], false);
+
+        // Source + page metadata
+        const src = c.source || c.original_source;
+        const page = c.page;
+        if (src || page) {
+          const srcLabel = src ? escHtml((src.split('/').pop() || src).replace(/^[0-9a-f]{32}_/i, '')) : '';
+          const srcLink = src ? _fileUrl(src.startsWith('file://') ? src : `file://${src}`) : null;
+          const pageLabel = page ? `p. ${page}` : '';
+          const sep = srcLabel && pageLabel ? ' · ' : '';
+          const srcTag = srcLink ? `<a href="${escHtml(srcLink)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">${srcLabel}</a>` : srcLabel;
+          mediaHtml += `<div style="margin-top:4px;font-size:.75rem;color:var(--text-muted)">${srcTag}${sep}${pageLabel}</div>`;
+        }
+      }
+      const _text = typeof c === 'object' && c !== null ? (c.text || JSON.stringify(c)) : String(c);
+      // Collect media URLs for copy payload
+      const _mediaUrls = [];
+      if (typeof c === 'object' && c !== null) {
+        for (const key of ['image', 'video', 'audio', 'preprocessed_image', 'preprocessed_video', 'preprocessed_audio', 'original_image', 'original_video', 'original_audio']) {
+          const val = c[key];
+          if (val) {
+            const urls = Array.isArray(val) ? val : [val];
+            for (const u of urls) {
+              if (typeof u === 'string' && (u.startsWith('http://') || u.startsWith('https://') || u.startsWith('file://'))) {
+                _mediaUrls.push(u);
+              }
+            }
+          }
+        }
+      }
+      const _copyPayload = encodeURIComponent(_text + (_mediaUrls.length ? '\n\nMedia:\n' + _mediaUrls.join('\n') : ''));
+      const _scoreParts = [`#${i + 1} · score: ${r.score}`];
+      if (r.embedding_score !== undefined) _scoreParts.push(`(embedding: ${r.embedding_score})`);
+      if (r.reranker_score !== undefined && r.score !== r.reranker_score) _scoreParts.push(`(reranker: ${r.reranker_score})`);
+      return `<div class="result-item" style="position:relative">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <span class="score">${_scoreParts.join(' ')}</span>
+          <div style="display:flex;gap:6px;flex-shrink:0">
+            <button onclick="copyText(this)" data-text="${_copyPayload}"
+              style="background:rgba(0,0,0,0.35);color:#fff;border:none;border-radius:4px;padding:2px 8px;font-size:.7rem;cursor:pointer;opacity:0.5;transition:opacity .15s"
+              onmouseover="this.style.opacity='0.9'" onmouseout="this.style.opacity='0.5'" title="Copy to clipboard">📋 Copy</button>
+            <button onclick="openTextReader(this)" data-text="${_copyPayload}"
+              style="background:rgba(0,0,0,0.35);color:#fff;border:none;border-radius:4px;padding:2px 8px;font-size:.7rem;cursor:pointer;opacity:0.5;transition:opacity .15s"
+              onmouseover="this.style.opacity='0.9'" onmouseout="this.style.opacity='0.5'" title="Read in fullscreen">⛶ Fullscreen</button>
+          </div>
+        </div>
+        ${mediaHtml}
+        <pre style="margin-top:4px">${escHtml(_text)}</pre>
+      </div>`;
+    }).join('')}</div>`;
+  } catch (e) {
+    container.innerHTML = `<div style="color:var(--red)">${escHtml(e.message)}</div>`;
+  }
+}
+
+// -----------------------------------------------------------------------
+// Documents list
+// -----------------------------------------------------------------------
+
+async function showDocs() {
+  if (!selectedDataset) return;
+  const container = document.getElementById('doc-list');
+  container.innerHTML = '<div style="text-align:center;padding:12px"><span class="spinner"></span></div>';
+  try {
+    const { documents, count } = await api('GET', `/api/datasets/${selectedDataset}/documents?limit=100`,
+      undefined, undefined, passwordHeader());
+    if (count === 0) {
+      container.innerHTML = '<div class="empty-state" style="padding:12px">No documents in this dataset.</div>';
+      return;
+    }
+    container.innerHTML = `<div style="font-size:.8rem;color:var(--text-muted);margin-bottom:8px">Showing up to ${documents.length} of ${count} documents</div>
+    <div style="max-height:300px;overflow-y:auto">${documents.map(d => `
+      <div style="padding:8px;border:1px solid var(--border);border-radius:4px;margin-bottom:6px;background:var(--surface-2);font-size:.8rem">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <span style="color:var(--text-muted);font-family:monospace;font-size:.75rem">${escHtml(d.id)}</span>
+          <button onclick="deleteDocument('${escHtml(d.id)}')"
+            style="flex-shrink:0;background:none;border:1px solid var(--red);color:var(--red);border-radius:4px;padding:2px 8px;font-size:.7rem;cursor:pointer;opacity:.6;transition:opacity .15s"
+            onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='.6'" title="Delete this document">✕</button>
+        </div>
+        <table class="payload-table">
+          ${Object.entries(d.payload).slice(0, 4).map(([k, v]) =>
+            `<tr><td>${k}</td><td class="truncate">${escHtml(typeof v === 'string' ? v.slice(0, 200) : JSON.stringify(v).slice(0, 200))}</td></tr>`
+          ).join('')}
+        </table>
+      </div>
+    `).join('')}</div>`;
+  } catch (e) {
+    container.innerHTML = `<div style="color:var(--red);font-size:.85rem">${escHtml(e.message)}</div>`;
+  }
+}
+
+async function deleteDocument(docId) {
+  if (!selectedDataset) return;
+  if (!confirm(`Delete document ${docId.slice(0, 8)}…?`)) return;
+  try {
+    await api('DELETE', `/api/datasets/${selectedDataset}/documents/${docId}`,
+      undefined, undefined, passwordHeader());
+    toast('Document deleted');
+    showDocs();
+    listDatasets();
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+async function saveDatasetSettings() {
+  if (!selectedDataset) return;
+  const cAsr = document.getElementById('edit-caption-asr');
+  const cVlm = document.getElementById('edit-caption-vlm');
+  if (!cAsr || !cVlm) return;
+  const body = {
+    caption_with_asr: cAsr.checked,
+    caption_with_vlm: cVlm.checked,
+  };
+  try {
+    await api('PATCH', '/api/datasets/' + selectedDataset, body);
+    toast('Caption settings applied (affects new content)');
+    listDatasets();
+    const d = datasets.find(x => x.name === selectedDataset);
+    if (d) { d.caption_with_asr = cAsr.checked; d.caption_with_vlm = cVlm.checked; }
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+async function saveDescription() {
+  if (!selectedDataset) return;
+  const desc = document.getElementById('desc-edit').value.trim();
+  try {
+    await api('PATCH', `/api/datasets/${selectedDataset}`, { description: desc });
+    toast('Description updated');
+    listDatasets();
+    const d = datasets.find(x => x.name === selectedDataset);
+    if (d) {
+      d.description = desc;
+      document.getElementById('selected-meta').textContent =
+        `${d.document_count || 0} documents · ${desc || 'no description'} · created ${d.created ? new Date(d.created).toLocaleDateString() : 'unknown'}`;
+    }
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+// -----------------------------------------------------------------------
+// Tabs
+// -----------------------------------------------------------------------
+
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.toggle('active', t.id === 'tab-' + name));
+}
+
+// -----------------------------------------------------------------------
+// Utils
+// -----------------------------------------------------------------------
+
+function copyText(el) {
+  const raw = el.dataset.text || '';
+  let text;
+  try { text = decodeURIComponent(raw); } catch { text = raw; }
+  if (!text) { toast('Nothing to copy', 'error'); return; }
+  // Try Clipboard API first (requires HTTPS), fall back to legacy execCommand
+  const fallback = () => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed'; ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); toast('Copied', 'success'); }
+    catch (e) { toast('Copy failed', 'error'); }
+    document.body.removeChild(ta);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => toast('Copied', 'success')).catch(fallback);
+  } else {
+    fallback();
+  }
+}
+
+function closeTextReader() {
+  const overlay = document.getElementById('text-reader');
+  if (!overlay) return;
+  overlay.classList.remove('show');
+  overlay.addEventListener('transitionend', () => overlay.remove(), { once: true });
+  setTimeout(() => { if (overlay.parentNode) overlay.remove(); }, 250);
+}
+
+function openTextReader(el) {
+  const raw = el.dataset.text || '';
+  let text;
+  try { text = decodeURIComponent(raw); } catch { text = raw; }
+  if (!text) { toast('Nothing to read', 'error'); return; }
+  closeTextReader();
+  const overlay = document.createElement('div');
+  overlay.className = 'reader-overlay';
+  overlay.id = 'text-reader';
+  overlay.innerHTML = `
+    <div class="reader-panel">
+      <div class="reader-header">
+        <div class="reader-title">Fullscreen reader</div>
+        <div class="reader-actions">
+          <button onclick="copyText(this)" data-text="${encodeURIComponent(text)}"
+            style="background:rgba(0,0,0,0.35);color:#fff;border:none;border-radius:4px;padding:4px 10px;font-size:.75rem;cursor:pointer" title="Copy to clipboard">📋 Copy</button>
+          <button onclick="closeTextReader()"
+            style="background:rgba(0,0,0,0.35);color:#fff;border:none;border-radius:4px;padding:4px 10px;font-size:.75rem;cursor:pointer" title="Close (Esc)">✕ Close</button>
+        </div>
+      </div>
+      <div class="reader-body"><pre>${escHtml(text)}</pre></div>
+    </div>`;
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) closeTextReader(); });
+  document.addEventListener('keydown', function escClose(e) {
+    if (e.key === 'Escape') { closeTextReader(); document.removeEventListener('keydown', escClose); }
+  });
+  document.body.appendChild(overlay);
+  requestAnimationFrame(() => overlay.classList.add('show'));
+}
+
+function escHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function formatContent(c) {
+  if (typeof c === 'string') return c;
+  return JSON.stringify(c, null, 2);
+}
+
+function formatBytes(bytes) {
+  if (!bytes) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  let val = bytes;
+  while (val >= 1024 && i < units.length - 1) { val /= 1024; i++; }
+  return `${val.toFixed(1)} ${units[i]}`;
+}
+
+// -----------------------------------------------------------------------
+// View switching & Management
+// -----------------------------------------------------------------------
+
+let _healthInterval = null;
+
+async function pollHealth() {
+  try {
+    const h = await api('GET', '/api/admin/health', undefined, 15000);
+    const cpu = h.cpu;
+    const mem = h.memory;
+    const qd = h.qdrant;
+    const fpvc = h.file_pvc;
+
+    // CPU card
+    const cpuColor = cpu.percent > 80 ? 'var(--red)' : (cpu.percent > 50 ? 'var(--accent)' : 'var(--green)');
+    document.getElementById('health-cpu').innerHTML = `
+      <div style="font-weight:500;margin-bottom:6px;font-size:.85rem">CPU — ${cpu.percent}%</div>
+      <div style="height:6px;background:var(--border);border-radius:3px;margin-bottom:8px;overflow:hidden">
+        <div style="width:${Math.min(cpu.percent,100)}%;height:100%;background:${cpuColor};transition:width .5s"></div>
+      </div>
+      <table style="width:100%;font-size:.8rem;color:var(--text-muted)">
+        <tr><td>Limit</td><td style="text-align:right">${cpu.cores} cores</td></tr>
+        <tr><td>Request</td><td style="text-align:right">${(cpu.limit_millicores / 2).toFixed(0)}m</td></tr>
+      </table>`;
+
+    // Memory card
+    const memColor = mem.percent > 80 ? 'var(--red)' : (mem.percent > 50 ? 'var(--accent)' : 'var(--green)');
+    document.getElementById('health-mem').innerHTML = `
+      <div style="font-weight:500;margin-bottom:6px;font-size:.85rem">Memory — ${mem.percent}%</div>
+      <div style="height:6px;background:var(--border);border-radius:3px;margin-bottom:8px;overflow:hidden">
+        <div style="width:${Math.min(mem.percent,100)}%;height:100%;background:${memColor};transition:width .5s"></div>
+      </div>
+      <table style="width:100%;font-size:.8rem;color:var(--text-muted)">
+        <tr><td>Used</td><td style="text-align:right">${formatBytes(mem.rss_bytes)}</td></tr>
+        <tr><td>Limit</td><td style="text-align:right">${formatBytes(mem.limit_bytes)}</td></tr>
+      </table>`;
+
+    // Qdrant card
+    const qdColor = qd.status === 'ok' ? 'var(--green)' : 'var(--red)';
+    const qpvc = qd.pvc;
+    const qcluster = qd.cluster || null;
+    const qdPvcRows = qpvc ? `
+        <tr><td>Used</td><td style="text-align:right">${formatBytes(qpvc.used_bytes)}</td></tr>
+        <tr><td>Limit</td><td style="text-align:right">${formatBytes(qpvc.total_bytes)}</td></tr>` : '';
+    const qdPvcBar = qpvc ? `
+      <div style="height:6px;background:var(--border);border-radius:3px;margin-bottom:8px;overflow:hidden">
+        <div style="width:${Math.min(qpvc.used_percent,100)}%;height:100%;background:${qpvc.used_percent > 80 ? 'var(--red)' : (qpvc.used_percent > 50 ? 'var(--accent)' : 'var(--green)')};transition:width .5s"></div>
+      </div>` : '';
+    const qclusterRows = (qcluster && qcluster.enabled && qcluster.replicas && qcluster.replicas.length) ? `
+        <tr><td>Replicas</td><td style="text-align:right">${qcluster.replicas.length}</td></tr>
+        <tr><td>Shards</td><td style="text-align:right">${qcluster.total_shards}</td></tr>` : '';
+    document.getElementById('health-qdrant').innerHTML = `
+      <div style="font-weight:500;margin-bottom:6px;font-size:.85rem">Qdrant — <span style="color:${qdColor}">${qd.status}</span></div>
+      ${qdPvcBar}
+      <table style="width:100%;font-size:.8rem;color:var(--text-muted)">
+        <tr><td>Collections</td><td style="text-align:right">${qd.collections}</td></tr>
+        <tr><td>Total points</td><td style="text-align:right">${qd.total_points.toLocaleString()}</td></tr>
+        ${qdPvcRows}
+        ${qclusterRows}
+      </table>`;
+
+    // Qdrant PVC panel in the storage section (same data, fuller layout)
+    const qp = document.getElementById('qdrant-pvc-panel');
+    if (qp) {
+      if (qpvc) {
+        const qpColor = qpvc.used_percent > 80 ? 'var(--red)' : (qpvc.used_percent > 50 ? 'var(--accent)' : 'var(--green)');
+        qp.innerHTML = `
+          <div style="font-weight:500;margin-bottom:8px">Qdrant DB PVC</div>
+          <div style="height:6px;background:var(--border);border-radius:3px;margin-bottom:8px;overflow:hidden">
+            <div style="width:${Math.min(qpvc.used_percent,100)}%;height:100%;background:${qpColor};transition:width .5s"></div>
+          </div>
+          <table style="width:100%">
+            <tr><td style="padding:4px 0;color:var(--text-muted)">Total</td>
+                <td style="text-align:right">${formatBytes(qpvc.total_bytes)}</td></tr>
+            <tr><td style="padding:4px 0;color:var(--text-muted)">Used</td>
+                <td style="text-align:right">${formatBytes(qpvc.used_bytes)}</td></tr>
+            <tr><td style="padding:4px 0;color:var(--text-muted)">Free</td>
+                <td style="text-align:right">${formatBytes(qpvc.free_bytes)}</td></tr>
+            <tr><td style="padding:4px 0;color:var(--text-muted)">Utilization</td>
+                <td style="text-align:right">${qpvc.used_percent}%</td></tr>
+          </table>
+          <div style="font-size:.75rem;color:var(--text-muted);margin-top:8px">Qdrant StatefulSet PVC — stores vector index & payloads</div>`;
+} else if (qcluster && qcluster.enabled && qcluster.replicas && qcluster.replicas.length) {
+        const cap = qcluster.per_replica_capacity_bytes ? ` · ${formatBytes(qcluster.per_replica_capacity_bytes)} each` : '';
+        const hasUsed = qcluster.replicas.some((r) => r.used_bytes != null);
+        const rows = qcluster.replicas.map((r) => `
+            <tr>
+              <td style="padding:4px 0;color:var(--text-muted)">${escHtml(r.host || ('replica ' + (r.index + 1)))}</td>
+              ${hasUsed ? `<td style="text-align:right">${r.used_bytes != null ? formatBytes(r.used_bytes) : '—'}</td>` : ''}
+            </tr>`).join('');
+        const totalUsed = hasUsed && qcluster.replicas.some((r) => r.used_bytes != null)
+          ? qcluster.replicas.reduce((s, r) => s + (r.used_bytes || 0), 0) : null;
+        qp.innerHTML = `
+          <div style="font-weight:500;margin-bottom:8px">Qdrant cluster — ${qcluster.replicas.length} replicas${cap}</div>
+          <table style="width:100%">
+            ${hasUsed ? '<tr><td style="padding:4px 0"></td><td style="text-align:right;font-size:.72rem;color:var(--text-muted)">used</td></tr>' : ''}
+            ${rows}
+            ${totalUsed !== null ? `<tr><td style="padding:4px 0;color:var(--text-muted);border-top:1px solid var(--border)">Total used</td>
+                <td style="text-align:right;border-top:1px solid var(--border)">${formatBytes(totalUsed)}</td></tr>` : ''}
+          </table>
+          <div style="font-size:.75rem;color:var(--text-muted);margin-top:8px">Telemetry disk usage per Qdrant replica — each replica has its own RWO PVC (not shared).</div>`;
+      } else {
+        qp.innerHTML = `
+          <div style="font-weight:500;margin-bottom:8px">Qdrant DB PVC</div>
+          <div style="font-size:.8rem;color:var(--text-muted);padding:8px 0">Disk usage unavailable — Qdrant PVC not mounted on this pod.</div>`;
+      }
+    }
+  } catch (e) {
+    // Keep last values — don't flash red on a single failed poll
+  }
+  renderEmbedderLive(h);
+}
+
+function renderEmbedderLive(h) {
+  const el = document.getElementById('embedder-live');
+  if (!el) return;
+  const emb = h && h.models && h.models.embedder;
+  if (!emb) return;
+  const color = emb.status === 'healthy' ? 'var(--green)'
+    : emb.status === 'unhealthy' ? 'var(--red)' : 'var(--yellow)';
+  const stateLabel = emb.status === 'unhealthy' ? 'unhealthy' : emb.status === 'healthy' ? 'healthy' : 'checking…';
+  let detail = '';
+  if (emb.last_check) {
+    try { detail = ` · checked ${new Date(emb.last_check).toLocaleTimeString()}`; } catch { /* ignore */ }
+  }
+  el.innerHTML = `
+    <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${color};margin-right:6px;vertical-align:middle"></span>
+    <span style="color:${color};font-weight:500">Embedder — ${stateLabel}</span>
+    <span>${detail}</span>`;
+}
+
+async function testConnections() {
+  const btn = document.getElementById('test-connections-btn');
+  const res = document.getElementById('connections-results');
+  if (btn) btn.disabled = true;
+  res.innerHTML = '<div style="text-align:center;padding:12px"><span class="spinner"></span> Checking model endpoints…</div>';
+  try {
+    const data = await api('GET', '/api/admin/connections', undefined, 45000);
+    res.innerHTML = (data.roles || []).map(connectionRow).join('');
+  } catch (e) {
+    res.innerHTML = `<div style="color:var(--red)">${escHtml(e.message)}</div>`;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function connectionState(status) {
+  if (status === 'healthy') return { color: 'var(--green)', label: 'healthy' };
+  if (status === 'not_provided') return { color: 'var(--yellow)', label: 'not provided' };
+  return { color: 'var(--red)', label: 'unhealthy' };
+}
+
+function connectionRow(r) {
+  const labels = { embedder: 'Embedder', reranker: 'Reranker', vlm: 'VLM', asr: 'ASR' };
+  const name = labels[r.role] || r.role;
+  const st = connectionState(r.status);
+  let right = '';
+  if (r.status === 'healthy' && r.model_name) {
+    right = `<span style="color:var(--text-muted);font-size:.75rem">${escHtml(r.model_name)}</span>`;
+  } else if (r.status === 'unhealthy') {
+    right = `<span style="color:var(--text-muted);font-size:.75rem">${escHtml(r.url || '')}</span>`;
+  }
+  let err = '';
+  if (r.status === 'unhealthy' && r.error) {
+    err = `<div style="font-size:.72rem;color:var(--red);margin:2px 0 0 18px">${escHtml(r.error)}</div>`;
+  }
+  return `
+    <div style="padding:6px 0;border-bottom:1px solid var(--border)">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${st.color};flex-shrink:0"></span>
+        <span style="font-weight:500;width:90px">${name}</span>
+        <span>${st.label}</span>
+        <span style="margin-left:auto;text-align:right">${right}</span>
+      </div>
+      ${err}
+    </div>`;
+}
+
+async function loadManageStats() {
+  const container = document.getElementById('manage-stats');
+  try {
+    const data = await api('GET', '/api/admin/storage');
+    const pvc = data.pvc;
+    const ds = data.datasets;
+    container.innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px">
+        <div style="background:var(--surface-2);padding:16px;border-radius:4px">
+          <div style="font-weight:500;margin-bottom:8px">File Storage PVC</div>
+          <table style="width:100%">
+            <tr><td style="padding:4px 0;color:var(--text-muted)">Total</td>
+                <td style="text-align:right">${formatBytes(pvc.total_bytes)}</td></tr>
+            <tr><td style="padding:4px 0;color:var(--text-muted)">Used</td>
+                <td style="text-align:right">${formatBytes(pvc.used_bytes)}</td></tr>
+            <tr><td style="padding:4px 0;color:var(--text-muted)">Free</td>
+                <td style="text-align:right">${formatBytes(pvc.free_bytes)}</td></tr>
+            <tr><td style="padding:4px 0;color:var(--text-muted)">Utilization</td>
+                <td style="text-align:right">${pvc.used_percent}%</td></tr>
+          </table>
+          <div style="font-size:.75rem;color:var(--text-muted);margin-top:8px">PVC mounted at /data — stores uploaded files (images, videos, audio, PDFs)</div>
+        </div>
+        <div id="qdrant-pvc-panel" style="background:var(--surface-2);padding:16px;border-radius:4px">
+          <div style="text-align:center;padding:8px"><span class="spinner"></span></div>
+        </div>
+        <div style="background:var(--surface-2);padding:16px;border-radius:4px">
+          <div style="font-weight:500;margin-bottom:8px">Datasets</div>
+          <table style="width:100%">
+            <tr><td style="padding:4px 0;color:var(--text-muted)">Count</td>
+                <td style="text-align:right">${data.total_datasets}</td></tr>
+            <tr><td style="padding:4px 0;color:var(--text-muted)">Documents</td>
+                <td style="text-align:right">${data.total_documents}</td></tr>
+          </table>
+          <div style="font-size:.75rem;color:var(--text-muted);margin-top:8px">Document counts stored in Qdrant collections</div>
+        </div>
+      </div>
+      <div style="margin-top:16px">
+        <div style="font-weight:500;margin-bottom:8px">Per-Dataset Storage</div>
+        <ol style="margin:0;padding-left:24px;font-size:.85rem">
+          ${ds.map((d, di) => {
+            const ftBytes = d.file_types || {};
+            const ftDocs = d.file_type_counts || {};
+            const allTypes = [...new Set([...Object.keys(ftBytes), ...Object.keys(ftDocs)])].sort();
+            const subs = allTypes.map((k, ki) => {
+              const bytes = ftBytes[k] || 0;
+              const docs = ftDocs[k];
+              const parts = [];
+              if (docs !== undefined) parts.push(`${docs} doc${docs !== 1 ? 's' : ''}`);
+              if (bytes > 0) parts.push(formatBytes(bytes));
+              return `<li style="margin:2px 0;color:var(--text-muted)">${k}: ${parts.join(', ')}</li>`;
+            }).join('');
+            return `<li style="margin:8px 0">
+              <strong>${d.has_password ? (datasetPasswords[d.name] ? '🔓 ' : '🔒 ') : ''}${escHtml(d.name)}</strong>
+              <span style="color:var(--text-muted);margin-left:8px">${d.documents} doc${d.documents !== 1 ? 's' : ''}, ${formatBytes(d.file_bytes)}</span>
+              ${subs ? '<ol style="list-style:lower-alpha;margin:2px 0 0 20px;padding:0">' + subs + '</ol>' : ''}
+            </li>`;
+          }).join('')}
+        </ol>
+      </div>
+    `;
+  } catch (e) {
+    container.innerHTML = `<div style="color:var(--red)">${escHtml(e.message)}</div>`;
+  }
+}
+
+// -----------------------------------------------------------------------
+// Upload history (Manage page)
+// -----------------------------------------------------------------------
+
+async function loadUploadHistory() {
+  const container = document.getElementById('upload-history-table');
+  if (!container) return;
+  const filter = ((document.getElementById('history-filter') || {}).value || '').trim().toLowerCase();
+  try {
+    const data = await api('GET', '/api/admin/upload-history?limit=200');
+    let rows = data.history || [];
+    if (filter) {
+      rows = rows.filter(h =>
+        (h.dataset || '').toLowerCase().includes(filter) ||
+        (h.file || '').toLowerCase().includes(filter)
+      );
+    }
+    if (rows.length === 0) {
+      container.innerHTML = '<div class="empty-state">No uploads recorded yet.</div>';
+      return;
+    }
+    container.innerHTML = `
+      <table style="width:100%;font-size:.85rem;border-collapse:collapse">
+        <thead>
+          <tr style="text-align:left;color:var(--text-muted)">
+            <th style="padding:8px;border-bottom:1px solid var(--border)">When</th>
+            <th style="padding:8px;border-bottom:1px solid var(--border)">Dataset</th>
+            <th style="padding:8px;border-bottom:1px solid var(--border)">File</th>
+            <th style="padding:8px;border-bottom:1px solid var(--border)">Result</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(r => {
+            const when = r.timestamp ? new Date(r.timestamp).toLocaleString() : '—';
+            let resultHtml;
+            if (r.status === 'error') {
+              resultHtml = `<span style="color:var(--red)">✗ ${escHtml(r.error || 'failed')}</span>`;
+            } else if (r.chunks > 0) {
+              resultHtml = `<span style="color:var(--green)">✓ ${r.chunks.toLocaleString()} chunk(s)</span>`;
+            } else {
+              resultHtml = `<span style="color:var(--text-muted)">⏭ already in dataset</span>`;
+            }
+            return `<tr>
+              <td style="padding:8px;border-bottom:1px solid var(--border);white-space:nowrap;color:var(--text-muted)">${escHtml(when)}</td>
+              <td style="padding:8px;border-bottom:1px solid var(--border)">${escHtml(r.dataset || '')}</td>
+              <td style="padding:8px;border-bottom:1px solid var(--border);word-break:break-all">${escHtml(r.file || '')}</td>
+              <td style="padding:8px;border-bottom:1px solid var(--border)">${resultHtml}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>`;
+  } catch (e) {
+    container.innerHTML = `<div style="color:var(--red)">${escHtml(e.message)}</div>`;
+  }
+}
+
+async function clearUploadHistory() {
+  if (!confirm('Clear all upload history? This cannot be undone.')) return;
+  try {
+    const res = await api('DELETE', '/api/admin/upload-history');
+    await loadUploadHistory();
+    toast(`Upload history cleared (${res.removed || 0} entrie${res.removed === 1 ? '' : 's'})`);
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+function toggleTheme() {
+  const html = document.documentElement;
+  const isDark = html.getAttribute('data-theme') === 'dark';
+  html.setAttribute('data-theme', isDark ? 'light' : 'dark');
+  document.getElementById('theme-label').textContent = isDark ? 'Light' : 'Dark';
+  localStorage.setItem('theme', isDark ? 'light' : 'dark');
+}
+
+function applyTheme(theme) {
+  if (theme === 'dark') {
+    document.documentElement.setAttribute('data-theme', 'dark');
+    document.getElementById('theme-label').textContent = 'Dark';
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+    document.getElementById('theme-label').textContent = 'Light';
+  }
+  localStorage.setItem('theme', theme || 'light');
+}
+
+// Init
+const savedTheme = localStorage.getItem('theme') || 'light';
+applyTheme(savedTheme);
+
+const isManage = window.location.pathname === '/manage';
+document.getElementById('manage-view').style.display = isManage ? 'block' : 'none';
+document.getElementById('main-view').style.display = isManage ? 'none' : 'block';
+if (isManage) {
+  loadManageStats();
+  loadUploadHistory();
+  pollHealth();
+  _healthInterval = setInterval(pollHealth, 10000);
+} else {
+  if (_healthInterval) { clearInterval(_healthInterval); _healthInterval = null; }
+  initCaptionCheckboxes();
+  listDatasets();
+}
+
+// Fetch model availability and set up caption checkboxes + reranker UI
+async function initCaptionCheckboxes() {
+  const asrCheckbox = document.getElementById('ds-caption-asr');
+  const vlmCheckbox = document.getElementById('ds-caption-vlm');
+  try {
+    const resp = await api('GET', '/api/admin/models');
+    const hasVlm = resp.vlm === true;
+    const hasAsr = resp.asr === true;
+    const hasReranker = resp.reranker === true;
+    // ASR checkbox: default checked if ASR model present, disabled if not
+    asrCheckbox.checked = hasAsr;
+    asrCheckbox.disabled = !hasAsr;
+    asrCheckbox.parentElement.style.opacity = hasAsr ? '1' : '0.5';
+    asrCheckbox.parentElement.style.cursor = hasAsr ? 'pointer' : 'not-allowed';
+    // VLM checkbox: default checked if VLM model present, disabled if not
+    vlmCheckbox.checked = hasVlm;
+    vlmCheckbox.disabled = !hasVlm;
+    vlmCheckbox.parentElement.style.opacity = hasVlm ? '1' : '0.5';
+    vlmCheckbox.parentElement.style.cursor = hasVlm ? 'pointer' : 'not-allowed';
+    // Edit-dataset caption checkboxes: reflect model availability only
+    // (checked state comes from the dataset's stored flags via selectDataset).
+    const editAsr = document.getElementById('edit-caption-asr');
+    if (editAsr) {
+      editAsr.disabled = !hasAsr;
+      editAsr.parentElement.style.opacity = hasAsr ? '1' : '0.5';
+      editAsr.parentElement.style.cursor = hasAsr ? 'pointer' : 'not-allowed';
+    }
+    const editVlm = document.getElementById('edit-caption-vlm');
+    if (editVlm) {
+      editVlm.disabled = !hasVlm;
+      editVlm.parentElement.style.opacity = hasVlm ? '1' : '0.5';
+      editVlm.parentElement.style.cursor = hasVlm ? 'pointer' : 'not-allowed';
+    }
+    // Reranker: hide checkbox + Rerank K input when no reranker model
+    if (!hasReranker) {
+      document.getElementById('search-reranker-wrap').style.display = 'none';
+      document.getElementById('search-reranker-topk-wrap').style.display = 'none';
+    }
+  } catch (e) {
+    // If endpoint unavailable, leave checkboxes unchecked + enabled
+  }
+}
+</script>
+</body>
+</html>

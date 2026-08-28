@@ -1,0 +1,69 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  // This is a TEMPLATE — copy to your project root (or load via
+  // OPENCODE_CONFIG=documentation/opencode.jsonc) before running opencode.
+  // AGENTS.md is symlinked at the repo root → documentation/AGENTS.md, so
+  // opencode auto-loads it (no "instructions" field needed).
+
+  // ── Multimodal RAG MCP server ───────────────────────────────────────────
+  // TWO connections to the SAME server, exposing DIFFERENT tool subsets:
+  //   • rag-memory    → personal long-term memory (add_memory / search_memory)
+  //   • rag-knowledge → general project/knowledge datasets (search_dataset, …)
+  //
+  // Per-user isolation comes from the memory dataset PASSWORD (resolved from
+  // the X-Dataset-Password header / RAG_MEMORY_PASSWORD env var). The memory
+  // dataset name comes from RAG_MEMORY_DATASET. The model itself never sees
+  // these — see documentation/AGENTS.md for when the model should recall / write memories.
+  //
+  // REQUIRED env vars (export before launching opencode):
+  //   RAG_MEMORY_DATASET   e.g. "andrew-memory"  (a password-protected dataset
+  //                                               you created via the HTML frontend)
+  //   RAG_MEMORY_PASSWORD  that dataset's password
+  //   RAG_INGRESS_TOKEN    platform bearer token — ONLY if you reach the server
+  //                        through the oauth2-proxy ingress (see below)
+  //
+  // URL: two options —
+  //   1) Via the cluster ingress (production): set RAG_INGRESS_TOKEN and use
+  //      https://rag-mcp-server.<YOUR-DOMAIN>/mcp  (the Authorization header below).
+  //   2) Via `kubectl port-forward deployment/rag-mcp-server 8001:9090` (local
+  //      testing): comment out the Authorization header and switch the url to
+  //      http://localhost:8001/mcp.
+  "mcp": {
+    "rag-memory": {
+      "type": "remote",
+      "url": "http://rag-mcp-server-mcp.<DEPLOYMENT_NAMESPACE>.svc.cluster.local:9090/mcp",
+      "headers": {
+        // Keep while going through the oauth2-proxy ingress; drop for port-forward.
+        "Authorization": "Bearer {env:RAG_INGRESS_TOKEN}",
+        // These two are read ONLY by add_memory / search_memory server-side,
+        // so a memory password can never silently unlock another dataset.
+        "X-Memory-Dataset": "{env:RAG_MEMORY_DATASET}",
+        "X-Dataset-Password": "{env:RAG_MEMORY_PASSWORD}"
+      }
+    },
+    "rag-knowledge": {
+      "type": "remote",
+      "url": "http://rag-mcp-server-mcp.<DEPLOYMENT_NAMESPACE>.svc.cluster.local:9090/mcp",
+      "headers": {
+        "Authorization": "Bearer {env:RAG_INGRESS_TOKEN}"
+      }
+    }
+  },
+
+  // Scope each connection to its intended tool subset. opencode prefixes MCP
+  // tools with the server name + "_" (verify the exact names with
+  // `opencode mcp list` after connecting, then adjust these patterns if needed).
+  "tools": {
+    "rag-memory_search_dataset": false,
+    "rag-memory_list_datasets": false,
+    "rag-memory_get_dataset_files": false,
+    "rag-memory_get_dataset_info": false,
+    "rag-memory_unlock_dataset": false,
+    "rag-memory_describe_media": false,
+    "rag-memory_transcribe_audio": false,
+
+    "rag-knowledge_add_memory": false,
+    "rag-knowledge_search_memory": false
+  }
+}
