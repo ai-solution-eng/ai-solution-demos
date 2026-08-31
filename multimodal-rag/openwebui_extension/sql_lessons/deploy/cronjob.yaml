@@ -1,0 +1,64 @@
+# CronJob: run the SQL-lessons promotion gate on a schedule.
+#
+# Promotes reviewed candidates from the staging dataset into the curated
+# dataset the agent recalls, and (optionally) demotes stale curated lessons.
+# Designed to run unattended with --auto (evidence gate + near-dup skip).
+#
+# Before enabling for real:
+#   1. Build & push the image (see Dockerfile): <registry>/sql-lessons-promote
+#   2. Set image + RAG_API_URL + schedule below.
+#   3. Start with --dry-run for a few runs, then drop it.
+#
+# If the lesson datasets are password-protected, mount RAG_LESSONS_PASSWORD
+# from a Secret instead of hardcoding it.
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: sql-lessons-promote
+  namespace: default            # <-- set to the target namespace
+  labels:
+    app: sql-lessons
+    component: promote
+spec:
+  schedule: "0 3 * * 1"          # every Monday 03:00 (adjust to your cadence)
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: promote
+              image: <registry>/sql-lessons-promote:0.1.0   # <-- set
+              imagePullPolicy: IfNotPresent
+              args:
+                - --auto
+                - --curated-dataset
+                - sql-learnings
+                - --candidates-dataset
+                - sql-learnings-staging
+                # Remove --auto and add these to use LLM review instead:
+                # - --llm-url
+                # - <distill-llm-url>
+                # - --llm-model
+                # - <distill-llm-model>
+              env:
+                - name: RAG_API_URL
+                  value: "https://rag-mcp-server.tr7-0211-ai-application.pcai0211.tr7.hpecolo.net"
+                # Only set if the datasets are password-protected; mount from a Secret.
+                # - name: RAG_LESSONS_PASSWORD
+                #   valueFrom:
+                #     secretKeyRef:
+                #       name: sql-lessons-secrets
+                #       key: rag-lessons-password
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 256Mi

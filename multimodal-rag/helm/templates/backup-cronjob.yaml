@@ -1,0 +1,106 @@
+{{- if .Values.backups.enabled }}
+# Opt-in scheduled dataset backups: exports every non-password-protected
+# dataset via GET /api/datasets/{name}/export and uploads the .tar.gz to the
+# configured S3/MinIO bucket (reuses the app image's httpx + boto3 and the
+# existing S3_* credentials from the model-keys Secret).  Protected datasets
+# are skipped — their exports require the dataset password, which backups
+# deliberately do not hold.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .Values.deployment.name }}-backups
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.deployment.appName }}
+spec:
+  schedule: {{ .Values.backups.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app: {{ .Values.deployment.appName }}
+        spec:
+          automountServiceAccountToken: false
+          restartPolicy: OnFailure
+          containers:
+            - name: backup
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command:
+                - python
+                - -c
+                - |
+                  import os, datetime, tempfile, boto3, httpx
+
+                  api = os.environ["BACKUP_API_URL"].rstrip("/")
+                  bucket = os.environ["BACKUP_BUCKET"]
+                  endpoint = os.environ.get("S3_ENDPOINT_URL") or None
+                  s3 = boto3.client(
+                      "s3",
+                      endpoint_url=endpoint,
+                      aws_access_key_id=os.environ.get("S3_ACCESS_KEY_ID") or None,
+                      aws_secret_access_key=os.environ.get("S3_SECRET_ACCESS_KEY") or None,
+                  )
+                  stamp = datetime.datetime.now(datetime.UTC).strftime("%Y%m%d-%H%M%S")
+                  resp = httpx.get(f"{api}/api/datasets", timeout=30.0)
+                  resp.raise_for_status()
+                  datasets = resp.json().get("datasets", [])
+                  exported = skipped = failed = 0
+                  for ds in datasets:
+                      name = ds.get("name", "")
+                      if not name:
+                          continue
+                      if ds.get("has_password"):
+                          print(f"[backup] skip {name}: password protected (export needs the dataset password)")
+                          skipped += 1
+                          continue
+                      try:
+                          with tempfile.NamedTemporaryFile(suffix=".tar.gz") as f:
+                              with httpx.stream("GET", f"{api}/api/datasets/{name}/export", timeout=httpx.Timeout(1800.0, connect=30.0)) as r:
+                                  r.raise_for_status()
+                                  for chunk in r.iter_bytes():
+                                      f.write(chunk)
+                              f.flush()
+                              key = f"{name}/{stamp}.tar.gz"
+                              s3.upload_file(f.name, bucket, key)
+                          print(f"[backup] {name} -> s3://{bucket}/{key}")
+                          exported += 1
+                      except Exception as exc:
+                          print(f"[backup] FAILED {name}: {exc}")
+                          failed += 1
+                  print(f"[backup] done: {exported} exported, {skipped} skipped (protected), {failed} failed")
+                  raise SystemExit(1 if failed and not exported else 0)
+              envFrom:
+                - configMapRef:
+                    name: {{ .Values.deployment.name }}-config
+                - secretRef:
+                    name: {{ .Values.deployment.name }}-model-keys
+              env:
+                - name: BACKUP_API_URL
+                  value: "http://{{ .Values.deployment.name }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.api.targetPort }}"
+                - name: BACKUP_BUCKET
+                  value: {{ .Values.backups.bucket | quote }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                requests:
+                  memory: "256Mi"
+                  cpu: "200m"
+                limits:
+                  memory: "1Gi"
+                  cpu: "1"
+          volumes:
+            - name: tmp
+              emptyDir: {}
+{{- end }}

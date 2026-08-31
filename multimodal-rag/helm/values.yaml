@@ -8,7 +8,7 @@
 replicaCount: 1
 image:
   repository: ghcr.io/ai-solution-eng/multimodal-rag-mcp
-  tag: v2.4.0
+  tag: v3.1.4
   pullPolicy: IfNotPresent
 
 deployment:
@@ -35,7 +35,9 @@ persistence:
 # -- Model configuration ------------------------------------------------------
 # Each model role has a URL (required to enable), an optional name (auto-
 # detected from the endpoint's /v1/models listing when omitted), an optional
-# className, and optional extra kwargs (serialised as JSON into the ConfigMap).
+# className (the adapter class for the role: MultiModalEmbeddings for the
+# embedder, MultiModalReranker for the reranker; vlm/asr have fixed classes),
+# and optional extra kwargs (serialised as JSON into the ConfigMap).
 # API keys are set separately via `modelSecrets` (Kubernetes Secret).
 # Set url to "" to disable a component.
 models:
@@ -86,7 +88,11 @@ s3:
 rag:
   captionWithAsr: true  # Caption video audio tracks via ASR at ingest (auto-disables without an ASR model)
   captionWithVlm: true  # Caption images/videos via VLM at ingest (enables VLM-skip at retrieval; auto-disables if no VLM)
-  remote: false         # Use remote model URLs (vs in-cluster .svc.cluster.local)
+  remote: false         # true = model URLs used as-is. false = URLs containing
+                        # ".serving." are rewritten to their in-cluster
+                        # .svc.cluster.local form; local endpoints verify TLS
+                        # with system CAs, remote ones need REMOTE_CA_BUNDLE
+                        # (else verification is off with a startup warning).
   dedupThreshold: 0.995  # Cosine similarity above which a doc is considered a duplicate (0.0–1.0)
 
 # -- Qdrant configuration -----------------------------------------------------
@@ -97,8 +103,8 @@ qdrant:
     repository: qdrant/qdrant
     tag: v1.19.0
     pullPolicy: IfNotPresent
-  grpcPort: 6334
-  httpPort: 6333
+  grpcPort: 6334      # gRPC (preferred: efficient batched queries)
+  httpPort: 6333      # HTTP fallback / health probes
 
 
 # -- MCP server (optional sidecar) --------------------------------------------
@@ -112,8 +118,8 @@ mcp:
 service:
   api:
     type: ClusterIP
-    port: 80
-    targetPort: 8000
+    port: 80          # Service port (in-cluster + VirtualService target)
+    # targetPort defaults to the API container's 8000
   mcp:
     type: ClusterIP
 
@@ -147,23 +153,62 @@ extraEnv: {}
 # a clear ?password=). The other guards default to their safe setting.
 
 security:
-  apiKey: ""
-  mediaTokenSecret: ""
+  # REST API-key auth: when non-empty, every /api/* call must send
+  # X-RAG-Api-Key (or Authorization: Bearer). Exempt: health/readiness
+  # probes, the HTML pages (the served page embeds the key for its JS),
+  # dataset media serving (password/token protected), and staged media.
+  # The HTML UI and the Open WebUI filter (RAG_API_KEY valve) pick it up
+  # automatically; direct/scripted callers must send the header.
+  # NOTE: a chart-known default is readable by anyone with chart access —
+  # change it for real deployments (same tradeoff as mediaTokenSecret).
+  apiKey: "Zst_qoSr9RcPRI0G44CxsdXbN2_02UnG"
+  # Trust X-Auth-Request-*/X-Email/X-User identity headers for unlock-cache
+  # scoping and password-throttling.  Keep true ONLY when an enforcing auth
+  # proxy (e.g. oauth2-proxy) overwrites these headers on every request —
+  # otherwise clients can spoof them to hijack unlocks or rotate identities
+  # past the brute-force throttle.
+  trustProxyIdentity: true
+  # Default one ships so first-time deploys work out of the box; CHANGE IT
+  # for any real deployment (it governs media-token generation for password
+  # protected datasets — a chart-known value is forgeable by chart readers).
+  mediaTokenSecret: "48b00cdf6d0979891ada5b3e51a5dd883ee752a5a1256b578c8271c30569944d"
+  # Media-token lifetime (seconds). Short = safer (leaked links expire
+  # sooner) but links embedded in old LLM replies stop working sooner.
   mediaTokenTtl: 3600
+  # Comma-separated host allowlist for http(s) URL ingestion (and query-
+  # time media). ".example.com" matches subdomains. When SET it is
+  # authoritative: hosts not listed are rejected and listed hosts are
+  # allowed even when private (how in-cluster MinIO endpoints are
+  # permitted). Empty = policy falls back to blockPrivateHosts.
   ingestAllowHosts: ""
+  # Reject http(s) URLs resolving to private/loopback/link-local/
+  # multicast/reserved addresses (SSRF guard) — checked at ingest AND at
+  # query-time media fetch (loopback stays allowed at query time so
+  # clients can pass the server's own media URLs back). Unresolved hosts
+  # are treated as private (fail-closed).
   blockPrivateHosts: true
+  # Per-download cap in bytes (Content-Length pre-check + streamed
+  # abort). Applies to remote URL and S3 ingests.
   maxDownloadBytes: 536870912
+  # Archive-bomb guards: total unpacked bytes / per-member bytes / entry
+  # count (zip/tar/rar incl. nested archives; audited from headers before
+  # extraction and re-checked on the extracted bytes). 0 disables a check.
   archiveMaxTotalBytes: 2147483648
   archiveMaxMemberBytes: 1073741824
   archiveMaxEntries: 10000
+  # `:`-separated absolute-path allowlist for the MCP tools' file:// reads
+  # (describe_media / transcribe_audio / audio queries). Realpath-resolved,
+  # fail-closed when empty.
   mediaAllowPathPrefixes: "/data/datasets:/data/staging"
+  # Password brute-force throttle: max failures per identity within the
+  # sliding window (seconds) before 429s. Identity = auth-proxy header
+  # when trustProxyIdentity else the socket peer. Per-process budget.
   pwMaxFailures: 10
   pwFailWindow: 300
 
 # -- PCAI ---------------------------------------------------------------------
 ezua:
   enabled: true
-  domainName: "${DOMAIN_NAME}"
   # configure the application endpoint
 
   virtualService:
@@ -179,3 +224,21 @@ ezua:
     providerName: "oauth2-proxy"
 
 
+
+# Redis (only used by the scale charts; kept for template uniformity)
+redis:
+  enabled: false
+  password: ""
+  # unlockTtl (scale charts): TTL for cached dataset unlocks (REST unlock
+  # cache only; the MCP tools' unlock cache is per-process regardless).
+
+# -- Backups (optional) ---------------------------------------------------------
+# Opt-in CronJob: exports every non-password-protected dataset via the
+# /export endpoint and uploads the .tar.gz to the S3/MinIO bucket below
+# (reuses the app image + the existing S3_* credentials).  Protected
+# datasets are skipped — exports require the dataset password, which backups
+# deliberately do not hold.
+backups:
+  enabled: false
+  schedule: "0 3 * * *"
+  bucket: ""          # required when enabled, e.g. "mm-rag-backups"

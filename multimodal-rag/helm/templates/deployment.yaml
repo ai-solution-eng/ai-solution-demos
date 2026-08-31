@@ -1,0 +1,232 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.deployment.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.deployment.appName }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Values.deployment.appName }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.deployment.appName }}
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      initContainers:
+        - name: fix-pvc-permissions
+          image: busybox:latest
+          securityContext:
+            runAsUser: 0
+          command: ["sh", "-c", "chown -R 1000:1000 /data"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      automountServiceAccountToken: false
+      containers:
+        - name: rag-api-server
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          command:
+            - python
+            - -m
+            - multimodal_rag.api_server
+          args:
+            - --host
+            - "0.0.0.0"
+            - --port
+            - "8000"
+            - --data-path
+            - "/data"
+            - --qdrant-host
+            - {{ .Values.deployment.name }}-qdrant
+            - --qdrant-port
+            - "6333"
+          envFrom:
+            - configMapRef:
+                name: {{ .Values.deployment.name }}-config
+            - secretRef:
+                name: {{ .Values.deployment.name }}-model-keys
+          env:
+            - name: RAG_REMOTE
+              value: {{ .Values.rag.remote | quote }}
+            - name: QDRANT_STORAGE_PATH
+              {{- if .Values.persistence.qdrant.mountReadOnly }}
+              value: "/qdrant-storage"
+              {{- else }}
+              value: ""
+              {{- end }}
+            - name: QDRANT_PVC_SIZE
+              value: {{ .Values.persistence.qdrant.size | quote }}
+            # Bound sync Qdrant calls so a hung Qdrant cannot pin a
+            # sync_pool/qdrant-io thread (and the requests behind it) forever.
+            - name: QDRANT_CLIENT_TIMEOUT
+              value: "30"
+            - name: CONFIG_DIR
+              value: "/etc/rag/config:/etc/rag/secrets"
+            {{- range $key, $val := .Values.extraEnv }}
+            - name: {{ $key }}
+              value: {{ $val | quote }}
+            {{- end }}
+          ports:
+            - containerPort: 8000
+              name: http
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: rag-config
+              mountPath: /etc/rag/config
+              readOnly: true
+            - name: rag-model-keys
+              mountPath: /etc/rag/secrets
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            - name: gunicorn-ctl
+              mountPath: /home/app/.gunicorn
+            {{- /* Qdrant's PVC, mounted read-only so the API server can report */}}
+            {{- /* its disk usage on the management page. Disabled in the scale */}}
+            {{- /* chart where Qdrant runs as a sharded cluster (no single PVC). */}}
+            {{- if .Values.persistence.qdrant.mountReadOnly }}
+            - name: qdrant-data
+              mountPath: /qdrant-storage
+              readOnly: true
+            {{- end }}
+          resources: {{ toYaml .Values.resources.app | nindent 12 }}
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            failureThreshold: 30
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 0
+            periodSeconds: 15
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+        {{- if .Values.mcp.enabled }}
+        - name: rag-mcp-server
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          command:
+            - python
+            - -m
+            - multimodal_rag.mcp_server
+          args:
+            - --transport
+            - streamable-http
+            - --host
+            - "0.0.0.0"
+            - --port
+            - {{ .Values.mcp.port | quote }}
+            - --data-path
+            - "/data"
+            - --qdrant-host
+            - {{ .Values.deployment.name }}-qdrant
+            - --qdrant-port
+            - "6333"
+          envFrom:
+            - configMapRef:
+                name: {{ .Values.deployment.name }}-config
+            - secretRef:
+                name: {{ .Values.deployment.name }}-model-keys
+          env:
+            - name: RAG_REMOTE
+              value: {{ .Values.rag.remote | quote }}
+            - name: CONFIG_DIR
+              value: "/etc/rag/config:/etc/rag/secrets"
+            {{- range $key, $val := .Values.extraEnv }}
+            - name: {{ $key }}
+              value: {{ $val | quote }}
+            {{- end }}
+          ports:
+            - containerPort: {{ .Values.mcp.port }}
+              name: mcp
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: rag-config
+              mountPath: /etc/rag/config
+              readOnly: true
+            - name: rag-model-keys
+              mountPath: /etc/rag/secrets
+              readOnly: true
+            {{- if .Values.persistence.qdrant.mountReadOnly }}
+            - name: qdrant-data
+              mountPath: /qdrant-storage
+              readOnly: true
+            {{- end }}
+          resources: {{ toYaml .Values.resources.app | nindent 12 }}
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.mcp.port }}
+            failureThreshold: 60
+            periodSeconds: 5
+            timeoutSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.mcp.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: {{ .Values.mcp.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+        {{- end }}
+
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Values.deployment.name }}-data
+        - name: rag-config
+          configMap:
+            name: {{ .Values.deployment.name }}-config
+        - name: rag-model-keys
+          secret:
+            secretName: {{ .Values.deployment.name }}-model-keys
+        {{- if .Values.persistence.qdrant.mountReadOnly }}
+        {{- /* The Qdrant PVC is created by the qdrant StatefulSet's */}}
+        {{- /* volumeClaimTemplates as data-<sts-name>-0. */}}
+        - name: qdrant-data
+          persistentVolumeClaim:
+            claimName: data-{{ .Values.deployment.name }}-qdrant-0
+        {{- end }}
+        - name: tmp
+          emptyDir: {}
+        - name: gunicorn-ctl
+          emptyDir: {}
