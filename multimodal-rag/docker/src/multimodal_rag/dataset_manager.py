@@ -18,6 +18,7 @@ import secrets
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -50,7 +51,7 @@ from multimodal_rag.input_processing import (
     XMLProcessor,
     YAMLProcessor,
 )
-from multimodal_rag.rag_system import MultimodalRAG
+from multimodal_rag.rag_system import MultimodalRAG, _record_ingest_warning
 from multimodal_rag.utils.general_tools import retry_call
 from multimodal_rag.utils.logging_utils import logging
 
@@ -220,6 +221,61 @@ def _write_hash_index(hashes_path: Path, index: dict[str, str]) -> None:
     os.replace(tmp, hashes_path)
     with _hash_index_cache_lock:
         _hash_index_cache[hashes_path] = (hashes_path.stat().st_mtime_ns, dict(index))
+
+
+# Deferred hash-index writes: batch ingests used to rewrite the ENTIRE
+# .hashes.json once per file (O(n²) serialization + NFS writes across a
+# batch).  _store_file(..., defer_write=True) instead records its new
+# entries here; _flush_hash_index_writes() merges them into the on-disk
+# index under the cross-process lock once per batch.  If the process dies
+# before the flush the files are still on disk — only the dedup entries are
+# missing, so a retry re-copies them (benign duplicates, never corruption).
+_hash_index_dirty: dict[Path, dict[str, str]] = {}
+_hash_index_dirty_lock = threading.Lock()
+
+
+def _flush_hash_index_writes() -> None:
+    """Persist all deferred hash-index entries (merge, not clobber).
+
+    Re-reads the on-disk index under the dataset's cross-process lock so
+    entries written by another pod during our batch survive.
+    """
+    with _hash_index_dirty_lock:
+        dirty = dict(_hash_index_dirty)
+        _hash_index_dirty.clear()
+    for hashes_path, updates in dirty.items():
+        if not updates:
+            continue
+        with _cross_process_lock(hashes_path.parent / ".hashes.lock"):
+            fresh = _load_hash_index(hashes_path)
+            fresh.update(updates)
+            _write_hash_index(hashes_path, fresh)
+
+
+# Ingest-dedup (.ingested_hashes.json) read cache — the batch loop used to
+# re-read and re-parse the whole file for every file (same O(n²) pattern).
+_ingested_hashes_cache: dict[Path, tuple[int, set[str]]] = {}
+_ingested_hashes_cache_lock = threading.Lock()
+
+
+def _load_ingested_hashes(p: Path) -> set[str]:
+    """Return the parsed ingest-dedup hash set for *p* (mtime-cached)."""
+    mtime = p.stat().st_mtime_ns if p.exists() else 0
+    with _ingested_hashes_cache_lock:
+        cached = _ingested_hashes_cache.get(p)
+        if cached is not None and cached[0] == mtime:
+            return cached[1]
+    hashes: set[str] = set()
+    if mtime:
+        try:
+            hashes = set(json.loads(p.read_text(encoding="utf-8")))
+        except (json.JSONDecodeError, OSError):
+            hashes = set()
+    with _ingested_hashes_cache_lock:
+        _ingested_hashes_cache[p] = (mtime, hashes)
+        if len(_ingested_hashes_cache) > 100:  # bound across many datasets
+            _ingested_hashes_cache.pop(next(iter(_ingested_hashes_cache)), None)
+    return hashes
 
 
 # Supported file extensions mapped to a media type label
@@ -549,19 +605,27 @@ def _host_matches_allowlist(host: str) -> bool:
     return False
 
 
-def _host_is_private(host: str) -> bool:
-    """Return True if *host* is or resolves to a private/loopback/link-local address."""
+def _host_is_private(host: str, allow_loopback: bool = False) -> bool:
+    """Return True if *host* is or resolves to a private/loopback/link-local address.
+
+    With ``allow_loopback=True`` (the query-time media policy) loopback
+    addresses and the literal name ``localhost`` are *not* considered
+    private: clients legitimately hand the server's own media URLs
+    (``http://localhost:8000/api/datasets/...``) back to the query tools.
+    """
     import ipaddress
     import socket
 
     hostname = host.rsplit(":", 1)[0].strip("[]")
     if hostname == "localhost":
-        return True
+        return not allow_loopback
     try:
         ip = ipaddress.ip_address(hostname)
     except ValueError:
         ip = None
     if ip is not None:
+        if ip.is_loopback and allow_loopback:
+            return False
         return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved
     try:
         addrinfos = socket.getaddrinfo(hostname, None)
@@ -571,6 +635,8 @@ def _host_is_private(host: str) -> bool:
         try:
             ip = ipaddress.ip_address(info[4][0])
         except ValueError:
+            continue
+        if ip.is_loopback and allow_loopback:
             continue
         if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
             return True
@@ -596,6 +662,41 @@ def _check_url_policy(url: str) -> None:
         return
     if _INGEST_BLOCK_PRIVATE and _host_is_private(host):
         raise ValueError(f"URL host '{host}' resolves to a private/internal address (INGEST_BLOCK_PRIVATE_HOSTS=true)")
+
+
+def _check_media_url_policy(url: str) -> None:
+    """Policy for *user-supplied query-time* media URLs (search with
+    image/video/audio, ``describe_media``, ``transcribe_audio``).
+
+    Ingest-time downloads guard the server against malicious URLs; this
+    guards the same surface for query-time fetches, which previously had no
+    check at all (an internal-SSRF / exfiltration channel: a caller could
+    point the embedder/VLM/ASR at cloud metadata or in-cluster services and
+    read the response back as a description/transcript/embedding match).
+
+    Same rules as :func:`_check_url_policy` with one difference: loopback is
+    allowed by default, because clients legitimately pass the server's own
+    media URLs (``http://localhost:8000/api/datasets/...?token=...``) back
+    to these tools.  ``INGEST_ALLOW_HOSTS`` remains authoritative when set;
+    set ``INGEST_BLOCK_PRIVATE_HOSTS=false`` to disable (not recommended).
+    """
+    if not url.startswith(("http://", "https://")):
+        return
+    from urllib.parse import urlparse
+
+    host = urlparse(url).hostname or ""
+    if _INGEST_ALLOW_HOSTS:
+        if not _host_matches_allowlist(host):
+            raise ValueError(
+                f"URL host '{host}' is not allowed by INGEST_ALLOW_HOSTS"
+                + (f"={','.join(_INGEST_ALLOW_HOSTS)}" if _INGEST_ALLOW_HOSTS else "")
+            )
+        return
+    if _INGEST_BLOCK_PRIVATE and _host_is_private(host, allow_loopback=True):
+        raise ValueError(
+            f"URL host '{host}' resolves to a private/internal address "
+            f"(INGEST_BLOCK_PRIVATE_HOSTS=true; add it to INGEST_ALLOW_HOSTS to permit)"
+        )
 
 
 def _download_url(url: str, timeout: int = 120) -> str:
@@ -726,8 +827,11 @@ def _preprocess_image_file(path: Path, max_pixels: int = _PVC_IMAGE_MAX_PIXELS) 
     raw = path.read_bytes()
     mime = mimetypes.guess_type(str(path))[0] or "image/jpeg"
 
-    img = Image.open(BytesIO(raw))
-    if img.width * img.height <= max_pixels:
+    # Open under a context manager so the underlying file handle is released
+    # immediately after the size check (raw bytes were already read above).
+    with Image.open(BytesIO(raw)) as img:
+        needs_resize = img.width * img.height > max_pixels
+    if not needs_resize:
         return path
 
     resized = _resize_image(raw, mime, max_pixels)
@@ -1046,10 +1150,7 @@ class DatasetManager:
         # ASR transcription / reranking) rather than silently pointing at a
         # baked-in endpoint.
         if embedder is None:
-            raise RuntimeError(
-                "Embedder model is required — set MODEL_EMBEDDER_NAME and "
-                "MODEL_EMBEDDER_URL."
-            )
+            raise RuntimeError("Embedder model is required — set MODEL_EMBEDDER_NAME and MODEL_EMBEDDER_URL.")
 
         self.embedder = embedder
         self.reranker = reranker
@@ -1063,8 +1164,15 @@ class DatasetManager:
         self._verify_endpoints()
 
         # Cache: dataset_name → MultimodalRAG instance
-        self._rag_cache: dict[str, MultimodalRAG] = {}
+        self._has_password_cache: dict[str, tuple[float, bool]] = {}
+        self._has_password_lock = threading.Lock()
+        self._rag_cache: OrderedDict[str, MultimodalRAG] = OrderedDict()
         self._rag_cache_lock = threading.Lock()
+        # LRU cap: each cached MultimodalRAG holds its own QdrantClient
+        # (connection pool + sockets).  Unbounded growth — one client per
+        # dataset ever touched, for the process lifetime — matters on
+        # servers serving many datasets.  Eviction closes the client.
+        self._rag_cache_max = max(1, int(os.environ.get("RAG_CACHE_MAX", "64")))
 
         # Embedder fingerprint support: current embedder's vector dimension
         # (probed once per embedder object) and the set of datasets whose
@@ -1250,8 +1358,27 @@ class DatasetManager:
         return self._strip_password(meta)
 
     def has_password(self, name: str) -> bool:
+        # TTL-cached: every search/unlock called this, i.e. an NFS stat+read
+        # + JSON parse of meta.json PER REQUEST for a value that changes only
+        # when a password is set/removed.  Once the read was parallelised
+        # (async offload), 4 replicas' worth of concurrent metadata reads
+        # degraded the NFS server and search throughput declined within a
+        # single benchmark run.  30s TTL; invalidated on password change and
+        # dataset delete.
+        now = time.monotonic()
+        with self._has_password_lock:
+            entry = self._has_password_cache.get(name)
+            if entry is not None and now - entry[0] < 30.0:
+                return entry[1]
         meta = self._read_meta(name)
-        return bool(meta and meta.get("password_hash"))
+        result = bool(meta and meta.get("password_hash"))
+        with self._has_password_lock:
+            self._has_password_cache[name] = (now, result)
+        return result
+
+    def _invalidate_has_password(self, name: str) -> None:
+        with self._has_password_lock:
+            self._has_password_cache.pop(name, None)
 
     def verify_password(self, name: str, password: str) -> bool:
         meta = self._read_meta(name)
@@ -1263,6 +1390,7 @@ class DatasetManager:
         return _check_password(password, stored)
 
     def set_password(self, name: str, password: str | None) -> None:
+        self._invalidate_has_password(name)
         meta = self._read_meta(name)
         if not meta:
             raise FileNotFoundError(f"Dataset '{name}' not found")
@@ -1284,6 +1412,7 @@ class DatasetManager:
     def delete_dataset(self, name: str) -> None:
         """Delete a dataset and its Qdrant collection."""
         self._validate_name(name)
+        self._invalidate_has_password(name)
         rag = self._get_rag(name, check_embedder=False)
         try:
             vs = rag.vector_store
@@ -1402,6 +1531,11 @@ class DatasetManager:
             dataset_name,
             len(file_entries),
         )
+        # Drop the ingest-dedup index too: recreate deliberately re-embeds the
+        # same on-disk files, but add_files_batch would otherwise treat every
+        # previously-ingested content hash as "already ingested" and skip the
+        # file — leaving a freshly-dropped, empty collection.
+        self._clear_ingested_hashes(dataset_name)
         return self.add_files_batch(dataset_name, file_entries, progress_callback=progress_callback)
 
     def list_datasets(self) -> list[dict[str, Any]]:
@@ -1635,7 +1769,7 @@ class DatasetManager:
             # Consumer died before this batch was queued.
             err = consumer_error[0] or "consumer failed"
             logger.error("Dropping batch (%d files) — consumer thread dead: %s", len(batch_files_list_), err)
-            for fname, _, _, _ in batch_files_list_:
+            for fname, _, _, _, _ in batch_files_list_:
                 result_queue.put((fname, 0, err))
                 if progress_callback:
                     progress_callback({"file": fname, "status": "error", "error": err})
@@ -1654,7 +1788,7 @@ class DatasetManager:
                         # Mark all files in this batch as embedding (with chunk
                         # count).  Inside the try so a callback failure cannot
                         # kill the consumer thread.
-                        for fname, count, _, _ in batch_files_list:
+                        for fname, count, _, _, _ in batch_files_list:
                             if progress_callback:
                                 progress_callback({"file": fname, "status": "embedding", "chunks": count})
 
@@ -1663,7 +1797,7 @@ class DatasetManager:
                         # the batch.  Per-file retries, per-file outcomes.
                         per_file: list[tuple[str, int, str | None]] = []
                         offset = 0
-                        for fname, count, file_type_, content_hash_ in batch_files_list:
+                        for fname, count, file_type_, content_hash_, stored_path in batch_files_list:
                             file_docs = docs[offset : offset + count]
                             offset += count
                             try:
@@ -1678,6 +1812,11 @@ class DatasetManager:
                                 per_file.append((fname, len(ids), None))
                                 if content_hash_ and ids:
                                     self._mark_ingested(dataset_name, content_hash_)
+                                elif not ids and stored_path:
+                                    # Every doc for this file was dropped (unconvertible
+                                    # media, or vector-dedup with no existing ref) — the
+                                    # stored copy would sit on the PVC forever unused.
+                                    self._delete_unreferenced_file(dataset_name, stored_path, content_hash_, rag)
                             except Exception as exc:
                                 logger.warning("Embedding failed for '%s' after 3 attempts: %s", fname, exc)
                                 per_file.append((fname, 0, str(exc)))
@@ -1697,7 +1836,7 @@ class DatasetManager:
                                     )
                     except Exception as exc:
                         logger.error("Batch processing failed unexpectedly: %s", exc)
-                        for fname, _, _, _ in batch_files_list:
+                        for fname, _, _, _, _ in batch_files_list:
                             result_queue.put((fname, 0, str(exc)))
                             if progress_callback:
                                 progress_callback({"file": fname, "status": "error", "error": str(exc)})
@@ -1718,7 +1857,7 @@ class DatasetManager:
                         batch_queue.task_done()
                         break
                     _, pending_files = batch
-                    for fname, _, _, _ in pending_files:
+                    for fname, _, _, _, _ in pending_files:
                         result_queue.put((fname, 0, str(exc)))
                         if progress_callback:
                             progress_callback({"file": fname, "status": "error", "error": str(exc)})
@@ -1726,16 +1865,14 @@ class DatasetManager:
 
         # Propagate the caller's context (incl. the ingest-warning collector
         # from rag_system._ingest_warnings) into the consumer thread.
-        consumer_thread = threading.Thread(
-            target=lambda: contextvars.copy_context().run(consumer), daemon=True
-        )
+        consumer_thread = threading.Thread(target=lambda: contextvars.copy_context().run(consumer), daemon=True)
         consumer_thread.start()
 
         # -- Producer: preprocess files, queue batches --------------------------
         batch_docs: list[str | dict[str, Any]] = []
         # (fname, chunk_count, file_type, content_hash) — the content hash lets
         # the consumer mark successfully-embedded files for ingest dedup.
-        batch_files_list: list[tuple[str, int, str, str]] = []
+        batch_files_list: list[tuple[str, int, str, str, str]] = []
         current_score = 0.0
 
         def _drain_results() -> None:
@@ -1759,8 +1896,9 @@ class DatasetManager:
                 progress_callback({"file": fname, "status": "preprocessing"})
 
             try:
-                dst = self._store_file(dataset_name, tmp_path, original_name=fname)
+                dst = self._store_file(dataset_name, tmp_path, original_name=fname, defer_write=True)
                 dst_str = str(dst)
+                stored_path = str(dst)  # tier-0 stored path (before preprocessing)
                 file_type = _classify_file(dst_str)
                 content_hash = _sha256_file(dst)
                 if self._is_ingested(dataset_name, content_hash):
@@ -1793,7 +1931,7 @@ class DatasetManager:
                             _fix_source(pdf_batch, fname, dst_str)
                             self._save_doc_media(dataset_name, pdf_batch, model_max_pixels=max_pixels)
                             batch_docs.extend(pdf_batch)
-                            batch_files_list.append((fname, len(pdf_batch), file_type, content_hash))
+                            batch_files_list.append((fname, len(pdf_batch), file_type, content_hash, stored_path))
                             pdf_batch = []
 
                             _queue_batch(batch_docs, batch_files_list)
@@ -1807,7 +1945,7 @@ class DatasetManager:
                         _fix_source(pdf_batch, fname, dst_str)
                         self._save_doc_media(dataset_name, pdf_batch, model_max_pixels=max_pixels)
                         batch_docs.extend(pdf_batch)
-                        batch_files_list.append((fname, len(pdf_batch), file_type, content_hash))
+                        batch_files_list.append((fname, len(pdf_batch), file_type, content_hash, stored_path))
                     current_score = 0.0
                     file_total = chunk_count
 
@@ -1823,7 +1961,7 @@ class DatasetManager:
                         doc["original_image"] = f"file://{original_dst}"
                     batch_docs.append(doc)
                     current_score += file_bytes / _MB
-                    batch_files_list.append((fname, 1, file_type, content_hash))
+                    batch_files_list.append((fname, 1, file_type, content_hash, stored_path))
                     file_total = 1
 
                     # Delete original if keep_originals=False
@@ -1857,7 +1995,7 @@ class DatasetManager:
                             _fix_source(vid_batch, fname, dst_str)
                             self._save_doc_media(dataset_name, vid_batch)
                             batch_docs.extend(vid_batch)
-                            batch_files_list.append((fname, len(vid_batch), file_type, content_hash))
+                            batch_files_list.append((fname, len(vid_batch), file_type, content_hash, stored_path))
                             vid_batch = []
 
                             _queue_batch(batch_docs, batch_files_list)
@@ -1870,7 +2008,7 @@ class DatasetManager:
                         _fix_source(vid_batch, fname, dst_str)
                         self._save_doc_media(dataset_name, vid_batch)
                         batch_docs.extend(vid_batch)
-                        batch_files_list.append((fname, len(vid_batch), file_type, content_hash))
+                        batch_files_list.append((fname, len(vid_batch), file_type, content_hash, stored_path))
                     current_score = 0.0
                     file_total = vid_chunk_count
 
@@ -1906,7 +2044,7 @@ class DatasetManager:
                     self._save_doc_media(dataset_name, audio_batch)
                     batch_docs.extend(audio_batch)
                     current_score += file_bytes / _MB
-                    batch_files_list.append((fname, len(segments), file_type, content_hash))
+                    batch_files_list.append((fname, len(segments), file_type, content_hash, stored_path))
                     file_total = len(segments)
 
                 else:
@@ -1951,21 +2089,21 @@ class DatasetManager:
                     n = min(len(batch_files_list), 10)
                     send_doc_count = 0
                     send_bytes = 0
-                    send_files: list[tuple[str, int, str, str]] = []
-                    for fname, cnt, file_type_, content_hash in batch_files_list[:n]:
+                    send_files: list[tuple[str, int, str, str, str]] = []
+                    for fname, cnt, file_type_, content_hash, stored_path in batch_files_list[:n]:
                         file_payload = sum(
                             _doc_payload_bytes(d) for d in batch_docs[send_doc_count : send_doc_count + cnt]
                         )
                         if send_files and send_bytes + file_payload > _IDLE_SEND_BYTES:
                             break
-                        send_files.append((fname, cnt, file_type_, content_hash))
+                        send_files.append((fname, cnt, file_type_, content_hash, stored_path))
                         send_bytes += file_payload
                         send_doc_count += cnt
                     if not send_files:
                         # Even one file is over the cap — send it anyway so the
                         # pipeline cannot deadlock on a single huge file.
                         send_files = batch_files_list[:1]
-                        send_doc_count = sum(c for _, c, _, _ in send_files)
+                        send_doc_count = sum(c for _, c, _, _, _ in send_files)
                     keep_files = batch_files_list[len(send_files) :]
                     _queue_batch(batch_docs[:send_doc_count], send_files)
                     batch_docs = batch_docs[send_doc_count:]
@@ -1986,6 +2124,11 @@ class DatasetManager:
             _queue_batch(batch_docs, batch_files_list)
         batch_queue.put(None)  # sentinel
         consumer_thread.join()
+
+        # Persist the batch's deferred .hashes.json entries — one merged
+        # write under the cross-process lock instead of a full index rewrite
+        # per stored file (O(n²) NFS I/O on large batches).
+        _flush_hash_index_writes()
 
         # If the consumer thread crashed, propagate the error
         if consumer_error[0] is not None:
@@ -2170,6 +2313,7 @@ class DatasetManager:
             ids = rag.add_to_vector_store(chunks)
             self._strip_media_payloads(rag, ids)
             self._increment_count(dataset_name, len(ids), file_type=file_type)
+            self._cleanup_dropped_file(dataset_name, rag, source_url, str(dst_path), content_hash, ids)
             return self._finish_ingest(
                 dataset_name, content_hash, {"type": "pdf", "chunks": len(ids), "stored_ids": ids}
             )
@@ -2188,6 +2332,7 @@ class DatasetManager:
             ids = rag.add_to_vector_store([doc])
             self._strip_media_payloads(rag, ids, store_url)
             self._increment_count(dataset_name, len(ids), file_type=file_type)
+            self._cleanup_dropped_file(dataset_name, rag, source_url, original_path, content_hash, ids)
 
             # Delete original if keep_originals=False
             if not source_url and source_str != original_path and not self._get_keep_originals(dataset_name):
@@ -2221,6 +2366,7 @@ class DatasetManager:
                 self._increment_count(dataset_name, len(ids), file_type=file_type)
             else:
                 ids = []
+            self._cleanup_dropped_file(dataset_name, rag, source_url, original_path, content_hash, ids)
 
             # Delete original if keep_originals=False
             if original_url and not self._get_keep_originals(dataset_name):
@@ -2258,6 +2404,7 @@ class DatasetManager:
             ids = rag.add_to_vector_store(audio_docs)
             self._strip_media_payloads(rag, ids, store_url)
             self._increment_count(dataset_name, len(ids), file_type=file_type)
+            self._cleanup_dropped_file(dataset_name, rag, source_url, str(dst_path), content_hash, ids)
             return self._finish_ingest(
                 dataset_name, content_hash, {"type": "audio", "chunks": len(ids), "stored_ids": ids}
             )
@@ -2448,7 +2595,15 @@ class DatasetManager:
         # Batch retrieve all points in a single request
         try:
             points = client.retrieve(coll, ids=point_ids, with_payload=True, with_vectors=False)
-        except Exception:
+        except Exception as exc:
+            # Non-fatal: heavy data URLs stay in Qdrant and the next ingest
+            # batch retries the strip.  Log so the silence isn't total.
+            logger.warning(
+                "Media payload strip: could not retrieve %d point(s) from %s — skipping: %s",
+                len(point_ids),
+                coll,
+                exc,
+            )
             return
 
         # Group modified point IDs by their new payload (JSON key for hashability)
@@ -2522,8 +2677,13 @@ class DatasetManager:
                     payload=json.loads(payload_json),
                     points=ids,
                 )
-            except Exception:
-                continue
+            except Exception as exc:
+                logger.warning(
+                    "Media payload strip: set_payload for %d point(s) on %s failed: %s",
+                    len(ids),
+                    coll,
+                    exc,
+                )
 
     def _save_doc_media(
         self,
@@ -2676,6 +2836,142 @@ class DatasetManager:
         if tier1.exists():
             return str(tier1)
         return None
+
+    def _delete_unreferenced_file(
+        self,
+        dataset_name: str,
+        stored_path: str,
+        content_hash: str | None,
+        rag: MultimodalRAG,
+    ) -> None:
+        """Delete a stored file whose every document was dropped.
+
+        When a file's media can't be embedded (the embedder doesn't support
+        the modality) and can't be converted to caption text (no VLM/ASR), all
+        docs it produced are omitted and nothing in the vector store references
+        it — the copy in ``files/`` (and its ``*_preprocessed`` sibling) would
+        sit on the PVC forever.  This removes them and forgets the dedup hash
+        so a later upload (e.g. once an ASR/VLM is configured) is re-ingested.
+        """
+        p = Path(stored_path)
+        # Only ever delete files inside this dataset's own files directory.
+        files_dir = self._dataset_dir(dataset_name) / "files"
+        try:
+            files_res = str(files_dir.resolve())
+        except OSError:
+            return
+        try:
+            if not str(p.resolve()).startswith(files_res):
+                return
+        except OSError:
+            return
+
+        sibling = p.with_stem(p.stem + "_preprocessed")
+        artifacts = [p, sibling]
+        srcs = [str(a) for a in artifacts]
+        if not any(a.exists() for a in artifacts):
+            return
+
+        # Safety guard: if any stored doc still references these paths (e.g.
+        # from an earlier ingest that lost its hash entry), keep the file.
+        if self._file_referenced(rag, srcs):
+            return
+
+        deleted: list[str] = []
+        for a in artifacts:
+            try:
+                if a.exists():
+                    a.unlink()
+                    deleted.append(str(a))
+            except OSError as exc:
+                logger.warning("Could not delete unreferenced file %s: %s", a, exc)
+        if deleted:
+            logger.info("Removed unreferenced file(s): %s", ", ".join(deleted))
+
+        # Forget the dedup hash so the same bytes can be re-ingested later.
+        if content_hash:
+            hashes_path = files_dir / ".hashes.json"
+            if hashes_path.exists():
+                with _cross_process_lock(files_dir / ".hashes.lock"):
+                    try:
+                        hash_index = _load_hash_index(hashes_path)
+                        if hash_index.get(content_hash) == stored_path:
+                            del hash_index[content_hash]
+                            _write_hash_index(hashes_path, hash_index)
+                    except Exception:
+                        logger.debug("Failed to update .hashes.json", exc_info=True)
+
+        if deleted:
+            _record_ingest_warning(
+                f"Removed unreferenced file (not embeddable by the embedder; no caption): {stored_path}"
+            )
+
+    def _file_referenced(self, rag: MultimodalRAG, sources: list[str]) -> bool:
+        """True if the vector store holds a doc referencing one of *sources*.
+
+        Safety guard used before deleting an on-disk file.  Conservative: on
+        any store error it returns True so the file is kept.
+        """
+        vs = rag.vector_store
+        assert vs is not None and not isinstance(vs, dict)
+        if hasattr(vs, "store"):
+            # InMemoryVectorStore
+            candidates = set(sources)
+            for entry in vs.store.values():
+                doc = entry.get("document")
+                meta = getattr(doc, "metadata", None) or {}
+                if meta.get("source") in candidates:
+                    return True
+                for k in (
+                    "preprocessed_image",
+                    "preprocessed_video",
+                    "preprocessed_audio",
+                    "original_image",
+                    "original_video",
+                    "original_audio",
+                ):
+                    v = meta.get(k)
+                    if isinstance(v, str) and v.startswith("file://") and v[7:] in candidates:
+                        return True
+            return False
+        # QdrantVectorStore — one bounded scroll per source (limit 1).
+        try:
+            from qdrant_client.models import FieldCondition, Filter, MatchValue
+
+            client = vs._client  # type: ignore[attr-defined]
+            coll = vs.collection_name  # type: ignore[attr-defined]
+            for s in sources:
+                points, _ = client.scroll(
+                    coll,
+                    limit=1,
+                    with_payload=False,
+                    with_vectors=False,
+                    filter=Filter(must=[FieldCondition(key="metadata.source", match=MatchValue(value=s))]),
+                )
+                if points:
+                    return True
+            return False
+        except Exception:
+            logger.warning("Could not verify file references — keeping file (conservative)")
+            return True
+
+    def _cleanup_dropped_file(
+        self,
+        dataset_name: str,
+        rag: MultimodalRAG,
+        source_url: str | None,
+        stored_path: str,
+        content_hash: str | None,
+        ids: list[str],
+    ) -> None:
+        """After ingesting a file, remove its on-disk copy if every doc dropped.
+
+        Used by the single-file/URL ingest path (``_add_file_processed``).
+        Remote (URL) ingests never delete anything — there is no PVC copy.
+        """
+        if ids or source_url or not stored_path:
+            return
+        self._delete_unreferenced_file(dataset_name, stored_path, content_hash, rag)
 
     def _delete_original_file(
         self,
@@ -3089,6 +3385,23 @@ class DatasetManager:
                         },
                     )
                     self._rag_cache[dataset_name] = rag
+                    # LRU eviction: drop the least-recently-used RAG (and
+                    # close its Qdrant client) past the cap.
+                    while len(self._rag_cache) > self._rag_cache_max:
+                        _, evicted = self._rag_cache.popitem(last=False)
+                        try:
+                            vs = getattr(evicted, "vector_store", None)
+                            client = getattr(vs, "_client", None)
+                            if client is not None:
+                                client.close()
+                        except Exception:
+                            logger.debug("Evicted RAG client close failed", exc_info=True)
+                else:
+                    self._rag_cache.move_to_end(dataset_name)
+        else:
+            with self._rag_cache_lock:
+                if dataset_name in self._rag_cache:
+                    self._rag_cache.move_to_end(dataset_name)
         if check_embedder and dataset_name not in self._embedder_verified:
             self._assert_embedder_compatible(dataset_name)
             self._embedder_verified.add(dataset_name)
@@ -3254,29 +3567,39 @@ class DatasetManager:
 
     def _is_ingested(self, dataset_name: str, file_hash: str) -> bool:
         """True if *file_hash* was already successfully ingested here."""
-        p = self._ingested_hashes_path(dataset_name)
-        if not p.exists():
-            return False
-        try:
-            return file_hash in json.loads(p.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return False
+        return file_hash in _load_ingested_hashes(self._ingested_hashes_path(dataset_name))
 
     def _mark_ingested(self, dataset_name: str, file_hash: str) -> None:
         """Record *file_hash* as successfully ingested for *dataset_name*."""
         p = self._ingested_hashes_path(dataset_name)
         with _cross_process_lock(p.with_suffix(".lock")):
-            hashes: set[str] = set()
-            if p.exists():
-                try:
-                    hashes = set(json.loads(p.read_text(encoding="utf-8")))
-                except (json.JSONDecodeError, OSError):
-                    hashes = set()
+            hashes = _load_ingested_hashes(p)
+            if file_hash in hashes and p.exists():
+                return
             hashes.add(file_hash)
             p.parent.mkdir(parents=True, exist_ok=True)
             tmp = p.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(sorted(hashes)), encoding="utf-8")
             os.replace(tmp, p)
+            with _ingested_hashes_cache_lock:
+                _ingested_hashes_cache[p] = (p.stat().st_mtime_ns, hashes)
+
+    def _clear_ingested_hashes(self, dataset_name: str) -> None:
+        """Forget every ingest-dedup hash for *dataset_name*.
+
+        Used by :meth:`recreate_dataset` so the freshly-recreated (empty)
+        collection actually re-embeds the on-disk files instead of skipping
+        them all as "already ingested".
+        """
+        p = self._ingested_hashes_path(dataset_name)
+        with _cross_process_lock(p.with_suffix(".lock")):
+            try:
+                if p.exists():
+                    p.unlink()
+            except OSError:
+                logger.warning("Could not clear ingest-dedup index %s", p)
+            with _ingested_hashes_cache_lock:
+                _ingested_hashes_cache.pop(p, None)
 
     def _finish_ingest(self, dataset_name: str, content_hash: str | None, result: dict[str, Any]) -> dict[str, Any]:
         """Mark *content_hash* ingested when the result stored vectors, then return it."""
@@ -3284,12 +3607,27 @@ class DatasetManager:
             self._mark_ingested(dataset_name, content_hash)
         return result
 
-    def _store_file(self, dataset_name: str, source_path: str, original_name: str | None = None) -> Path:
+    def _store_file(
+        self,
+        dataset_name: str,
+        source_path: str,
+        original_name: str | None = None,
+        defer_write: bool = False,
+    ) -> Path:
         """Copy *source_path* into the dataset's files directory and return the new path.
 
         Files are deduplicated by SHA-256 hash: if a file with the same
         content was already stored, the existing path is returned without
         copying.
+
+        With ``defer_write=True`` (batch ingests) the new hash entry is not
+        written to ``.hashes.json`` immediately: it is recorded in a dirty
+        set merged into the on-disk index by
+        :func:`_flush_hash_index_writes` at the end of the batch.  Writing
+        the whole index once per file made N-file ingests O(n²) in disk I/O.
+        Callers that defer MUST flush (batch paths do so in ``finally``);
+        crash before flush only loses dedup entries — files remain on disk
+        and a retry re-copies them.
         """
         self._validate_name(dataset_name)
         files_dir = self._dataset_dir(dataset_name) / "files"
@@ -3301,6 +3639,22 @@ class DatasetManager:
             while chunk := f.read(8192):
                 h.update(chunk)
         file_hash = h.hexdigest()
+
+        # Copy FIRST — outside the lock.  The destination name is a fresh
+        # UUID, so concurrent writers never collide on the file itself; the
+        # cross-process lock only guards the .hashes.json read-modify-write.
+        # (It used to be held across the whole copy, serializing concurrent
+        # uploads to a dataset behind each full file copy on the NFS PVC.)
+        if original_name:
+            stem = Path(original_name).stem
+            suffix = Path(original_name).suffix
+        else:
+            stem = Path(source_path).stem
+            suffix = Path(source_path).suffix
+        dest = files_dir / f"{uuid.uuid4().hex}_{stem}{suffix}"
+        import shutil
+
+        shutil.copy2(source_path, dest)
 
         # Load or create hash index.  The read→modify→write of .hashes.json
         # is guarded by a cross-process file lock so concurrent uploads
@@ -3314,21 +3668,17 @@ class DatasetManager:
             if file_hash in hash_index:
                 existing = Path(hash_index[file_hash])
                 if existing.exists():
+                    # Another writer stored this file while we were copying
+                    # — drop our duplicate and reuse the indexed copy.
+                    dest.unlink(missing_ok=True)
                     return existing
-                # Stale entry — remove and re-store
+                # Stale entry — replace it with our fresh copy
                 del hash_index[file_hash]
 
-            # Copy file — use original_name for a readable stem if available
-            if original_name:
-                stem = Path(original_name).stem
-                suffix = Path(original_name).suffix
-            else:
-                stem = Path(source_path).stem
-                suffix = Path(source_path).suffix
-            dest = files_dir / f"{uuid.uuid4().hex}_{stem}{suffix}"
-            import shutil
-
-            shutil.copy2(source_path, dest)
             hash_index[file_hash] = str(dest)
-            _write_hash_index(hash_index_path, hash_index)
+            if defer_write:
+                with _hash_index_dirty_lock:
+                    _hash_index_dirty.setdefault(hash_index_path, {})[file_hash] = str(dest)
+            else:
+                _write_hash_index(hash_index_path, hash_index)
             return dest

@@ -15,6 +15,7 @@ import os
 import uuid
 import weakref
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -23,6 +24,18 @@ import numpy as np
 from multimodal_rag.utils.general_tools import cosine_sim
 
 logger = logging.getLogger(__name__)
+
+# Dedicated thread pool for Qdrant I/O (batched searches, upserts, scrolls).
+# The sync Qdrant client performs network I/O that used to run either on the
+# event loop (freezing every concurrent request for the duration of a
+# multi-MB upsert) or on the default executor (where long-running batch
+# ingest jobs and ffmpeg subprocesses could starve every search flush).
+# Keeping Qdrant calls here gives them their own bounded lane; sized via
+# QDRANT_POOL_SIZE.  rag_system imports this pool for the same reason.
+_QDRANT_IO_POOL = ThreadPoolExecutor(
+    max_workers=max(1, int(os.environ.get("QDRANT_POOL_SIZE", "4"))),
+    thread_name_prefix="qdrant-io",
+)
 
 
 def _lightweight_payload_selector():
@@ -185,7 +198,7 @@ class _QdrantBatcher:
         futs = [f for _, _, _, f in batch]
 
         loop = asyncio.get_running_loop()
-        exec_fut = loop.run_in_executor(None, self._search_fn, queries)
+        exec_fut = loop.run_in_executor(_QDRANT_IO_POOL, self._search_fn, queries)
 
         # Settle every caller's future from the executor result — even if the
         # task that triggered this flush is cancelled (e.g. a client disconnect),

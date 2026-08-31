@@ -20,6 +20,7 @@ import argparse
 import asyncio
 import os
 import threading
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 import uvicorn
@@ -32,7 +33,26 @@ from multimodal_rag.utils.model_adapters import _QueryBatcher
 
 logger = logging.getLogger("embed-batcher")
 
-app = FastAPI(title="embed-batcher", version="1.0.0")
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Startup/shutdown: (re)build the batcher and watch CONFIG_DIR for swaps.
+
+    Replaces the deprecated ``@app.on_event("startup")`` hook (removed in
+    FastAPI 0.99+); the lifespan context is the supported equivalent.
+    """
+    config_dir = os.environ.get("CONFIG_DIR", "")
+    if config_dir:
+        from multimodal_rag.model_config import apply_config_dirs, start_config_watcher
+
+        apply_config_dirs(config_dir)
+        start_config_watcher(config_dir, _reload)
+    _reload()
+    logger.info("Embed batcher initialised")
+    yield
+
+
+app = FastAPI(title="embed-batcher", version="1.0.0", lifespan=_lifespan)
 
 
 @dataclass
@@ -84,18 +104,6 @@ def _reload() -> None:
         logger.exception("Failed to build embedder for batcher")
         with _state_lock:
             _state.error = str(exc)
-
-
-@app.on_event("startup")
-async def _startup() -> None:
-    config_dir = os.environ.get("CONFIG_DIR", "")
-    if config_dir:
-        from multimodal_rag.model_config import apply_config_dirs, start_config_watcher
-
-        apply_config_dirs(config_dir)
-        start_config_watcher(config_dir, _reload)
-    _reload()
-    logger.info("Embed batcher initialised")
 
 
 @app.post("/embed")

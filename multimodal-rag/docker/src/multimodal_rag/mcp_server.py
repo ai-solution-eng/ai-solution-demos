@@ -22,6 +22,7 @@ import os
 import re
 import threading
 import time
+from array import array
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlencode
@@ -29,7 +30,7 @@ from urllib.parse import urlencode
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from multimodal_rag.dataset_manager import DatasetManager
-from multimodal_rag.rag_system import MultimodalRAG
+from multimodal_rag.rag_system import MultimodalRAG, _media_payloads_needed
 from multimodal_rag.utils.logging_utils import logging, setup_logger
 
 logger = logging.getLogger(__name__)
@@ -487,13 +488,25 @@ _AUTH_IDENTITY_HEADERS = (
     b"x-user",
 )
 
+# These headers are *client-supplied* unless an auth proxy is guaranteed to
+# overwrite them on every request.  Trusting them unconditionally would let
+# a caller impersonate another user's unlock-cache entry (and its cached
+# plaintext password) or rotate identities to bypass the password-failure
+# throttle.  They are therefore only honoured when RAG_TRUST_PROXY_IDENTITY
+# is set (helm: security.trustProxyIdentity) — i.e. when the operator
+# confirms an enforcing proxy sits in front of this server.
+_TRUST_PROXY_IDENTITY = os.environ.get("RAG_TRUST_PROXY_IDENTITY", "").lower() in ("1", "true", "yes")
+
 
 def _unlock_client_id() -> str:
     """Return the per-request client identity used to scope the unlock cache.
 
-    Prefers an auth-proxy identity header captured by ``_MemoryHeaderMiddleware``,
-    then falls back to ``X-Forwarded-For`` (first hop), and finally to a
-    shared ``"default"`` identity for non-authenticated deployments.
+    Prefers an auth-proxy identity header captured by ``_MemoryHeaderMiddleware``
+    (only when ``RAG_TRUST_PROXY_IDENTITY`` is set — the headers are
+    client-spoofable otherwise), then falls back to the socket peer, and
+    finally to a shared ``"default"`` identity for non-authenticated
+    deployments.  ``X-Forwarded-For`` is deliberately not used: it is
+    client-supplied and spoofable.
     """
     cid = _client_id_ctx.get()
     if cid:
@@ -528,11 +541,15 @@ class _MemoryHeaderMiddleware:
                 pw = value.decode("latin-1").strip() or None
             elif name == b"x-opencode-session-id":
                 sid = value.decode("latin-1").strip() or None
-        for name, value in scope.get("headers") or []:
-            if name in _AUTH_IDENTITY_HEADERS:
-                cid = value.decode("latin-1").strip() or None
-                if cid:
-                    break
+        if _TRUST_PROXY_IDENTITY:
+            # Only honour identity headers when the operator confirmed an
+            # enforcing auth proxy overwrites them (RAG_TRUST_PROXY_IDENTITY);
+            # otherwise they are client-supplied and spoofable.
+            for name, value in scope.get("headers") or []:
+                if name in _AUTH_IDENTITY_HEADERS:
+                    cid = value.decode("latin-1").strip() or None
+                    if cid:
+                        break
         # No auth-proxy header — fall back to the socket peer.  X-Forwarded-For
         # is deliberately ignored: it is client-supplied and spoofable, so
         # trusting it would let a caller read another identity's cached
@@ -953,8 +970,13 @@ def _media_alt_label(url: str, fallback: str) -> str:
 #
 # Both paths return ``None`` on miss; the caller falls back to embedding
 # (and caches the result for next time).
-
-_query_emb_cache: dict[str, list[float]] = {}
+#
+# Vectors are stored as ``array('f')``, not ``list[float]``: a 4096-dim
+# embedding as a Python list costs ~130 KB (boxed float objects + pointers)
+# vs ~16 KB packed — at the default cap of 4096 entries that is the
+# difference between ~530 MB and ~65 MB of resident heap.  Reads convert
+# back to ``list`` (microseconds for 4096 floats).
+_query_emb_cache: dict[str, array] = {}
 _query_emb_cache_lock = threading.Lock()
 
 # Size caps for the in-process caches.  These are plain dicts (insertion
@@ -1119,7 +1141,7 @@ def _resolve_query_vector(
         cached = _query_emb_cache.get(cache_key)
     if cached is not None:
         logger.info("query vector: cache HIT (%d media file(s))", len(paths))
-        return cached
+        return list(cached)
 
     return None
 
@@ -1136,7 +1158,9 @@ def _cache_query_vector(
     model_name = rag.embedder.model_name
     cache_key = _compute_query_cache_key(query_dict, model_name, paths)
     with _query_emb_cache_lock:
-        _bounded_cache_put(_query_emb_cache, cache_key, vector, _MAX_QUERY_EMB_CACHE)
+        # Packed array('f') — ~10x smaller at rest than a list[float] (see
+        # the cache declaration above); reads convert back to list.
+        _bounded_cache_put(_query_emb_cache, cache_key, array("f", vector), _MAX_QUERY_EMB_CACHE)
     logger.info("query vector: cached for future reuse (%d media file(s))", len(paths))
 
 
@@ -1206,7 +1230,7 @@ def _resolve_audio_query_vector(
         cached = _query_emb_cache.get(cache_key)
     if cached is not None:
         logger.info("audio query: embedding cache HIT (%d file(s))", len(audio_paths))
-        return cached
+        return list(cached)
 
     # 3. ASR → text → embed
     if rag.asr is None:
@@ -1378,24 +1402,45 @@ async def _arun_retrieval(
     # When none apply, heavy base64 image/video keys are excluded from the
     # Qdrant response to avoid transferring megabytes of data that would
     # be immediately discarded and replaced with preprocessed_* file refs.
-    need_media = (
-        (use_reranker and rag.reranker is not None)
-        or (rag.vlm is not None)
-        or bool(llm_modalities & {"image", "video"})
-    )
-
+    # Two-phase media fetch: phase 1 searches WITHOUT the heavy tier-3
+    # base64 payloads whenever the reranker doesn't need them upfront.
+    # _media_payloads_needed() then predicts — from the light docs (captions
+    # + tier-2 preprocessed refs, which the result JSON below surfaces as
+    # the media links anyway) and the query — whether a consumer will
+    # actually use the payloads; only then does phase 2 re-search with them
+    # included (query_vector is reused, so no re-embed).  With a VLM
+    # configured but a generic query over pre-captioned docs this skips a
+    # multi-MB Qdrant transfer entirely.
+    reranker_needs_media = use_reranker and rag.reranker is not None
     results = await rag.aretrieve(
         query_dict,
         top_k=top_k,
         use_reranker=use_reranker,
         reranker_top_k=reranker_top_k,
         query_vector=query_vector,
-        need_media=need_media,
+        need_media=reranker_needs_media,
     )
     if not results:
         return "No results found."
 
     retrieved_docs = [doc for doc, _ in results]
+
+    if not reranker_needs_media and _media_payloads_needed(
+        retrieved_docs,
+        use_vlm=True,
+        vlm=rag.vlm,
+        llm_modalities=llm_modalities,
+        query=query,
+    ):
+        results = await rag.aretrieve(
+            query_dict,
+            top_k=top_k,
+            use_reranker=False,
+            reranker_top_k=reranker_top_k,
+            query_vector=query_vector,
+            need_media=True,
+        )
+        retrieved_docs = [doc for doc, _ in results]
     scores = [score for _, score in results]
 
     # -- Post-process: convert unsupported modalities for the LLM --
@@ -1775,6 +1820,17 @@ try:
         # -- Build multimodal query dict --
         query_dict: str | dict[str, Any] = query
         if image or video or audio:
+            # Query-time SSRF guard: remote media URLs are fetched
+            # server-side by the embedder (loopback allowed — clients may
+            # hand back the server's own media URLs).
+            try:
+                from multimodal_rag.dataset_manager import _check_media_url_policy
+
+                for media_value in (image, video, audio):
+                    if media_value:
+                        _check_media_url_policy(media_value)
+            except ValueError as exc:
+                raise ToolError(f"Query media rejected: {exc}")
             query_dict = {}
             if query:
                 query_dict["text"] = query
@@ -2036,6 +2092,17 @@ try:
         # -- Build multimodal query dict --
         query_dict: str | dict[str, Any] = query
         if image or video or audio:
+            # Write-time SSRF guard: stored media URLs are fetched
+            # server-side later (at retrieval/VLM/ASR time), so reject
+            # policy-violating hosts up front rather than at read time.
+            try:
+                from multimodal_rag.dataset_manager import _check_media_url_policy
+
+                for media_value in (image, video, audio):
+                    if media_value:
+                        _check_media_url_policy(media_value)
+            except ValueError as exc:
+                raise ToolError(f"Memory media rejected: {exc}")
             query_dict = {}
             if query:
                 query_dict["text"] = query
@@ -2051,7 +2118,7 @@ try:
         # through the single background event loop in sync_wrapper_safe.
         # media_base_url=None lets _arun_retrieval fall back to the global
         # MEDIA_BASE_URL env var so any media memories also get clickable
-        # HTTP URLs (with the ?password= suffix for protected datasets).
+        # HTTP URLs (short-lived HMAC ?token= for protected datasets).
         return await _arun_retrieval(
             rag,
             ds_name,
@@ -2344,6 +2411,18 @@ try:
             )
             from multimodal_rag.utils.general_tools import sync_wrapper_safe
 
+            # Query-time SSRF guard: a remote URL here is fetched server-side
+            # by the VLM endpoint, so apply the same host policy as ingest
+            # (loopback is allowed — clients legitimately hand back the
+            # server's own media URLs).  file:// paths are separately
+            # allowlisted in _preprocess_media_url; data: URLs are inert.
+            try:
+                from multimodal_rag.dataset_manager import _check_media_url_policy
+
+                _check_media_url_policy(media_url)
+            except ValueError as exc:
+                raise ToolError(f"media_url rejected: {exc}")
+
             dm = get_manager()
             vlm = dm.vlm
             if vlm is None:
@@ -2443,6 +2522,15 @@ try:
                 _transcribe_media,
             )
             from multimodal_rag.utils.general_tools import sync_wrapper_safe
+
+            # Query-time SSRF guard (same rationale as describe_media): a
+            # remote URL here is fetched server-side by the ASR endpoint.
+            try:
+                from multimodal_rag.dataset_manager import _check_media_url_policy
+
+                _check_media_url_policy(audio_url)
+            except ValueError as exc:
+                raise ToolError(f"audio_url rejected: {exc}")
 
             dm = get_manager()
             asr = dm.asr

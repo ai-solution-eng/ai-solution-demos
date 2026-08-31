@@ -517,6 +517,7 @@
         <button class="btn btn-outline btn-sm" onclick="showDocs()">Documents</button>
         <button class="btn btn-outline btn-sm" onclick="recreateDataset()" title="Drops the indexed vectors and re-embeds the original files from disk with the currently configured embedder">Recreate</button>
         <button class="btn btn-outline btn-sm" onclick="downloadBackup()" title="Download the full dataset backup (.tar.gz: metadata + documents + files)">Backup</button>
+        <button class="btn btn-outline btn-sm" onclick="downloadDocuments('md')" title="Download every document in this dataset as one readable Markdown file (no binary files; scripts can also use ?format=jsonl)">Download Docs</button>
         <button class="btn btn-danger btn-sm" onclick="deleteDataset()">Delete</button>
       </div>
     </div>
@@ -546,6 +547,10 @@ let selectedDataset = null;
 let datasets = [];
 let datasetPasswords = {};  // dataset name → password (empty string = no password)
 let mediaTokens = {};       // dataset name → { token, expires } for media ?token= URLs
+// API-key auth: when the server has security.apiKey set it embeds the key
+// here as a meta tag (the page is the auth boundary for browser users).
+// Direct/scripted API callers must send X-RAG-Api-Key themselves.
+const RAG_API_KEY = (document.querySelector('meta[name="rag-api-key"]') || {}).content || '';
 
 // Mint (and cache) a short-lived, dataset-scoped media token so <img>/<video>
 // URLs never carry the dataset password in their query string.
@@ -581,6 +586,7 @@ async function api(method, path, body, timeoutMs, extraHeaders) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs || 1200000);
   const hdrs = {};
+  if (RAG_API_KEY) hdrs['X-RAG-Api-Key'] = RAG_API_KEY;
   if (extraHeaders) Object.assign(hdrs, extraHeaders);
   const opts = { method, headers: hdrs, signal: controller.signal };
   if (body instanceof FormData) {
@@ -710,18 +716,56 @@ async function selectDataset(name) {
   }
 }
 
-function downloadBackup() {
+async function downloadBackup() {
   if (!selectedDataset) return;
   const pw = datasetPasswords[selectedDataset] || '';
   const url = `/api/datasets/${selectedDataset}/export` + (pw ? `?password=${encodeURIComponent(pw)}` : '');
-  window.open(url, '_blank');
+  const headers = RAG_API_KEY ? { 'X-RAG-Api-Key': RAG_API_KEY } : {};
+  toast('Preparing backup…');
+  try {
+    const res = await fetch(url, { headers });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${selectedDataset}-export.tar.gz`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(a.href);
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+async function downloadDocuments(format = 'md') {
+  if (!selectedDataset) return;
+  const pw = datasetPasswords[selectedDataset] || '';
+  const url = `/api/datasets/${selectedDataset}/documents/download?format=${format}`
+    + (pw ? `&password=${encodeURIComponent(pw)}` : '');
+  const headers = { ...(RAG_API_KEY ? { 'X-RAG-Api-Key': RAG_API_KEY } : {}), ...passwordHeader() };
+  toast('Preparing download…');
+  try {
+    const res = await fetch(url, { headers });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${selectedDataset}-documents.${format === 'jsonl' ? 'jsonl' : 'md'}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(a.href);
+  } catch (e) {
+    toast(e.message, 'error');
+  }
 }
 
 async function deleteDataset() {
   if (!selectedDataset) return;
   if (!confirm(`Delete dataset "${selectedDataset}"? This cannot be undone.`)) return;
   try {
-    await api('DELETE', `/api/datasets/${selectedDataset}`);
+    await api('DELETE', `/api/datasets/${selectedDataset}`, undefined, undefined, passwordHeader());
     toast(`Deleted "${selectedDataset}"`);
     selectedDataset = null;
     document.getElementById('selected-info').style.display = 'none';
@@ -736,7 +780,7 @@ async function recreateDataset() {
   if (!confirm(`Recreate "${selectedDataset}"?\n\nDrops the indexed vectors and re-embeds the original files from disk with the currently configured embedder.`)) return;
   let jobId;
   try {
-    const res = await api('POST', `/api/admin/datasets/${selectedDataset}/recreate`);
+    const res = await api('POST', `/api/admin/datasets/${selectedDataset}/recreate`, undefined, undefined, passwordHeader());
     jobId = res.job_id;
   } catch (e) {
     toast(e.message, 'error');
@@ -745,7 +789,7 @@ async function recreateDataset() {
   toast(`Recreating "${selectedDataset}"…`);
   const poll = async () => {
     try {
-      const job = await api('GET', `/api/datasets/${selectedDataset}/upload-status/${jobId}`, undefined, 15000);
+      const job = await api('GET', `/api/datasets/${selectedDataset}/upload-status/${jobId}`, undefined, 15000, passwordHeader());
       if (job.status === 'complete') {
         const n = job.result && job.result.file_count != null ? job.result.file_count : job.processed_files;
         toast(`Recreated "${selectedDataset}" (${n} file${n === 1 ? '' : 's'})`);
@@ -884,6 +928,7 @@ async function handleFiles(files) {
     try {
       const resp = await fetch(`/api/datasets/${selectedDataset}/batch-files`, {
         method: 'POST',
+        headers: RAG_API_KEY ? { 'X-RAG-Api-Key': RAG_API_KEY } : {},
         body: fd,
       });
       if (!resp.ok) {
@@ -1090,7 +1135,7 @@ async function addUrls() {
   try {
     const resp = await fetch(`/api/datasets/${selectedDataset}/batch-urls`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...passwordHeader() },
+      headers: { 'Content-Type': 'application/json', ...(RAG_API_KEY ? { 'X-RAG-Api-Key': RAG_API_KEY } : {}), ...passwordHeader() },
       body: JSON.stringify({ urls }),
     });
 
@@ -1557,7 +1602,7 @@ async function saveDatasetSettings() {
     caption_with_vlm: cVlm.checked,
   };
   try {
-    await api('PATCH', '/api/datasets/' + selectedDataset, body);
+    await api('PATCH', '/api/datasets/' + selectedDataset, body, undefined, passwordHeader());
     toast('Caption settings applied (affects new content)');
     listDatasets();
     const d = datasets.find(x => x.name === selectedDataset);
@@ -1571,7 +1616,7 @@ async function saveDescription() {
   if (!selectedDataset) return;
   const desc = document.getElementById('desc-edit').value.trim();
   try {
-    await api('PATCH', `/api/datasets/${selectedDataset}`, { description: desc });
+    await api('PATCH', `/api/datasets/${selectedDataset}`, { description: desc }, undefined, passwordHeader());
     toast('Description updated');
     listDatasets();
     const d = datasets.find(x => x.name === selectedDataset);
@@ -1661,8 +1706,14 @@ function openTextReader(el) {
 
 function escHtml(s) {
   const d = document.createElement('div');
-  d.textContent = s;
-  return d.innerHTML;
+  d.textContent = String(s ?? '');
+  // textContent→innerHTML escapes & < > but NOT quotes; results are
+  // interpolated into double-quoted attributes (href="…", src="…",
+  // onclick="…"), so quotes must be escaped too or a crafted dataset
+  // value can break out of the attribute (stored XSS).
+  return d.innerHTML
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
 }
 
 function formatContent(c) {

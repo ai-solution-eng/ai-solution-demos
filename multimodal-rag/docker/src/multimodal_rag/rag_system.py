@@ -1,31 +1,17 @@
 import asyncio
 import base64
+import contextvars
 import os
 import re
 import time
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from functools import cached_property
 from io import BytesIO
 from typing import Any
 
-import contextvars
 import numpy as np
-
-# Non-fatal captioning warnings for the CURRENT ingest request, surfaced to
-# the web UI.  The API layer sets a list per request; the ASR/VLM failure
-# paths append to it (no-op when unset, e.g. during retrieval).
-_ingest_warnings: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
-    "ingest_warnings", default=None
-)
-
-
-def _record_ingest_warning(msg: str) -> None:
-    """Record a non-fatal captioning failure for the active ingest request."""
-    bucket = _ingest_warnings.get()
-    if bucket is not None:
-        bucket.append(msg)
-
 
 from multimodal_rag.utils.general_tools import (
     cosine_sim,
@@ -45,6 +31,7 @@ from multimodal_rag.utils.pcai_model_classes import (
     VoiceModel,
 )
 from multimodal_rag.vector_store import (
+    _QDRANT_IO_POOL,
     Document,
     InMemoryVectorStore,
     QdrantVectorStore,
@@ -53,7 +40,28 @@ from multimodal_rag.vector_store import (
 
 logger = logging.getLogger(__name__)
 
+# Dedicated pool for media-side subprocess/CPU work (ffmpeg resize/transcode,
+# ffmpeg probe) inside async ingest.  Previously this shared the *default*
+# executor with the Qdrant search batcher, so concurrent uploads could stall
+# every search on the pod; it now has its own bounded lane (MEDIA_POOL_SIZE).
+_MEDIA_POOL = ThreadPoolExecutor(
+    max_workers=max(1, int(os.environ.get("MEDIA_POOL_SIZE", "2"))),
+    thread_name_prefix="media-io",
+)
+
 __all__ = ["MultiModalRAGSystem", "MultimodalRAG", "Postprocessor", "Preprocessor"]
+
+# Non-fatal captioning warnings for the CURRENT ingest request, surfaced to
+# the web UI.  The API layer sets a list per request; the ASR/VLM failure
+# paths append to it (no-op when unset, e.g. during retrieval).
+_ingest_warnings: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar("ingest_warnings", default=None)
+
+
+def _record_ingest_warning(msg: str) -> None:
+    """Record a non-fatal captioning failure for the active ingest request."""
+    bucket = _ingest_warnings.get()
+    if bucket is not None:
+        bucket.append(msg)
 
 
 def _qdrant_prefer_grpc() -> bool:
@@ -217,6 +225,67 @@ def _strip_embed_caption(doc: dict, supported: set[str]) -> dict:
     return out
 
 
+def _has_caption(text: str) -> bool:
+    """True if *text* contains any ingest-time VLM/ASR caption line."""
+    return bool(_CAPTION_LINE_RE.search(text or ""))
+
+
+def _has_embeddable_content(doc: dict, embed_modalities: set[str]) -> bool:
+    """True if *doc* carries anything that can actually be embedded.
+
+    A doc is embeddable when it still holds a media modality the embedder can
+    ingest, or non-placeholder text (a VLM/ASR caption that conversion
+    produced, or real extracted content).  A doc reduced to mere media
+    placeholders ("[Image: x.jpg]", "[Video: game.mp4] [0s – 32s]", …) is
+    *not* embeddable and is dropped.
+
+    This is the unified "skip entirely" rule across all media types: if the
+    embedder can't ingest the media and no VLM/ASR was able to convert it to
+    caption text, the sample is omitted rather than stored as a dead vector.
+    """
+    if any(k in embed_modalities and doc.get(k) for k in ("image", "video", "audio")):
+        return True
+    text = (doc.get("text") or "").strip()
+    remaining = _MEDIA_PLACEHOLDER_RE.sub("", text)
+    return bool(remaining.strip())
+
+
+def _media_caption_twin_needed(doc: dict, supported: set[str]) -> bool:
+    """Whether a pure-media doc should also get a *caption twin* embedding.
+
+    The base embedding of a pure-media doc (an image/video whose text is
+    only a "[Image: x.JPG]" placeholder plus an optional ingest-time VLM/ASR
+    caption) keys off the raw media — the caption lines are stripped from the
+    embedding input by :func:`_strip_embed_caption` so the vector is driven by
+    the pixels, not the caption wording.  A caption twin is an *additional*
+    embedding of the same media **with** the caption text, so text queries
+    that match the caption wording can still retrieve the point even when the
+    base media-only embedding misses.
+
+    A caption twin is only worth creating when all of these hold:
+
+    * the doc carries at least one media modality the embedder supports
+      natively (otherwise the Preprocessor has already collapsed the media to
+      caption text and that text embedding *is* the caption-only path),
+    * the doc has no real extracted text (pure media placeholder — docs that
+      carry real text already embed text+caption together and get a
+      text-only twin instead),
+    * at least one caption line is present (otherwise the twin would embed
+      byte-identical input to the base and add nothing).
+
+    When the embedder does NOT support the doc's media and no VLM/ASR is
+    available, the Preprocessor drops the media entirely and nothing is
+    embedded — matching the "skip it entirely" rule.
+    """
+    if not any(doc.get(m) for m in ("image", "video", "audio")):
+        return False
+    if not any(m in supported for m in ("image", "video", "audio") if doc.get(m)):
+        return False
+    if _has_real_text(doc.get("text") or ""):
+        return False
+    return _has_caption(doc.get("text") or "")
+
+
 async def _afetch_media_bytes(url: str, async_client=None) -> bytes:
     if url.startswith(("http://", "https://")):
         if async_client is not None:
@@ -225,7 +294,9 @@ async def _afetch_media_bytes(url: str, async_client=None) -> bytes:
             return resp.content
         import httpx
 
-        async with httpx.AsyncClient() as c:
+        # Bounded timeout: this per-call client previously had none, so a
+        # hung media server would hang the enclosing asyncio.gather forever.
+        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0)) as c:
             resp = await c.get(url, follow_redirects=True)
             resp.raise_for_status()
             return resp.content
@@ -515,6 +586,51 @@ def _query_needs_vlm(query: str | dict[str, Any] | None) -> bool:
     return False
 
 
+def _media_payloads_needed(
+    docs: list[Any],
+    *,
+    use_vlm: bool,
+    vlm: Any,
+    llm_modalities: set[str],
+    query: str | dict[str, Any] | None,
+) -> bool:
+    """Conservatively predict whether tier-3 base64 media payloads are needed.
+
+    Mirrors the Postprocessor's VLM-skip logic (caption reuse for generic
+    queries) so retrieval can run a lightweight phase-1 search (tier-3 base64
+    excluded) and only re-fetch payloads when a consumer will actually use
+    them:
+
+    * a vision-capable base LLM consumes ``image``/``video`` keys directly;
+    * a VLM conversion will run — i.e. some retrieved doc has media and is
+      NOT covered by a reusable ingest-time caption (caption present AND the
+      query is generic).
+
+    Media presence is detected from tier-2 ``preprocessed_*`` refs, which —
+    unlike the tier-3 base64 keys — survive the lightweight payload selector.
+    Audio never triggers a payload fetch: tier-3 audio is stored as a file
+    ref, so the Postprocessor's ASR path reads it from disk regardless.
+    """
+    if bool(llm_modalities & {"image", "video"}):
+        return any(isinstance(d, dict) and any(k in d for k in ("image", "video", "preprocessed_image", "preprocessed_video")) for d in docs)
+    if not use_vlm or vlm is None:
+        return False
+    query_is_specific = _query_needs_vlm(query)
+    for d in docs:
+        if not isinstance(d, dict):
+            continue
+        text = d.get("text") or ""
+        if ("image" in d or "preprocessed_image" in d) and not (
+            "[Image description]:" in text and not query_is_specific
+        ):
+            return True
+        if ("video" in d or "preprocessed_video" in d) and not (
+            "[Video description]:" in text and not query_is_specific
+        ):
+            return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Preprocessor  —  runs BEFORE embedding / storage
 # ---------------------------------------------------------------------------
@@ -636,8 +752,16 @@ class Preprocessor:
             # below (see _strip_embed_caption).
             image_needs_vlm = "image" not in target_modalities and media["image"]
             image_captioned = False
-            if image_needs_vlm and self.vlm is not None:
-                vlm_tasks.append(self._describe(d, query=query))
+            if image_needs_vlm:
+                if self.vlm is not None:
+                    vlm_tasks.append(self._describe(d, query=query))
+                else:
+                    # No VLM to turn the image into caption text, and the
+                    # embedder can't ingest it either — the image can never
+                    # be used.  Drop it (matches audio/video's "skip
+                    # entirely" rule); the doc itself is omitted later if
+                    # nothing embeddable remains.
+                    d.pop("image", None)
             elif self.caption_img and media["image"]:
                 # Caption generated for the stored payload; stripped from the
                 # embedding input below (see _strip_embed_caption).
@@ -694,6 +818,22 @@ class Preprocessor:
                     text_parts.append(f"[Video audio transcription]: {transcript}")
 
             d["text"] = "\n".join(p for p in text_parts if p)
+
+            # ── Unified "skip entirely" rule ───────────────────────────────
+            # After conversion, drop the whole sample if nothing embeddable
+            # survived: no media the embedder can ingest, and no caption text
+            # (a converter-produced transcription/description counts; a bare
+            # "[Image: x.jpg]" placeholder does not).  Audio docs are already
+            # omitted by their branch above; this closes the same gap for
+            # image/video and any mixed cases.
+            if not _has_embeddable_content(d, target_modalities):
+                wmsg = (
+                    "Omitting document: media not supported by the embedder and "
+                    f"no ASR/VLM to convert it to text ({d.get('source', '(unknown)')})"
+                )
+                logger.warning(wmsg)
+                _record_ingest_warning(wmsg)
+                return None
             return d
 
         out: list = []
@@ -1224,28 +1364,31 @@ class MultimodalRAG:
         documents = [self._normalize_doc(d) for d in documents]
         if not self.preprocess:
             docs = list(documents)
-            # Even without preprocessing, omit docs with unprocessable audio.
-            if "audio" not in self._embed_modalities and self.asr is None:
-                kept: list[str | dict[str, Any]] = []
-                omitted = 0
-                for d in docs:
-                    if isinstance(d, dict) and d.get("audio"):
-                        media = _split_media(d)
-                        has_other_media = bool(media["image"]) or bool(media["video"])
-                        text = (d.get("text") or "").strip()
-                        if not has_other_media and (not text or text.startswith("[Audio:")):
+            # Even without preprocessing, apply the unified "skip entirely"
+            # rule: drop media the embedder can't ingest (with no VLM/ASR
+            # conversion possible — preprocessing is disabled), and omit the
+            # doc entirely when nothing embeddable remains.
+            kept: list[str | dict[str, Any]] = []
+            omitted = 0
+            for d in docs:
+                if isinstance(d, dict):
+                    unsupported = [
+                        m for m in ("audio", "image", "video") if m not in self._embed_modalities and d.get(m)
+                    ]
+                    if unsupported:
+                        d = dict(d)
+                        for m in unsupported:
+                            d.pop(m, None)
+                        if not _has_embeddable_content(d, self._embed_modalities):
                             omitted += 1
                             continue
-                        d = dict(d)
-                        d.pop("audio", None)
-                    kept.append(d)
-                if omitted:
-                    logger.warning(
-                        "Omitting %d audio document(s): no ASR model and embedder does not support audio.",
-                        omitted,
-                    )
-                docs = kept
-            return docs
+                kept.append(d)
+            if omitted:
+                logger.warning(
+                    "Omitting %d document(s): media unsupported by the embedder and no ASR/VLM to convert it.",
+                    omitted,
+                )
+            return kept
         return await self._preprocessor.acall(
             list(documents),
             target_modalities=self._embed_modalities,
@@ -1275,7 +1418,12 @@ class MultimodalRAG:
         try:
             client = vs._client  # type: ignore[attr-defined]
             coll = vs.collection_name  # type: ignore[attr-defined]
-            records, _ = client.scroll(coll, limit=limit, with_payload=True, with_vectors=False)
+            # Offloaded: the sync scroll is a network round-trip that would
+            # otherwise block the caller's event loop.
+            records, _ = await asyncio.get_running_loop().run_in_executor(
+                _QDRANT_IO_POOL,
+                lambda: client.scroll(coll, limit=limit, with_payload=True, with_vectors=False),
+            )
             out = []
             for rec in records:
                 payload = rec.payload or {}
@@ -1671,10 +1819,12 @@ class MultimodalRAG:
 
         for sub in list_chunker(processed, embed_batch_size):
             # ── 0b. Resize media before storage ─────────────────────────────
-            # Run in a thread pool — ffmpeg/probe subprocess calls would
-            # otherwise block the event loop for up to 300s per video.
+            # Run in the dedicated media pool — ffmpeg/probe subprocess calls
+            # would otherwise block the event loop for up to 300s per video
+            # (and would previously compete with Qdrant search flushes on the
+            # default executor).
             loop = asyncio.get_running_loop()
-            sub = await loop.run_in_executor(None, self._resize_media_in_docs, sub)
+            sub = await loop.run_in_executor(_MEDIA_POOL, self._resize_media_in_docs, sub)
 
             # ── 0c. Split long audio transcriptions into chunks ─────────────
             sub = self._split_audio_chunks(sub)
@@ -1686,26 +1836,38 @@ class MultimodalRAG:
             # ── 0d. Replace audio payloads with file references ─────────────
             sub = [_replace_audio(d) if isinstance(d, dict) else d for d in sub]
 
-            # ── 0e. Create text-only twins for multimodal docs ──────────────
+            # ── 0e. Create twins for multimodal docs ─────────────────────────
             # A multimodal embedding (text + images) can be dominated by the
             # image content, burying the text signal so text queries don't
-            # match.  For each multimodal doc that also has *real* text, create
-            # a text-only twin: same text + metadata, tagged with
-            # ``_twin=True`` so it can be deduplicated at retrieval when both
-            # the twin and the multimodal original appear in results.
+            # match.  Two twin kinds exist, both tagged ``_twin=True`` so the
+            # retrieval dedup (:meth:`_dedup_twins`) can collapse them with
+            # their multimodal parent:
             #
-            # The twin is embedded WITHOUT media (pure text embedding), but its
-            # stored payload KEEPS the image/video so the media is still
-            # retrievable when only the twin matches a query.
+            # 1. **Text-only twins** — for docs that carry *real* extracted
+            #    text (e.g. a PDF page).  The twin embeds the same text
+            #    WITHOUT media, so text queries match even when the
+            #    multimodal embedding is dominated by the visual content.
+            #    Its stored payload keeps the image/video so the media is
+            #    still retrievable when only the twin matches a query.
             #
-            # Twins are only created when the text is real extracted content
-            # (e.g. a PDF page).  Documents whose text is only a media
-            # placeholder ("[Image: DSC01391.JPG]") or an ingest-time VLM/ASR
-            # caption ("[Image description]: …") get no twin — there is
-            # nothing meaningful for a text-only embedding to capture.
+            # 2. **Caption twins** — for PURE media docs (image/video/audio
+            #    whose text is only a "[Image: x.JPG]" placeholder and an
+            #    optional ingest-time VLM/ASR caption).  The base embedding
+            #    keys off the raw media (captions stripped, see
+            #    _strip_embed_caption); the caption twin embeds the SAME
+            #    media WITH the caption text so text queries that match the
+            #    caption wording can still retrieve the point.  Created only
+            #    when the embedder supports the doc's media AND a caption is
+            #    present (_media_caption_twin_needed).
+            #
+            # Docs whose text is only a media placeholder without a caption
+            # get no twin (there is nothing meaningful for the twin to add),
+            # and docs whose media the embedder can't ingest were already
+            # collapsed to caption text by the Preprocessor — that caption
+            # text embedding is the caption-only path.
             twin_embed_docs: list[dict[str, Any]] = []
             twin_store_docs: list[dict[str, Any]] = []
-            twin_parent_ids: list[int] = []  # index into sub
+            twin_caption_count = 0
             for idx, doc in enumerate(sub):
                 if not isinstance(doc, dict):
                     continue
@@ -1715,20 +1877,30 @@ class MultimodalRAG:
                 has_media = any(doc.get(k) for k in ("image", "video", "audio"))
                 if not has_media:
                     continue
-                if not _has_real_text(text):
-                    continue
                 # Embedding input: text-only (media stripped).
                 embed_twin = {k: v for k, v in doc.items() if k not in ("image", "video", "audio")}
                 embed_twin["_twin"] = True
-                twin_embed_docs.append(embed_twin)
                 # Stored payload: media retained so the twin stays retrievable
                 # with its image/video reference.
                 store_twin = dict(doc)
                 store_twin["_twin"] = True
+                if _has_real_text(text):
+                    # Real extracted content (e.g. a PDF page) → text-only twin.
+                    twin_embed_docs.append(embed_twin)
+                elif _media_caption_twin_needed(doc, self._embed_modalities):
+                    # Pure media + caption → caption twin embeds the media WITH
+                    # the caption text (embed_twin keeps the media keys), so
+                    # the twin's vector is (media + caption) rather than text-
+                    # only.  The base parent embedding is the media-only one.
+                    embed_twin = dict(doc)
+                    embed_twin["_twin"] = True
+                    twin_embed_docs.append(embed_twin)
+                    twin_caption_count += 1
+                else:
+                    continue
                 twin_store_docs.append(store_twin)
-                twin_parent_ids.append(idx)
 
-            # ── 1. Embed this sub-batch (multimodal + text-only twins) ──────
+            # ── 1. Embed this sub-batch (multimodal + twins) ────────────────
             # Ingest-time VLM/ASR captions are stored in the payload so the
             # retrieval Postprocessor can reuse them for the LLM.  Only PURE
             # media docs (no real extracted text) get their caption lines
@@ -1740,19 +1912,23 @@ class MultimodalRAG:
             # audio today) also keep their caption text as the embeddable
             # content — there is nothing else to embed.
             t1 = time.monotonic()
-            embed_inputs = [
-                _strip_embed_caption(d, self._embed_modalities) if isinstance(d, dict) else d
-                for d in sub
-            ]
+            embed_inputs = [_strip_embed_caption(d, self._embed_modalities) if isinstance(d, dict) else d for d in sub]
             sub_embs = await self.embed.aembed_documents(embed_inputs)
             if twin_embed_docs:
-                # Twins embed text only (media keys removed). They are only
-                # created for docs that carry REAL text (see _has_real_text
-                # gating above), and real-text docs keep their VLM caption in
-                # the embedding — so no caption stripping here.
+                # Text-only twins embed text only (media keys removed); caption
+                # twins embed media + caption together (media keys kept).
+                # Text twins are only created for docs that carry REAL text
+                # (see _has_real_text gating above), and real-text docs keep
+                # their VLM caption in the embedding — so no caption stripping
+                # here either way.
                 twin_embs = await self.embed.aembed_documents(twin_embed_docs)
                 sub_embs.extend(twin_embs)
             t_embed_total += time.monotonic() - t1
+            if twin_caption_count:
+                logger.verbose(  # type: ignore[attr-defined]
+                    "  %d caption twin(s) added (media + caption embeddings)",
+                    twin_caption_count,
+                )  # type: ignore[attr-defined]
 
             # Guard against silent data loss: if the embedding API returns
             # fewer/more vectors than documents, zip() would silently
@@ -1777,7 +1953,7 @@ class MultimodalRAG:
             # ── 2b. Deduplicate ─────────────────────────────────────────────
             if deduplicate and sub_embs:
                 results = await loop.run_in_executor(
-                    None,
+                    _QDRANT_IO_POOL,
                     self._batch_find_duplicates,
                     vs,
                     sub_embs,
@@ -1826,7 +2002,14 @@ class MultimodalRAG:
                             },
                         )
                     )
-                client.upsert(collection_name=coll, points=points, **kwargs)
+                # Offloaded: a media-heavy sub-batch can carry tens to
+                # hundreds of MB of tier-3 base64 payloads — the sync upsert
+                # (network + JSON serialization) must not block the event
+                # loop while it POSTs.
+                await loop.run_in_executor(
+                    _QDRANT_IO_POOL,
+                    lambda: client.upsert(collection_name=coll, points=points, **kwargs),
+                )
 
             t_store_total += time.monotonic() - t2
             # sub_embs / sub_docs fall out of scope here — released before the
@@ -1866,9 +2049,12 @@ class MultimodalRAG:
 
         Two dedup passes:
 
-        1. **Twin vs parent**: text-only twins (tagged ``_twin=True``) that
-           share the same ``(source, page, chunk_index)`` as a multimodal
-           parent are dropped — the parent carries the images.
+        1. **Twin vs parent**: twins (tagged ``_twin=True`` — both the
+           text-only twins of real-text docs and the media+caption caption
+           twins of pure media docs) that share the same
+           ``(source, page, chunk_index, time-window)`` as a multimodal parent are
+           dropped — the parent carries the media (and, for pure media docs,
+           the identical stored payload).
 
         2. **Text-content dedup**: if two results have identical text
            (e.g. overlapping chunks from cross-page carry), keep only the
@@ -1883,8 +2069,12 @@ class MultimodalRAG:
                 src = doc.get("source", "")
                 page = doc.get("page")
                 ci = doc.get("chunk_index")
+                # Video segments share (source, page=None, chunk_index=None);
+                # disambiguate by the segment's time window so a twin of one
+                # segment is not collapsed against a parent of another.
+                ts = (doc.get("timestamp_start"), doc.get("timestamp_end"))
                 if src:
-                    return (src, page, ci)
+                    return (src, page, ci, ts)
             return None
 
         # ── Pass 1: drop twins whose multimodal parent is also present ──
@@ -2058,12 +2248,14 @@ class MultimodalRAG:
                 )
             results = [(self._extract_doc(doc), score) for doc, score in docs_and_scores]
 
-        # ── Deduplicate text-only twins ─────────────────────────────────
-        # When both a twin (text-only) and its multimodal parent appear in
-        # the results, drop the twin — the parent has the images the user
-        # needs.  Twins are identified by the ``_twin`` metadata flag.
-        # Dedup key: (source, page, chunk_index) so twins of different
-        # sub-chunks from the same page are not collapsed.
+        # ── Deduplicate twins ────────────────────────────────────────
+        # When both a twin and its multimodal parent appear in the results,
+        # drop the twin — the parent has the media the user needs.  Twins are
+        # identified by the ``_twin`` metadata flag (both the text-only twins
+        # of real-text docs and the media+caption caption twins of pure media
+        # docs).  Dedup key: (source, page, chunk_index, time-window) so
+        # twins of different sub-chunks/segments from the same source are not
+        # collapsed.
         results = self._dedup_twins(results)
 
         if use_reranker and self.reranker is None:
@@ -2527,23 +2719,41 @@ class MultiModalRAGSystem:
             logger.verbose("%.2fs route(llm)  → RAG needed", time.monotonic() - t_r)  # type: ignore[attr-defined]
 
         t_r = time.monotonic()
-        # Base64 media payloads are needed when the reranker, VLM, or a
-        # vision-capable base LLM will consume them.
-        llm_mods = self._llm_modalities
-        need_media = (
-            (use_reranker and self._rag.reranker is not None)
-            or (use_vlm and self._rag.vlm is not None)
-            or bool(llm_mods & {"image", "video"})
-        )
+        # Two-phase media fetch: phase 1 searches WITHOUT the heavy tier-3
+        # base64 payloads whenever the reranker doesn't need them upfront;
+        # _media_payloads_needed() then predicts — from the light docs
+        # (captions + tier-2 refs) and the query — whether a consumer will
+        # actually use the payloads, and only then does phase 2 re-search
+        # with them included.  With a VLM configured but a generic query over
+        # pre-captioned docs this skips a multi-MB Qdrant transfer entirely.
+        # (The second search re-embeds the query — cheap relative to the
+        # payload transfer it avoids; the embed batcher absorbs it.)
+        reranker_needs_media = use_reranker and self._rag.reranker is not None
         retrieved = await self._rag.aretrieve(
             query,
             documents,
             top_k,
             use_reranker=use_reranker,
             reranker_top_k=reranker_top_k,
-            need_media=need_media,
+            need_media=reranker_needs_media,
         )
         retrieved_docs = [d for d, _ in retrieved]
+        if not reranker_needs_media and _media_payloads_needed(
+            retrieved_docs,
+            use_vlm=use_vlm,
+            vlm=self._rag.vlm,
+            llm_modalities=self._llm_modalities,
+            query=query,
+        ):
+            retrieved = await self._rag.aretrieve(
+                query,
+                documents,
+                top_k,
+                use_reranker=False,
+                reranker_top_k=reranker_top_k,
+                need_media=True,
+            )
+            retrieved_docs = [d for d, _ in retrieved]
         logger.verbose(  # type: ignore[attr-defined]
             "%.2fs retrieve  — %d docs (top_k=%s, reranker=%s%s)",
             time.monotonic() - t_r,

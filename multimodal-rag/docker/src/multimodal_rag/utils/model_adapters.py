@@ -814,16 +814,28 @@ class InputConversion:
         return requests
 
 
+
+
 # Idle early-flush for the query batchers (local _QueryBatcher and the
-# shared embed-batcher singleton, which reuses this class): a batch flushes
-# early when no new query has arrived for this long, instead of always
-# waiting out the full EMBEDDING_QUERY_BATCH_WAIT_MS window.  Under burst
-# arrivals the idle check keeps postponing (old behavior preserved — that
-# is the ceiling), while an isolated interactive query — which could never
-# fill a batch — pays only the short idle gap instead of the whole window.
-# Set to 0 to disable the idle check and restore the exact old behavior
-# (always wait the full window).
-_IDLE_FLUSH_WAIT_MS = max(0.0, float(os.environ.get("EMBEDDING_QUERY_IDLE_WAIT_MS", "10")))
+# shared embed-batcher singleton, which reuses this class).  DEFAULT 0 =
+# DISABLED (the exact original always-wait-the-window behavior).
+#
+# v1 of this idea (10ms, no guard) was benchmark-convicted: with the idle
+# threshold below the aggregate inter-arrival spacing at load (~8-13ms),
+# ~25-50% of observation slices saw "no arrival" even mid-burst and the
+# flush fired stochastically, shattering batches — and on this serving
+# stack (KServe queue-proxy + shared-GPU scheduling) per-REQUEST cost
+# dominates, so the small-flush storm collapsed throughput (34->15 r/s,
+# 400+ queue-proxy sockets, canceled contexts).
+#
+# v2 adds the guard that makes it safe: the idle check may only flush when
+# the queue is stalled SMALL (len <= EMBEDDING_QUERY_IDLE_MAX_BATCH,
+# default 2).  A queue that is accumulating — any burst, however jittery —
+# never idle-flushes; the window/cap govern it.  The idle path serves
+# exactly one purpose: an isolated interactive query flushes after
+# EMBEDDING_QUERY_IDLE_WAIT_MS instead of the full window.
+_IDLE_FLUSH_WAIT_MS = max(0.0, float(os.environ.get("EMBEDDING_QUERY_IDLE_WAIT_MS", "0")))
+_IDLE_FLUSH_MAX_BATCH = max(1, int(os.environ.get("EMBEDDING_QUERY_IDLE_MAX_BATCH", "2")))
 
 
 class _QueryBatcher:
@@ -884,14 +896,13 @@ class _QueryBatcher:
         return await fut
 
     async def _timed_flush(self) -> None:
-        """Wait for the batch window, flushing early when the queue goes idle.
+        """Wait for the batch window; flush early only for a stalled small queue.
 
-        Flushes as soon as any of: the batch reached max size (submit
-        handles that), max_wait elapsed, or no new query arrived for
-        EMBEDDING_QUERY_IDLE_WAIT_MS (default 10 ms).  Under continuing
-        arrivals the idle check keeps postponing, so burst batching is
-        unchanged; an isolated query flushes after the idle gap instead of
-        waiting out a window that would never fill.
+        With EMBEDDING_QUERY_IDLE_WAIT_MS > 0: sleep in short slices; flush
+        early only when the queue is non-empty, stalled (no new arrival this
+        slice) AND small (<= EMBEDDING_QUERY_IDLE_MAX_BATCH).  A growing
+        queue — any burst — always waits for the full window / batch cap,
+        so burst batching is untouched.  0 = disabled (original behavior).
         """
         try:
             if _IDLE_FLUSH_WAIT_MS <= 0:
@@ -906,7 +917,10 @@ class _QueryBatcher:
                     size_before = len(self._queue)
                     await asyncio.sleep(min(slice_s, remaining))
                     waited += min(slice_s, remaining)
-                    if len(self._queue) <= size_before:
+                    if (
+                        len(self._queue) <= size_before
+                        and 0 < len(self._queue) <= _IDLE_FLUSH_MAX_BATCH
+                    ):
                         break
         except asyncio.CancelledError:
             return

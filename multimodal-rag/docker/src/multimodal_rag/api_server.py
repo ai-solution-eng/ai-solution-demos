@@ -12,6 +12,7 @@ Or via Python::
 
 import argparse
 import asyncio
+import contextvars
 import datetime
 import io
 import json
@@ -27,6 +28,7 @@ import time
 import urllib.parse
 import uuid
 from collections.abc import Iterator
+from contextlib import asynccontextmanager
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -45,12 +47,37 @@ from fastapi import (
 )
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
-from multimodal_rag.dataset_manager import DatasetManager, EmbedderMismatchError, _cross_process_lock
+from multimodal_rag import __version__
+from multimodal_rag.dataset_manager import (
+    DatasetManager,
+    EmbedderMismatchError,
+    _check_media_url_policy,
+    _cross_process_lock,
+)
 from multimodal_rag.rag_system import _ingest_warnings
 from multimodal_rag.utils.general_tools import sync_pool
 from multimodal_rag.utils.logging_utils import logging, setup_logger
 
 logger = logging.getLogger(__name__)
+
+
+def _submit_with_context(executor, fn, *args, **kwargs):
+    """Submit *fn(*args, **kwargs)* to *executor* keeping this thread's
+    contextvars active in the worker thread.
+
+    ``run_in_executor`` hands *fn* to a thread-pool worker whose contextvars
+    are the empty default, so the ingest-warning collector (``_ingest_warnings``
+    in :mod:`rag_system`) set in this request handler would be invisible there
+    and every skip/caption warning would silently vanish before the UI can
+    return it.  ``contextvars.copy_context()`` is evaluated HERE (the handler
+    thread, with the collector set) and ``Context.run`` executes *fn* under it
+    in the worker — and transitively under the background event loop and the
+    consumer threads that ``sync_wrapper_safe``/``add_files_batch`` spawn, so
+    warnings accumulate into the same list the handler returns.
+    """
+    ctx = contextvars.copy_context()
+    return asyncio.get_running_loop().run_in_executor(executor, ctx.run, lambda: fn(*args, **kwargs))
+
 
 # ---------------------------------------------------------------------------
 # Upload job tracker (thread-safe, poll-based progress)
@@ -63,29 +90,80 @@ class _UploadJobTracker:
     Replaces the previous SSE stream approach which tied upload lifecycle
     to a persistent HTTP connection.  With polling, a browser tab can be
     closed and reopened without losing progress tracking.
+
+    Job state lives in-process **and** is mirrored to Redis (when
+    ``REDIS_URL`` is configured and reachable), so in multi-worker /
+    multi-replica deployments any API process can answer a progress poll for
+    a job that another process created — the in-memory-only tracker returned
+    "Job not found" whenever the load balancer landed the poll on a different
+    gunicorn worker or pod (e.g. recreate under the 4-replica × 4-worker
+    scale chart).  Without Redis it degrades to in-memory-only (single
+    process) behaviour.
     """
+
+    _REDIS_PREFIX = "upload_job:"
+    # Long enough for big batch/recreate ingests; cleanup is via Redis TTL.
+    _REDIS_TTL_SECONDS = 6 * 3600
 
     def __init__(self) -> None:
         self._jobs: dict[str, dict[str, Any]] = {}
         self._lock = threading.Lock()
 
+    def _redis(self):
+        """Best-effort shared Redis client (reuses dataset_manager's)."""
+        try:
+            return _get_redis()
+        except Exception:
+            return None
+
+    def _redis_key(self, job_id: str) -> str:
+        return f"{self._REDIS_PREFIX}{job_id}"
+
+    def _redis_set(self, job: dict[str, Any]) -> None:
+        r = self._redis()
+        if r is None:
+            return
+        try:
+            r.set(self._redis_key(job["job_id"]), json.dumps(job, default=str), ex=self._REDIS_TTL_SECONDS)
+        except Exception:
+            # Best-effort mirror; the in-process copy remains authoritative
+            # for the owning worker.
+            pass
+
+    def _redis_get(self, job_id: str) -> dict[str, Any] | None:
+        r = self._redis()
+        if r is None:
+            return None
+        try:
+            raw = r.get(self._redis_key(job_id))
+        except Exception:
+            return None
+        if not raw:
+            return None
+        try:
+            return json.loads(raw)
+        except (TypeError, ValueError):
+            return None
+
     def create(self, dataset_name: str, total_files: int, source: str = "files") -> str:
         job_id = uuid.uuid4().hex[:12]
+        job = {
+            "job_id": job_id,
+            "dataset": dataset_name,
+            "source": source,
+            "status": "uploading",
+            "total_files": total_files,
+            "processed_files": 0,
+            "total_chunks": 0,
+            "events": [],
+            "result": None,
+            "error": None,
+            "created_at": time.time(),
+            "completed_at": None,
+        }
         with self._lock:
-            self._jobs[job_id] = {
-                "job_id": job_id,
-                "dataset": dataset_name,
-                "source": source,
-                "status": "uploading",
-                "total_files": total_files,
-                "processed_files": 0,
-                "total_chunks": 0,
-                "events": [],
-                "result": None,
-                "error": None,
-                "created_at": time.time(),
-                "completed_at": None,
-            }
+            self._jobs[job_id] = job
+        self._redis_set(job)
         return job_id
 
     def add_event(self, job_id: str, event: dict[str, Any]) -> None:
@@ -104,6 +182,7 @@ class _UploadJobTracker:
                 job["total_chunks"] += event.get("chunks", 0)
             elif status == "error":
                 job["processed_files"] += 1
+        self._redis_set(job)
 
     def complete(self, job_id: str, result: dict[str, Any] | None = None) -> None:
         with self._lock:
@@ -113,6 +192,7 @@ class _UploadJobTracker:
             job["status"] = "complete"
             job["result"] = result
             job["completed_at"] = time.time()
+        self._redis_set(job)
 
     def fail(self, job_id: str, error: str) -> None:
         with self._lock:
@@ -122,16 +202,21 @@ class _UploadJobTracker:
             job["status"] = "error"
             job["error"] = error
             job["completed_at"] = time.time()
+        self._redis_set(job)
 
     def get(self, job_id: str) -> dict[str, Any] | None:
         with self._lock:
             job = self._jobs.get(job_id)
-            if job is None:
-                return None
+        if job is not None:
             return dict(job)
+        return self._redis_get(job_id)
 
     def cleanup_old(self, max_age_seconds: int = 3600) -> None:
-        """Remove completed jobs older than *max_age_seconds*."""
+        """Remove completed jobs older than *max_age_seconds*.
+
+        Only the in-process copy is pruned here; Redis keys expire via their
+        own TTL so another worker can still answer a poll for them.
+        """
         now = time.time()
         with self._lock:
             stale = [
@@ -362,17 +447,20 @@ def _unlock_client_id(request: Request) -> str:
     """Return a per-user identifier for the unlock cache.
 
     Prefers the authenticated user identity injected by oauth2-proxy
-    (``X-Auth-Request-Email`` / ``X-Auth-Request-User``), then falls back
-    to the socket peer — for deployments without an auth proxy.
+    (``X-Auth-Request-Email`` / ``X-Auth-Request-User``) — but only when
+    ``RAG_TRUST_PROXY_IDENTITY`` confirms an enforcing proxy sits in front
+    of this server (the headers are client-spoofable otherwise) — then
+    falls back to the socket peer for deployments without an auth proxy.
 
     ``X-Forwarded-For`` is deliberately NOT used: it is client-supplied and
     spoofable, so trusting it would let a caller impersonate another user's
     unlock cache entry (and its cached plaintext password).
     """
-    for header in ("X-Auth-Request-Email", "X-Auth-Request-User", "X-Email", "X-User"):
-        val = request.headers.get(header)
-        if val:
-            return val.strip()
+    if _TRUST_PROXY_IDENTITY:
+        for header in ("X-Auth-Request-Email", "X-Auth-Request-User", "X-Email", "X-User"):
+            val = request.headers.get(header)
+            if val:
+                return val.strip()
     client = request.client
     return client.host if client else "unknown"
 
@@ -534,7 +622,7 @@ def _verify_media_token(dataset_name: str, rel_path: str, token: str) -> bool:
     return False
 
 
-def _require_dataset_password(
+async def _require_dataset_password(
     dm: DatasetManager,
     name: str,
     password: str | None,
@@ -545,15 +633,21 @@ def _require_dataset_password(
 
     If *request* is provided, the unlock cache is also checked so that a
     previously-unlocked session can skip the password.
+
+    The blocking parts (the NFS meta read in ``has_password`` and the
+    PBKDF2-600k hashing in ``verify_password`` — ~0.2–0.5s of pure CPU) run
+    in ``sync_pool``: hashing on the event loop stalled every concurrent
+    request for the duration of each attempt.
     """
-    if not dm.has_password(name):
+    loop = asyncio.get_running_loop()
+    if not await loop.run_in_executor(sync_pool, dm.has_password, name):
         return
     cid = _unlock_client_id(request) if request is not None else "unknown"
 
     # 1. If a password was supplied, verify and cache it
     if password:
         _check_pw_throttle(cid)
-        if dm.verify_password(name, password):
+        if await loop.run_in_executor(sync_pool, dm.verify_password, name, password):
             _pw_reset_failures(cid)
             if request is not None:
                 _unlock_cache_set(name, cid, password)
@@ -579,9 +673,31 @@ def _require_dataset_password(
 # FastAPI app
 # ---------------------------------------------------------------------------
 
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Run startup initialisation, then serve.
+
+    Replaces the deprecated ``@app.on_event("startup")`` hook (removed in
+    FastAPI 0.99+).  ``_eager_init`` is defined later in this module; the
+    reference resolves lazily when the lifespan actually runs at startup.
+    """
+    if not _RAG_API_KEY:
+        logger.warning(
+            "RAG_API_KEY is not set: the REST API is unauthenticated. "
+            "Admin endpoints (/api/admin/*), dataset deletion/update and any "
+            "dataset without a password are reachable by anyone who can "
+            "reach this server — set RAG_API_KEY (helm: security.apiKey) or "
+            "restrict access at the ingress."
+        )
+    await _eager_init()
+    yield
+
+
 app = FastAPI(
     title="Multimodal RAG Dataset Manager",
-    version="1.0.0",
+    version=__version__,
+    lifespan=_lifespan,
 )
 
 
@@ -599,6 +715,15 @@ async def _embedder_mismatch_handler(request: Request, exc: EmbedderMismatchErro
 # password/token protected anyway) and staged-file serving are exempt.
 # With the key set, interactive docs (/docs) are effectively disabled.
 _RAG_API_KEY = os.environ.get("RAG_API_KEY", "")
+
+# Identity headers (X-Auth-Request-Email / X-Auth-Request-User / X-Email /
+# X-User) are client-supplied unless an enforcing auth proxy overwrites them
+# on every request.  They are only honoured for unlock-cache scoping and the
+# password-failure throttle when RAG_TRUST_PROXY_IDENTITY is set (helm:
+# security.trustProxyIdentity) — otherwise the socket peer is used, so a
+# caller cannot rotate fake identity headers to hijack another user's unlock
+# or bypass the brute-force throttle.
+_TRUST_PROXY_IDENTITY = os.environ.get("RAG_TRUST_PROXY_IDENTITY", "").lower() in ("1", "true", "yes")
 
 # Periodic embedder liveness monitor.  The embedder is the only required
 # model; it is probed once per minute in the background and the result is
@@ -651,8 +776,26 @@ def _is_public_path(path: str, endpoint: Any = None) -> bool:
 async def _api_key_auth(request: Request, call_next):
     if not _RAG_API_KEY:
         return await call_next(request)
+    # Resolve the matched endpoint EXPLICITLY.  An http middleware runs
+    # BEFORE routing, so scope["route"] is not set here — relying on it made
+    # every endpoint-name exemption silently fail the moment auth was
+    # enabled (media serving / staged media / everything exempt 401'd).
+    endpoint = None
     route = request.scope.get("route")
-    endpoint = getattr(route, "endpoint", None) if route is not None else None
+    if route is not None:
+        endpoint = getattr(route, "endpoint", None)
+    else:
+        from starlette.routing import Match
+
+        match_scope = {"type": "http", "path": request.url.path, "method": request.method}
+        for r in app.routes:
+            try:
+                match, _ = r.matches(match_scope)
+            except Exception:
+                continue
+            if match == Match.FULL:
+                endpoint = getattr(r, "endpoint", None)
+                break
     if _is_public_path(request.url.path, endpoint):
         return await call_next(request)
     key = request.headers.get("X-RAG-Api-Key") or ""
@@ -711,7 +854,6 @@ def _reload_models() -> None:
     )
 
 
-@app.on_event("startup")
 async def _eager_init() -> None:
     """Pre-initialise the DatasetManager before accepting traffic.
 
@@ -959,7 +1101,7 @@ async def api_verify_dataset_password(name: str, request: Request, body: dict[st
         dm.get_dataset(name, sync_count=False)  # ensure dataset exists
         # Pass *request* so the failure throttle is scoped to the client,
         # not collapsed into the shared "unknown" bucket.
-        _require_dataset_password(dm, name, body.get("password", ""), request)
+        await _require_dataset_password(dm, name, body.get("password", ""), request)
         return {"status": "ok", "verified": True}
     except FileNotFoundError:
         raise HTTPException(404, f"Dataset '{name}' not found")
@@ -980,12 +1122,13 @@ async def api_unlock_dataset(name: str, request: Request, body: dict[str, Any] =
     duration.
     """
     dm = await get_manager_async()
+    loop = asyncio.get_running_loop()
     try:
-        dm.get_dataset(name, sync_count=False)
+        await loop.run_in_executor(sync_pool, dm.get_dataset, name, False)
     except FileNotFoundError:
         raise HTTPException(404, f"Dataset '{name}' not found")
 
-    if not dm.has_password(name):
+    if not await loop.run_in_executor(sync_pool, dm.has_password, name):
         return {"status": "ok", "message": f"Dataset '{name}' is not password protected — nothing to unlock."}
 
     password = body.get("password", "")
@@ -994,7 +1137,8 @@ async def api_unlock_dataset(name: str, request: Request, body: dict[str, Any] =
 
     cid = _unlock_client_id(request)
     _check_pw_throttle(cid)
-    if not dm.verify_password(name, password):
+    # PBKDF2-600k: ~0.2–0.5s of pure CPU — must not run on the event loop.
+    if not await loop.run_in_executor(sync_pool, dm.verify_password, name, password):
         _pw_record_failure(cid)
         raise HTTPException(403, f"Incorrect password for dataset '{name}'")
     _pw_reset_failures(cid)
@@ -1018,8 +1162,9 @@ async def api_unlock_dataset(name: str, request: Request, body: dict[str, Any] =
 async def api_lock_dataset(name: str, request: Request):
     """Immediately revoke the unlock for a dataset (if any)."""
     dm = await get_manager_async()
+    loop = asyncio.get_running_loop()
     try:
-        dm.get_dataset(name, sync_count=False)
+        await loop.run_in_executor(sync_pool, dm.get_dataset, name, False)
     except FileNotFoundError:
         raise HTTPException(404, f"Dataset '{name}' not found")
 
@@ -1046,7 +1191,7 @@ async def api_media_token(name: str, request: Request):
     password = request.query_params.get("password", "")
     x_password = request.headers.get("X-Dataset-Password", "")
     try:
-        _require_dataset_password(dm, name, (x_password or password) or None, request)
+        await _require_dataset_password(dm, name, (x_password or password) or None, request)
     except FileNotFoundError:
         raise HTTPException(404, f"Dataset '{name}' not found")
     return {"token": _sign_media_token(name, "*"), "ttl_seconds": _MEDIA_TOKEN_TTL}
@@ -1074,7 +1219,7 @@ async def api_get_dataset(
     """Get metadata for a single dataset."""
     dm = await get_manager_async()
     try:
-        _require_dataset_password(dm, name, x_dataset_password, request)
+        await _require_dataset_password(dm, name, x_dataset_password, request)
         loop = asyncio.get_running_loop()
         meta = await loop.run_in_executor(sync_pool, dm.get_dataset, name)
         return {"dataset": meta}
@@ -1083,10 +1228,21 @@ async def api_get_dataset(
 
 
 @app.patch("/api/datasets/{name}")
-async def api_update_dataset(name: str, body: dict[str, Any] = Body(...)):
-    """Update dataset metadata (e.g. description)."""
+async def api_update_dataset(
+    name: str,
+    request: Request,
+    body: dict[str, Any] = Body(...),
+    x_dataset_password: str | None = Header(None, alias="X-Dataset-Password"),
+):
+    """Update dataset metadata (e.g. description).
+
+    Password-protected datasets require the ``X-Dataset-Password`` header
+    (or a cached unlock) — metadata changes must not be possible for
+    callers who cannot read the dataset.
+    """
     dm = await get_manager_async()
     try:
+        await _require_dataset_password(dm, name, x_dataset_password, request)
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(sync_pool, dm.update_dataset, name, body)
         return {"status": "ok", "updated": name}
@@ -1095,10 +1251,19 @@ async def api_update_dataset(name: str, body: dict[str, Any] = Body(...)):
 
 
 @app.delete("/api/datasets/{name}")
-async def api_delete_dataset(name: str):
-    """Delete a dataset and its Qdrant collection."""
+async def api_delete_dataset(
+    name: str,
+    request: Request,
+    x_dataset_password: str | None = Header(None, alias="X-Dataset-Password"),
+):
+    """Delete a dataset and its Qdrant collection.
+
+    Password-protected datasets require the ``X-Dataset-Password`` header
+    (or a cached unlock) — deleting must not be easier than reading.
+    """
     try:
         dm = await get_manager_async()
+        await _require_dataset_password(dm, name, x_dataset_password, request)
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(sync_pool, dm.delete_dataset, name)
         return {"status": "ok", "deleted": name}
@@ -1133,12 +1298,11 @@ async def api_add_documents(
 
     try:
         dm = await get_manager_async()
-        _require_dataset_password(dm, name, x_dataset_password, request)
-        loop = asyncio.get_running_loop()
+        await _require_dataset_password(dm, name, x_dataset_password, request)
         warnings: list[str] = []
         token = _ingest_warnings.set(warnings)
         try:
-            ids = await loop.run_in_executor(sync_pool, dm.add_documents, name, payload)
+            ids = await _submit_with_context(sync_pool, dm.add_documents, name, payload)
         finally:
             _ingest_warnings.reset(token)
         resp = {"status": "ok", "stored_ids": ids, "count": len(ids)}
@@ -1166,9 +1330,10 @@ async def api_upload_file(
     as vector entries in the dataset's Qdrant collection.
     """
     dm = await get_manager_async()
+    loop = asyncio.get_running_loop()
     try:
-        _require_dataset_password(dm, name, password or None, request)
-        dm.get_dataset(name, sync_count=False)
+        await _require_dataset_password(dm, name, password or None, request)
+        await loop.run_in_executor(sync_pool, dm.get_dataset, name, False)
     except FileNotFoundError:
         raise HTTPException(404, f"Dataset '{name}' not found")
 
@@ -1183,11 +1348,10 @@ async def api_upload_file(
         finally:
             tmp.close()
 
-        loop = asyncio.get_running_loop()
         warnings: list[str] = []
         token = _ingest_warnings.set(warnings)
         try:
-            result = await loop.run_in_executor(sync_pool, dm.add_file, name, tmp_path, file.filename)
+            result = await _submit_with_context(sync_pool, dm.add_file, name, tmp_path, file.filename)
         finally:
             _ingest_warnings.reset(token)
         _record_upload_history(
@@ -1228,9 +1392,10 @@ async def api_upload_files_batch(
     every 2-3 seconds for progress updates.
     """
     dm = await get_manager_async()
+    loop = asyncio.get_running_loop()
     try:
-        _require_dataset_password(dm, name, password or None, request)
-        dm.get_dataset(name, sync_count=False)
+        await _require_dataset_password(dm, name, password or None, request)
+        await loop.run_in_executor(sync_pool, dm.get_dataset, name, False)
     except FileNotFoundError:
         raise HTTPException(404, f"Dataset '{name}' not found")
 
@@ -1283,8 +1448,7 @@ async def api_upload_files_batch(
                 except Exception:
                     logger.debug("Suppressed exception", exc_info=True)
 
-    loop = asyncio.get_running_loop()
-    loop.run_in_executor(None, _process)
+    _submit_with_context(None, _process)
     _ingest_warnings.reset(warnings_token)
 
     return {"job_id": job_id, "status": "uploading", "total_files": len(file_entries)}
@@ -1307,9 +1471,10 @@ async def api_upload_urls_batch(
         raise HTTPException(400, "Field 'urls' must be a non-empty array of URL strings")
 
     dm = await get_manager_async()
+    loop = asyncio.get_running_loop()
     try:
-        _require_dataset_password(dm, name, x_dataset_password, request)
-        dm.get_dataset(name, sync_count=False)
+        await _require_dataset_password(dm, name, x_dataset_password, request)
+        await loop.run_in_executor(sync_pool, dm.get_dataset, name, False)
     except FileNotFoundError:
         raise HTTPException(404, f"Dataset '{name}' not found")
 
@@ -1336,8 +1501,7 @@ async def api_upload_urls_batch(
             ]
             _record_upload_history(name, failed_files, "urls")
 
-    loop = asyncio.get_running_loop()
-    loop.run_in_executor(None, _process)
+    _submit_with_context(None, _process)
     _ingest_warnings.reset(warnings_token)
 
     return {"job_id": job_id, "status": "uploading", "total_files": len(urls)}
@@ -1358,7 +1522,7 @@ async def api_upload_status(
     """
     dm = await get_manager_async()
     try:
-        _require_dataset_password(dm, name, x_dataset_password, request)
+        await _require_dataset_password(dm, name, x_dataset_password, request)
     except FileNotFoundError:
         raise HTTPException(404, f"Dataset '{name}' not found")
 
@@ -1391,7 +1555,7 @@ async def api_search(
     """
     dm = await get_manager_async()
     try:
-        _require_dataset_password(dm, name, x_dataset_password, request)
+        await _require_dataset_password(dm, name, x_dataset_password, request)
         loop = asyncio.get_running_loop()
         results = await loop.run_in_executor(
             sync_pool,
@@ -1449,9 +1613,24 @@ async def api_search_multimodal(
     use_reranker = body.get("use_reranker", False)
     reranker_top_k = body.get("reranker_top_k", 3)
 
+    # Query-time SSRF guard: remote media URLs in the query are fetched
+    # server-side by the embedder, so apply the same host policy as ingest
+    # (loopback is allowed — clients legitimately pass the server's own
+    # media URLs back).
+    if isinstance(query, dict):
+        try:
+            for media_key in ("image", "video", "audio"):
+                value = query.get(media_key)
+                urls = value if isinstance(value, list) else [value]
+                for u in urls:
+                    if isinstance(u, str):
+                        _check_media_url_policy(u)
+        except ValueError as exc:
+            raise HTTPException(400, f"Query media rejected: {exc}")
+
     dm = await get_manager_async()
     try:
-        _require_dataset_password(dm, name, password, request)
+        await _require_dataset_password(dm, name, password, request)
         loop = asyncio.get_running_loop()
         results = await loop.run_in_executor(
             sync_pool,
@@ -1480,10 +1659,11 @@ async def api_list_documents(
     """List stored document payloads in a dataset."""
     dm = await get_manager_async()
     try:
-        _require_dataset_password(dm, name, x_dataset_password, request)
+        await _require_dataset_password(dm, name, x_dataset_password, request)
         loop = asyncio.get_running_loop()
         docs = await loop.run_in_executor(sync_pool, dm.list_documents, name, limit)
-        total = dm.get_dataset(name, sync_count=False).get("document_count", 0)
+        _meta = await loop.run_in_executor(sync_pool, dm.get_dataset, name, False)
+        total = _meta.get("document_count", 0)
         entries = [{"id": doc_id, "payload": payload} for doc_id, payload in docs]
         return {"documents": entries, "count": total}
     except FileNotFoundError:
@@ -1499,9 +1679,10 @@ async def api_delete_document(
 ):
     """Delete a single document from a dataset by its point ID."""
     dm = await get_manager_async()
+    loop = asyncio.get_running_loop()
     try:
-        _require_dataset_password(dm, name, x_dataset_password, request)
-        dm.get_dataset(name, sync_count=False)
+        await _require_dataset_password(dm, name, x_dataset_password, request)
+        await loop.run_in_executor(sync_pool, dm.get_dataset, name, False)
     except FileNotFoundError:
         raise HTTPException(404, f"Dataset '{name}' not found")
     try:
@@ -1611,9 +1792,10 @@ async def api_export_dataset(
     (``POST /batch-files``), or a fresh ingest from ``files/``.
     """
     dm = await get_manager_async()
+    loop = asyncio.get_running_loop()
     try:
-        _require_dataset_password(dm, name, x_dataset_password or None or password or None, request)
-        dm.get_dataset(name, sync_count=False)
+        await _require_dataset_password(dm, name, x_dataset_password or None or password or None, request)
+        await loop.run_in_executor(sync_pool, dm.get_dataset, name, False)
     except FileNotFoundError:
         raise HTTPException(404, f"Dataset '{name}' not found")
 
@@ -1635,6 +1817,121 @@ async def api_export_dataset(
         media_type="application/gzip",
         headers={
             "Content-Disposition": f'attachment; filename="{name}.tar.gz"',
+        },
+    )
+
+
+def _documents_download_stream(dm: DatasetManager, name: str, fmt: str):
+    """Yield a documents-only download for *name* — no binary files.
+
+    ``fmt="jsonl"``: one JSON object per line — ``{"id", "text", "metadata"}``
+    — full fidelity for scripts/re-import.  ``fmt="md"``: human-readable
+    Markdown (source/page heading + text), convenient for reading a dataset
+    such as long-term memories.  Heavy tier-3 base64 media keys are stripped
+    (same policy as search results); tier-2 ``preprocessed_*`` file refs are
+    kept so media stays locatable.  Paginated Qdrant scroll — no memory
+    blow-up on large collections.
+    """
+    rag = dm._get_rag(name)
+    vs = rag.vector_store
+    if vs is None or isinstance(vs, dict):
+        return
+    client = vs._client  # type: ignore[attr-defined]
+    coll = vs.collection_name  # type: ignore[attr-defined]
+
+    def _clean_meta(meta: dict[str, Any]) -> dict[str, Any]:
+        out = dict(meta or {})
+        for modality in ("image", "video"):
+            val = out.get(modality)
+            heavy = isinstance(val, str) and val.startswith("data:")
+            if not heavy and isinstance(val, list):
+                heavy = any(isinstance(v, str) and v.startswith("data:") for v in val)
+            if heavy:
+                out.pop(modality, None)
+        return out
+
+    def _render(doc: dict[str, Any]) -> str:
+        payload = doc.get("payload") or {}
+        meta = _clean_meta(payload.get("metadata") or {})
+        text = payload.get("page_content", "") or ""
+        if fmt == "jsonl":
+            return json.dumps(
+                {"id": doc.get("id"), "text": text, "metadata": meta},
+                default=str,
+                ensure_ascii=False,
+            )
+        # Markdown: heading from source/title, then the text, then media refs
+        heading = meta.get("source") or meta.get("title") or doc.get("id", "")
+        extras = []
+        if meta.get("page") not in (None, ""):
+            extras.append(f"page {meta['page']}")
+        if meta.get("kind"):
+            extras.append(str(meta["kind"]))
+        if extras:
+            heading = f"{heading} ({', '.join(extras)})"
+        lines = [f"## {heading}", "", text if text else "_(no text)_"]
+        for modality in ("image", "video", "audio"):
+            ref = meta.get(modality) or meta.get(f"preprocessed_{modality}")
+            if isinstance(ref, str) and ref:
+                lines.extend(["", f"- {modality}: `{ref}`"])
+        return "\n".join(lines)
+
+    offset = None
+    while True:
+        pts, offset = client.scroll(
+            coll,
+            limit=500,
+            offset=offset,
+            with_payload=True,
+            with_vectors=False,
+        )
+        for pt in pts:
+            yield (_render({"id": str(pt.id), "payload": pt.payload}) + "\n").encode("utf-8")
+        if offset is None:
+            break
+
+
+@app.get("/api/datasets/{name}/documents/download")
+async def api_download_documents(
+    name: str,
+    request: Request,
+    format: str = Query("md", pattern="^(md|jsonl)$"),
+    password: str = Query(""),
+    x_dataset_password: str | None = Header(None, alias="X-Dataset-Password"),
+):
+    """Download every document in a dataset as a single file (no binaries).
+
+    ``format=md`` (default): human-readable Markdown — one ``##`` section per
+    document with source/page and the text; ideal for reading a memories
+    dataset.  ``format=jsonl``: ``{"id", "text", "metadata"}`` per line for
+    scripts/re-import.  Password-protected datasets require the
+    ``X-Dataset-Password`` header or ``?password=``.
+    """
+    dm = await get_manager_async()
+    loop = asyncio.get_running_loop()
+    try:
+        await _require_dataset_password(dm, name, x_dataset_password or password or None, request)
+        await loop.run_in_executor(sync_pool, dm.get_dataset, name, False)
+    except FileNotFoundError:
+        raise HTTPException(404, f"Dataset '{name}' not found")
+
+    fmt = "jsonl" if format == "jsonl" else "md"
+    iterator = iter(_documents_download_stream(dm, name, fmt))
+
+    async def _stream():
+        while True:
+            try:
+                chunk = await loop.run_in_executor(sync_pool, partial(next, iterator))
+            except StopIteration:
+                break
+            yield chunk
+
+    media_type = "application/x-ndjson" if fmt == "jsonl" else "text/markdown; charset=utf-8"
+    return StreamingResponse(
+        _stream(),
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{name}-documents.{fmt}"',
         },
     )
 
@@ -1671,7 +1968,7 @@ async def api_serve_file(
             raise HTTPException(403, "Invalid or expired media token")
     else:
         try:
-            _require_dataset_password(dm, name, password or x_dataset_password or None, request)
+            await _require_dataset_password(dm, name, password or x_dataset_password or None, request)
         except FileNotFoundError:
             raise HTTPException(404, f"Dataset '{name}' not found")
 
@@ -2617,14 +2914,22 @@ async def api_clear_upload_history(dataset: str | None = Query(None)) -> dict[st
 
 
 @app.post("/api/admin/datasets/{name}/migrate-tier-schema")
-async def api_migrate_tier_schema(name: str) -> dict[str, Any]:
+async def api_migrate_tier_schema(
+    name: str,
+    request: Request,
+    x_dataset_password: str | None = Header(None, alias="X-Dataset-Password"),
+) -> dict[str, Any]:
     """Migrate a dataset's Qdrant points to the three-tier media schema.
 
     Renames ``original_video`` → ``preprocessed_video``, derives tier-1
     ``original_*`` paths, and converts ``image``/``video`` ``file://`` refs
     to tier-3 base64 data URLs.  Idempotent.
+
+    Password-protected datasets require the ``X-Dataset-Password`` header
+    (or a cached unlock) — this rewrites the collection's payloads.
     """
     dm = await get_manager_async()
+    await _require_dataset_password(dm, name, x_dataset_password, request)
 
     def _do_migrate() -> dict[str, Any]:
         return dm.migrate_tier_schema(name)
@@ -2634,17 +2939,26 @@ async def api_migrate_tier_schema(name: str) -> dict[str, Any]:
 
 
 @app.post("/api/admin/datasets/{name}/recreate")
-async def api_recreate_dataset(name: str) -> dict[str, Any]:
+async def api_recreate_dataset(
+    name: str,
+    request: Request,
+    x_dataset_password: str | None = Header(None, alias="X-Dataset-Password"),
+) -> dict[str, Any]:
     """Rebuild a dataset's Qdrant collection from its on-disk files.
 
     Drops the existing collection (whose vectors were built with an older
     embedder) and re-ingests the dataset's original files with the
     currently configured embedder.  Returns a ``job_id`` immediately; poll
     ``GET /api/datasets/{name}/upload-status/{job_id}`` for progress.
+
+    Password-protected datasets require the ``X-Dataset-Password`` header
+    (or a cached unlock) — this drops and rebuilds the collection.
     """
     dm = await get_manager_async()
+    loop = asyncio.get_running_loop()
+    await _require_dataset_password(dm, name, x_dataset_password, request)
     try:
-        dm.get_dataset(name, sync_count=False)
+        await loop.run_in_executor(sync_pool, dm.get_dataset, name, False)
     except FileNotFoundError:
         raise HTTPException(404, f"Dataset '{name}' not found")
 
@@ -2687,6 +3001,17 @@ async def index():
             _HTML_INDEX = html_path.read_text(encoding="utf-8")
         else:
             _HTML_INDEX = "<html><body><h1>Frontend not found</h1></body></html>"
+    if _RAG_API_KEY:
+        # API-key auth is on: embed the key into the served page (as a meta
+        # tag the page's JS picks up) so the browser UI keeps working.  The
+        # page is public by design — it IS the auth boundary for browser
+        # users; direct/scripted API callers must still send X-RAG-Api-Key
+        # (or Authorization: Bearer) themselves.
+        return _HTML_INDEX.replace(
+            "</head>",
+            f'<meta name="rag-api-key" content="{_RAG_API_KEY}"></head>',
+            1,
+        )
     return _HTML_INDEX
 
 

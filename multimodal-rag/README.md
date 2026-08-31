@@ -242,7 +242,7 @@ The model will indeed need to know which dataset is susceptible to contain infor
 * Optional: Set a filter function to prevent Open WebUI throwing an error when attempting queries that include media files.
   * **This step is only useful if using a non-VLM as chat model, and planning to use images (or other media files) as part of input queries**
   * **Note: this workaround is absolutely unrelated to the RAG flow itself, but is required to bypass an Open WebUI limitation**. Similar workarounds can be expected when working with any other application (e.g. the conversational toolbox demo application only accepts voice or text as input, it can't use all features of the multimodal RAG MCP server either).
-  * Go to the Admin panel -> Functions, create a new function. Copy and paste the content of [extensions/openwebui-filter/filter_no_memory.py](./extensions/openwebui-filter/filter_no_memory.py) and click save.
+  * Go to the Admin panel -> Functions, create a new function. Copy and paste the content of [extensions/openwebui-filter/filter.py](./extensions/openwebui-filter/filter.py) and click save.
   * Make sure it is enabled globally:
  ![globally-enabled](images/globally-enabled.png)
 

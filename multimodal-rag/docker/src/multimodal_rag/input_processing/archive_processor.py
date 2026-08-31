@@ -50,6 +50,110 @@ def _is_safe_member(dest_dir: str, member_path: str) -> bool:
         return False
 
 
+def _unrar_list_names(path: str) -> list[str]:
+    """List a RAR archive's member names via the ``unrar`` CLI.
+
+    Used both to audit bounds when ``rarfile`` is unavailable (entry count +
+    traversal checks on every name) and before CLI fallback extraction.
+    """
+    import subprocess as sp
+
+    proc = sp.run(["unrar", "lb", "-y", path], capture_output=True, timeout=60)
+    if proc.returncode != 0:
+        raise ValueError(f"unrar could not list {path}: {proc.stderr[:200]!r}")
+    return [line for line in proc.stdout.decode("utf-8", "replace").splitlines() if line.strip()]
+
+
+def _unrar_extract(path: str, dest_dir: str) -> None:
+    """Last-resort RAR extraction via the ``unrar`` CLI.
+
+    The CLI gives no per-member extraction control, so the safety net is:
+    (1) list the members first and enforce the entry cap plus a traversal
+    check on every name, (2) after extraction, sweep the resulting tree
+    (:func:`_sweep_extracted_tree`) for symlink members and size-cap
+    violations, deleting it on any failure.  The caller's ``finally``
+    removes the extraction directory either way.
+    """
+    import subprocess as sp
+
+    names = _unrar_list_names(path)
+    if _ARCHIVE_MAX_ENTRIES > 0 and len(names) > _ARCHIVE_MAX_ENTRIES:
+        raise ValueError(f"Archive {path} contains more than ARCHIVE_MAX_ENTRIES ({_ARCHIVE_MAX_ENTRIES}) entries")
+    for name in names:
+        if not _is_safe_member(dest_dir, name):
+            raise ValueError(f"Archive member escapes the extraction directory: {name!r}")
+    proc = sp.run(["unrar", "x", "-y", path, dest_dir + "/"], capture_output=True, timeout=120)
+    if proc.returncode != 0:
+        raise ValueError(f"unrar failed for {path}: {proc.stderr[:200]!r}")
+
+
+def _sweep_extracted_tree(path: str, dest_dir: str) -> None:
+    """Post-extraction guard for archives extracted without per-member control.
+
+    Walks what actually landed in *dest_dir*: rejects symlink members (a
+    symlink planted by the archive can point anywhere on the filesystem),
+    enforces ``ARCHIVE_MAX_ENTRIES`` / ``ARCHIVE_MAX_MEMBER_BYTES`` /
+    ``ARCHIVE_MAX_TOTAL_BYTES`` on the actual extracted bytes, and raises
+    :class:`ValueError` on any violation (the caller's ``finally`` deletes
+    the whole tree).
+    """
+    dest = os.path.abspath(dest_dir)
+    total = 0
+    count = 0
+    for root, dirs, files in os.walk(dest, topdown=True):
+        for entry in dirs:
+            if os.path.islink(os.path.join(root, entry)):
+                raise ValueError(
+                    f"Archive {path} contains a symlink member ({os.path.relpath(os.path.join(root, entry), dest)})"
+                )
+        for entry in files:
+            full = os.path.join(root, entry)
+            if os.path.islink(full):
+                raise ValueError(f"Archive {path} contains a symlink member ({os.path.relpath(full, dest)})")
+            count += 1
+            if _ARCHIVE_MAX_ENTRIES > 0 and count > _ARCHIVE_MAX_ENTRIES:
+                raise ValueError(
+                    f"Archive {path} contains more than ARCHIVE_MAX_ENTRIES ({_ARCHIVE_MAX_ENTRIES}) entries"
+                )
+            size = os.path.getsize(full)
+            if _ARCHIVE_MAX_MEMBER_BYTES > 0 and size > _ARCHIVE_MAX_MEMBER_BYTES:
+                raise ValueError(
+                    f"Archive member exceeds ARCHIVE_MAX_MEMBER_BYTES ({size} bytes): {os.path.relpath(full, dest)}"
+                )
+            total += size
+            if _ARCHIVE_MAX_TOTAL_BYTES > 0 and total > _ARCHIVE_MAX_TOTAL_BYTES:
+                raise ValueError(f"Archive total exceeds ARCHIVE_MAX_TOTAL_BYTES ({_ARCHIVE_MAX_TOTAL_BYTES} bytes)")
+
+
+def _single_file_decompress(path: str, dest_dir: str, ext: str) -> None:
+    """Decompress a bare ``.gz`` / ``.bz2`` / ``.xz`` file (not a tar archive).
+
+    There is no reliable declared uncompressed size for these streams, so the
+    size cap is enforced while streaming: extraction aborts (and the file is
+    left truncated in the temp dir, which is deleted by the caller) once the
+    configured budget is exceeded.
+    """
+    import bz2
+    import gzip
+    import lzma
+
+    opener = {".gz": gzip.open, ".bz2": bz2.open, ".xz": lzma.open}[ext]
+    out_path = os.path.join(dest_dir, Path(path).stem or "file")
+    max_bytes = _ARCHIVE_MAX_TOTAL_BYTES or _ARCHIVE_MAX_MEMBER_BYTES or 0
+    written = 0
+    with opener(path, "rb") as src, open(out_path, "wb") as dst:  # type: ignore[operator]
+        while True:
+            chunk = src.read(1024 * 1024)
+            if not chunk:
+                break
+            written += len(chunk)
+            if max_bytes and written > max_bytes:
+                raise ValueError(
+                    f"Decompressed file exceeds the configured archive size cap ({max_bytes} bytes)"
+                )
+            dst.write(chunk)
+
+
 @dataclass
 class ArchiveProcessor:
     """Extract archives and hand every contained file to the caller's handler.
@@ -139,14 +243,29 @@ class ArchiveProcessor:
                     for member in rf.infolist():
                         _account(getattr(member, "file_size", 0) or 0)
             except Exception:
-                logger.warning("rar bounds check unavailable (%s) — extracting without size guard", path)
+                # rarfile missing OR could not read the archive — audit via
+                # the unrar CLI listing instead (names only: entry cap +
+                # traversal; sizes are enforced on the extracted bytes by
+                # _sweep_extracted_tree).
+                try:
+                    for name in _unrar_list_names(path):
+                        _account(0)
+                except FileNotFoundError:
+                    raise ValueError(
+                        f"Cannot process RAR archive {path}: neither the 'rarfile' "
+                        "package nor the 'unrar' binary is available"
+                    )
+        elif ext in (".gz", ".bz2", ".xz"):
+            # A bare .gz/.bz2/.xz is a single compressed file, not a tar
+            # archive: there is no reliable declared uncompressed size, so
+            # bounds are enforced during extraction (streamed byte cap in
+            # _single_file_decompress).
+            return
         else:
-            # tar / tar.gz / tar.bz2 / tar.xz (+ .tgz/.tbz2/.txz)
+            # .tar / .tgz / .tar.gz / .tar.bz2 / .tar.xz (+ .tgz/.tbz2/.txz)
             import tarfile
 
-            mode: Any = {"gz": "r:gz", "tgz": "r:gz", "bz2": "r:bz2", "tbz2": "r:bz2", "xz": "r:xz", "txz": "r:xz"}.get(
-                ext.lstrip("."), "r:"
-            )
+            mode: Any = {"tgz": "r:gz", "tbz2": "r:bz2", "txz": "r:xz"}.get(ext.lstrip("."), "r:")
             with tarfile.open(path, mode) as tf:
                 for member in tf.getmembers():
                     _account(member.size)
@@ -181,15 +300,17 @@ class ArchiveProcessor:
                             continue
                         rf.extract(member, dest_dir)
             except Exception:
-                logger.warning("rarfile extraction failed for %s, trying unrar", path)
-                import subprocess as sp
-
-                sp.run(
-                    ["unrar", "x", "-y", path, dest_dir + "/"],
-                    capture_output=True,
-                    timeout=120,
-                )
-        elif ext in (".gz", ".bz2", ".xz") or stem.endswith(".tar") or ext in (".tgz", ".tbz2", ".txz"):
+                logger.warning("rarfile extraction failed for %s, falling back to the unrar CLI", path)
+                _unrar_extract(path, dest_dir)
+            # Post-extraction guard for both paths: reject symlink members
+            # and enforce the size caps on the bytes that actually landed.
+            _sweep_extracted_tree(path, dest_dir)
+        elif ext in (".gz", ".bz2", ".xz"):
+            # Bare single-file compressed stream (not a tar) — decompress it
+            # with a streamed byte cap.  Previously these were handed to
+            # tarfile, which always failed on them.
+            _single_file_decompress(path, dest_dir, ext)
+        elif stem.endswith(".tar") or ext in (".tgz", ".tbz2", ".txz"):
             if ext in (".gz", ".tgz"):
                 _tar_extract(path, "r:gz", dest_dir)
             elif ext in (".bz2", ".tbz2"):

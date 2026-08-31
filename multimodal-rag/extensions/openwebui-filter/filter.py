@@ -143,6 +143,12 @@ class Filter:
             default="http://rag-mcp-server-api.mm-rag-mcp.svc.cluster.local",
             description="Base URL of the Multimodal RAG API server " "(used for the staging endpoint)",
         )
+        RAG_API_KEY: str = Field(
+            default="",
+            description="API key for the Multimodal RAG server, sent as "
+            "X-RAG-Api-Key on every request. Required when the server has "
+            "security.apiKey set (the charts ship a default one).",
+        )
         DATASET_NAME: str = Field(
             default="default",
             description="Fallback dataset injected into the hint when the "
@@ -557,7 +563,7 @@ class Filter:
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
                 files = {"file": (filename, data, mime or "application/octet-stream")}
-                resp = await client.post(url, files=files)
+                resp = await client.post(url, files=files, headers=self._rag_api_headers())
                 resp.raise_for_status()
                 payload = resp.json()
                 # Prefer the file:// URL (MCP shares the PVC); fall back
@@ -579,7 +585,7 @@ class Filter:
         url = f"{api}/api/datasets"
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.get(url)
+                resp = await client.get(url, headers=self._rag_api_headers())
                 resp.raise_for_status()
                 return resp.json().get("datasets")
         except Exception:
@@ -613,6 +619,16 @@ class Filter:
     def _memory_headers(self, user: Optional[dict]) -> dict[str, str]:
         pw = self._memory_password_for_user(user)
         return {"X-Dataset-Password": pw} if pw else {}
+
+    def _rag_api_headers(self, extra: Optional[dict] = None) -> dict[str, str]:
+        """Headers for RAG-API requests: the API key (when configured) plus
+        any per-call extras (dataset passwords etc.)."""
+        headers: dict[str, str] = {}
+        if self.valves.RAG_API_KEY:
+            headers["X-RAG-Api-Key"] = self.valves.RAG_API_KEY
+        if extra:
+            headers.update(extra)
+        return headers
 
     @staticmethod
     def _user_identifier(user: Optional[dict]) -> Optional[str]:
@@ -659,7 +675,7 @@ class Filter:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 resp = await client.get(
                     f"{api}/api/datasets/{dataset_name}",
-                    headers=self._memory_headers(user),
+                    headers=self._rag_api_headers(self._memory_headers(user)),
                 )
                 if resp.status_code == 200:
                     return True
@@ -675,6 +691,7 @@ class Filter:
                         "description": "Open WebUI long-term memory (auto-created)",
                         "password": user_pw or None,
                     },
+                    headers=self._rag_api_headers(),
                 )
                 if resp.status_code in (200, 201):
                     logger.info("Auto-created memory dataset '%s'", dataset_name)
@@ -707,7 +724,7 @@ class Filter:
         params = {"q": query[:500], "top_k": self.valves.MEMORY_RECALL_TOP_K}
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.get(url, params=params, headers=self._memory_headers(user))
+                resp = await client.get(url, params=params, headers=self._rag_api_headers(self._memory_headers(user)))
                 resp.raise_for_status()
                 results = resp.json().get("results", [])
         except Exception:
@@ -754,7 +771,7 @@ class Filter:
         api = self.valves.RAG_API_URL.rstrip("/")
         url = f"{api}/api/datasets/{dataset_name}/search"
         params = {"q": query[:500], "top_k": self.valves.SQL_LESSONS_RECALL_TOP_K}
-        headers = {"Content-Type": "application/json"}
+        headers = self._rag_api_headers({"Content-Type": "application/json"})
         if self.valves.SQL_LESSONS_PASSWORD:
             headers["X-Dataset-Password"] = self.valves.SQL_LESSONS_PASSWORD
         try:
@@ -773,7 +790,9 @@ class Filter:
             if isinstance(content, dict):
                 content = content.get("text", "")
             score = r.get("score", 0)
-            kind = r.get("kind", "")
+            # kind/tags may be top-level OR nested inside `content` (the
+            # server returns {content: {text, kind, ...}, score}).
+            kind = r.get("kind") or (r.get("content").get("kind", "") if isinstance(r.get("content"), dict) else "")
             if content:
                 head = f"[SQL LESSON {i + 1}] (score: {score:.4f})"
                 if kind:
@@ -893,7 +912,7 @@ class Filter:
         dataset_name = (self.valves.SQL_LESSONS_CANDIDATES_DATASET or "sql-lessons-candidates").strip()
         api = self.valves.RAG_API_URL.rstrip("/")
         store_url = f"{api}/api/datasets/{dataset_name}/documents"
-        headers = {"Content-Type": "application/json"}
+        headers = self._rag_api_headers({"Content-Type": "application/json"})
         if self.valves.SQL_LESSONS_PASSWORD:
             headers["X-Dataset-Password"] = self.valves.SQL_LESSONS_PASSWORD
 
@@ -999,7 +1018,7 @@ class Filter:
         }
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
-                resp = await client.post(store_url, json=[doc], headers=self._memory_headers(user))
+                resp = await client.post(store_url, json=[doc], headers=self._rag_api_headers(self._memory_headers(user)))
                 resp.raise_for_status()
         except Exception:
             logger.warning("Memory store failed", exc_info=True)
