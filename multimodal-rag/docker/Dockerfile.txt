@@ -21,7 +21,7 @@ ENV PYTHONPATH=/app/src
 FROM python:3.14-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates ffmpeg && \
+    curl ca-certificates ffmpeg tesseract-ocr && \
     rm -rf /var/lib/apt/lists/*
 
 # Create non-root user (UID/GID 1000)

@@ -4,15 +4,17 @@ import contextvars
 import os
 import re
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from functools import cached_property
 from io import BytesIO
-from typing import Any
+from pathlib import Path
+from typing import Any, NamedTuple
 
 import numpy as np
 
+import multimodal_rag.utils.bm25 as bm25_lane
 from multimodal_rag.utils.general_tools import (
     cosine_sim,
     list_chunker,
@@ -36,6 +38,8 @@ from multimodal_rag.vector_store import (
     InMemoryVectorStore,
     QdrantVectorStore,
     VectorStore,
+    ensure_search_payload_indexes,
+    filters_to_predicate,
 )
 
 logger = logging.getLogger(__name__)
@@ -62,6 +66,202 @@ def _record_ingest_warning(msg: str) -> None:
     bucket = _ingest_warnings.get()
     if bucket is not None:
         bucket.append(msg)
+
+
+# ---------------------------------------------------------------------------
+# Federated multi-dataset search helpers (roadmap feature 8)
+# ---------------------------------------------------------------------------
+
+
+class _DedupItem(NamedTuple):
+    """One scored result travelling through the generic dedup pass.
+
+    ``doc``/``score`` are the retrieval pair; ``dataset`` is ``None`` for the
+    single-dataset twin collapse and the dataset name for the federated merge
+    (where the identity key is dataset-qualified).
+    """
+
+    doc: Any
+    score: float
+    dataset: str | None = None
+
+
+def federated_identity_key(dataset: str, doc: Any) -> tuple | None:
+    """Dataset-qualified twin-identity key: ``(dataset, source, page, chunk_index, time-window)``.
+
+    The same identity ``MultimodalRAG._dedup_twins`` uses inside one dataset,
+    extended with the dataset name so two datasets that happen to store files
+    under the same path (or literally the same backup restored twice) are NOT
+    collapsed against each other — each hit keeps its own dataset label.
+    Returns ``None`` for docs that cannot collide (not a dict, or no source).
+    """
+    if isinstance(doc, dict):
+        src = doc.get("source", "")
+        if src:
+            return (
+                dataset,
+                src,
+                doc.get("page"),
+                doc.get("chunk_index"),
+                (doc.get("timestamp_start"), doc.get("timestamp_end")),
+            )
+    return None
+
+
+def resolve_federated_targets(
+    dm: Any,
+    datasets: "list[str] | str",
+    is_unlocked: "Callable[[str], bool] | None" = None,
+) -> tuple[list[str], list[dict[str, str]], list[dict[str, str]]]:
+    """Resolve a federated-search ``datasets`` argument to concrete names.
+
+    Returns ``(targets, skipped, errors)``:
+
+    * ``targets`` — dataset names to search, de-duplicated, order preserved.
+    * ``skipped`` — password-protected datasets NOT unlocked for this
+      caller, as ``{"dataset": …, "reason": …}`` notes.  Federated search
+      deliberately accepts no ``password`` argument (the v3.0.0 decision to
+      keep passwords out of tool signatures) — a locked dataset is skipped
+      with a note, never a hard failure.
+    * ``errors`` — named datasets that do not exist, as
+      ``{"dataset": …, "error": …}`` notes.
+
+    ``datasets`` accepts a list of names, a single name, or the string
+    ``"all"`` — which expands to every dataset that is readable WITHOUT a
+    password: no password set, or unlocked per the *is_unlocked* predicate
+    (the caller's in-process unlock cache, scoped to the requesting client).
+    Locked datasets are silently absent from the ``"all"`` expansion (they
+    are listed under ``skipped`` so the caller knows why results are
+    missing).
+
+    ``dm`` needs only ``get_dataset(name)``, ``list_datasets()`` and
+    ``has_password(name)`` — the ``DatasetManager`` API.  Raises
+    ``ValueError`` when *datasets* is none of the accepted shapes.
+
+    Blocking I/O (NFS meta reads) — callers offload this to a thread pool.
+    """
+    check_unlocked = is_unlocked or (lambda name: False)
+
+    targets: list[str] = []
+    skipped: list[dict[str, str]] = []
+    errors: list[dict[str, str]] = []
+
+    def _consider(name: str, *, from_all: bool = False) -> None:
+        name = (name or "").strip()
+        if not name or name in targets:
+            return
+        try:
+            dm.get_dataset(name, sync_count=False)
+        except FileNotFoundError:
+            if not from_all:
+                errors.append({"dataset": name, "error": f"Dataset '{name}' not found."})
+            return
+        if dm.has_password(name) and not check_unlocked(name):
+            skipped.append(
+                {
+                    "dataset": name,
+                    "reason": (
+                        "Password protected and not unlocked for this session "
+                        "(unlock it first; federated search accepts no password argument)."
+                    ),
+                }
+            )
+            return
+        targets.append(name)
+
+    if isinstance(datasets, str):
+        if datasets.strip().lower() == "all":
+            for meta in dm.list_datasets():
+                _consider(str(meta.get("name", "")), from_all=True)
+        else:
+            _consider(datasets)
+    elif isinstance(datasets, (list, tuple)):
+        for entry in datasets:
+            if isinstance(entry, str) and entry.strip().lower() == "all":
+                for meta in dm.list_datasets():
+                    _consider(str(meta.get("name", "")), from_all=True)
+            elif isinstance(entry, str):
+                _consider(entry)
+            elif entry is not None:
+                errors.append({"dataset": str(entry), "error": "Dataset names must be strings."})
+    else:
+        raise TypeError("'datasets' must be a list of dataset names or the string 'all'.")
+
+    return targets, skipped, errors
+
+
+def dedup_federated_results(entries: list[tuple[str, Any, float]]) -> list[tuple[str, Any, float]]:
+    """Cross-dataset twin/text dedup over a merged multi-dataset pool.
+
+    *entries* are ``(dataset_name, doc, score)`` triples.  Collapsing uses the
+    dataset-qualified identity key (:func:`federated_identity_key`), so twins
+    and duplicate chunks collapse *within* a dataset exactly as
+    ``MultimodalRAG._dedup_twins`` does, while the same identity in two
+    different datasets survives as two labelled hits.
+    """
+    if not entries:
+        return []
+    items = [_DedupItem(doc=doc, score=score, dataset=ds) for ds, doc, score in entries]
+    out = MultimodalRAG._dedup_by_identity(items, lambda item: federated_identity_key(item.dataset, item.doc))
+    return [(item.dataset, item.doc, item.score) for item in out]
+
+
+def merge_federated_results(
+    entries: list[tuple[str, Any, float]],
+    *,
+    dedup: bool = True,
+) -> list[tuple[str, Any, float]]:
+    """Merge per-dataset result pools into one ranked, dataset-labelled pool.
+
+    Dedups on the dataset-qualified identity key (optional) and sorts by
+    score, descending — scores are embedder cosine similarities from the same
+    server-side embedder, so they are comparable across datasets.  Ties keep
+    the caller's dataset order (Python's stable sort).
+    """
+    if not entries:
+        return []
+    if dedup:
+        entries = dedup_federated_results(entries)
+    return sorted(entries, key=lambda e: e[2], reverse=True)
+
+
+async def _arerank_with(
+    rank: Any,
+    extract_doc: "Callable[[Any], Any]",
+    query: str | dict[str, Any],
+    results: list[tuple[Any, float]],
+    reranker_top_k: int = 3,
+) -> list[tuple[Any, float]]:
+    """Cross-encoder rerank over ``(doc, score)`` pairs using an existing
+    reranker instance (``rank.arerank``) and doc extractor.
+
+    The shared implementation behind :meth:`MultimodalRAG._arerank_results`
+    (single dataset) and the federated merged-pool rerank in the MCP/API
+    servers — the reranker is content-based, so it does not care which
+    dataset a candidate came from.
+    """
+    reranked = await rank.arerank(query, [extract_doc(d) for d, _ in results])
+    # reranked[0] is a list of result dicts, e.g.
+    # [{"index": 2, "relevance_score": 0.95, ...},
+    #  {"index": 0, "relevance_score": 0.87, ...}]
+    # Map each index back to its reranker score, then attach
+    # both the embedding score and the reranker score to each doc.
+    score_by_idx: dict[int, float] = {}
+    for r in reranked[0] if reranked else []:
+        score_by_idx[r.get("index", -1)] = r.get("relevance_score", r.get("score", 0.0))
+    paired: list[tuple[Any, float]] = []
+    for i, (d, emb_score) in enumerate(results):
+        rerank_score = score_by_idx.get(i, 0.0)
+        if isinstance(d, dict):
+            # Copy the doc before annotating so we never mutate the
+            # caller's dicts (e.g. the `documents=` path passes the
+            # caller's own objects through here).
+            d = dict(d)
+            d["_embedding_score"] = round(emb_score, 4)
+            d["_reranker_score"] = round(rerank_score, 4)
+        paired.append((d, rerank_score))
+    paired.sort(key=lambda x: x[1], reverse=True)
+    return paired[:reranker_top_k]
 
 
 def _qdrant_prefer_grpc() -> bool:
@@ -228,6 +428,112 @@ def _strip_embed_caption(doc: dict, supported: set[str]) -> dict:
 def _has_caption(text: str) -> bool:
     """True if *text* contains any ingest-time VLM/ASR caption line."""
     return bool(_CAPTION_LINE_RE.search(text or ""))
+
+
+# ---------------------------------------------------------------------------
+# Hybrid dense + BM25 retrieval — ingest-side helpers (roadmap feature 2)
+# ---------------------------------------------------------------------------
+# The lexical lane is computed client-side per stored document and stored as
+# a named sparse vector next to the dense one; the per-dataset df counts it
+# is weighted with live in a ``.bm25_stats.json`` sidecar (dataset_manager).
+
+
+def _bm25_indexable_text(text: str) -> str:
+    """The text worth indexing in the BM25 lane for one document.
+
+    Bare media placeholders ("[Image: x.jpg]", "[Video: v.mp4] [0s – 32s]")
+    carry no tokens worth indexing and are stripped; ingest-time VLM/ASR
+    caption text is KEPT — it is the only searchable content of caption
+    twins and exactly what text queries match against.  (This differs from
+    :func:`_has_real_text`, which strips captions too: that gate decides
+    embedding inputs, this one decides lexical index inputs.)
+    """
+    return _MEDIA_PLACEHOLDER_RE.sub("", text or "").strip()
+
+
+def _detect_dense_vector_name(client: Any, collection_name: str) -> str | None:
+    """Name of the dense vector of an existing collection, or ``None``.
+
+    Legacy collections (created before the hybrid schema) hold a single
+    *unnamed* default vector — Qdrant reports that as a bare
+    ``VectorParams`` rather than a mapping — and must be queried flat, with
+    ``using=None``.  Named-vector collections (hybrid schema) report a dict
+    whose first entry is the dense lane (``"dense"``).
+    """
+    try:
+        vectors = client.get_collection(collection_name).config.params.vectors
+        if isinstance(vectors, dict) and vectors:
+            return next(iter(vectors))
+    except Exception as exc:
+        logger.debug("Vector-name detection failed for %s: %s", collection_name, exc)
+    return None
+
+
+def _bm25_ingest_context(vs: VectorStore) -> dict[str, Any] | None:
+    """Per-ingest BM25 state, or ``None`` when the lexical lane doesn't apply.
+
+    Applies only to Qdrant stores whose collection is bm25-capable (named
+    ``dense`` + ``bm25`` vectors — see ``QdrantVectorStore.supports_hybrid``)
+    with a stats sidecar path and ``RAG_HYBRID_SEARCH`` on.  The df stats
+    snapshot is loaded once per ingest call and updated in memory per
+    sub-batch; ``dirty`` accumulates the per-doc term counts so the sidecar
+    is persisted ONCE at the end (serialising the whole vocabulary per
+    sub-batch would repeat the O(n²) write pattern the .hashes.json
+    deferred-write fix removed).
+    """
+    if not isinstance(vs, QdrantVectorStore):
+        return None
+    stats_path = getattr(vs, "bm25_stats_path", None)
+    if not stats_path:
+        return None
+    if not vs.supports_hybrid() or not bm25_lane.hybrid_search_enabled():
+        return None
+    return {
+        "stats_path": Path(stats_path),
+        # Working copy: load_stats returns the mtime-cached object, and this
+        # snapshot is mutated per sub-batch — mutating the cache itself would
+        # make the end-of-ingest locked persist re-merge the same counts.
+        "stats": bm25_lane.copy_stats(bm25_lane.load_stats(Path(stats_path))),
+        "dirty": [],
+    }
+
+
+def _bm25_sparse_vectors(sub_docs: list[Document], ctx: dict[str, Any] | None) -> list[Any]:
+    """One BM25 ``SparseVector`` per stored doc (``None`` where not applicable).
+
+    Only docs with indexable text get a lane.  Term counts also fold into
+    the in-memory df snapshot BEFORE weighting, so the vectors of this batch
+    see the same df view later points will (a term appearing in every doc of
+    a tiny corpus is correctly weighted as uninformative).
+    """
+    out: list[Any] = [None] * len(sub_docs)
+    if ctx is None:
+        return out
+    for i, doc in enumerate(sub_docs):
+        text = _bm25_indexable_text(doc.page_content)
+        if not text:
+            continue
+        tf = bm25_lane.term_counts(text)
+        if not tf:
+            continue
+        bm25_lane.merge_doc(ctx["stats"], tf)
+        ctx["dirty"].append(tf)
+        out[i] = bm25_lane.to_sparse_vector(bm25_lane.bm25_doc_weights(tf, ctx["stats"]))
+    return out
+
+
+def _bm25_persist_stats(ctx: dict[str, Any] | None) -> None:
+    """Persist the ingest's df deltas under the cross-process lock (once).
+
+    A crash before this point loses only the df counts of the stored prefix
+    — the sparse vectors are already on the points, so idf drifts slightly
+    until the stats catch up (never corrupt: idf stays positive).
+    """
+    if ctx is not None and ctx["dirty"]:
+        try:
+            bm25_lane.record_documents(ctx["stats_path"], ctx["dirty"])
+        except Exception as exc:
+            logger.warning("Could not persist BM25 df stats (%s) — idf weighting may drift: %s", ctx["stats_path"], exc)
 
 
 def _has_embeddable_content(doc: dict, embed_modalities: set[str]) -> bool:
@@ -612,7 +918,10 @@ def _media_payloads_needed(
     ref, so the Postprocessor's ASR path reads it from disk regardless.
     """
     if bool(llm_modalities & {"image", "video"}):
-        return any(isinstance(d, dict) and any(k in d for k in ("image", "video", "preprocessed_image", "preprocessed_video")) for d in docs)
+        return any(
+            isinstance(d, dict) and any(k in d for k in ("image", "video", "preprocessed_image", "preprocessed_video"))
+            for d in docs
+        )
     if not use_vlm or vlm is None:
         return False
     query_is_specific = _query_needs_vlm(query)
@@ -1158,23 +1467,48 @@ class MultimodalRAG:
         collection_name: str = "documents",
         qdrant_host: str = "",
         qdrant_port: int = 6333,
+        client: Any = None,
+        bm25_stats_path: str | None = None,
         **kwargs,
     ) -> VectorStore:
-        from qdrant_client import QdrantClient
-        from qdrant_client.models import Distance, VectorParams
+        """Create (or adopt) the collection and return its store wrapper.
 
-        if qdrant_host:
-            client = QdrantClient(
-                host=qdrant_host,
-                port=qdrant_port,
-                prefer_grpc=_qdrant_prefer_grpc(),
-                timeout=_qdrant_client_timeout(),
-            )
-        else:
-            client = QdrantClient(path=qdrant_path)
+        New collections get the hybrid schema (roadmap feature 2): a named
+        ``dense`` vector plus a named ``bm25`` **sparse** vector, so text
+        queries can RRF-fuse the lexical lane with the dense one.  The
+        schema is created regardless of ``RAG_HYBRID_SEARCH`` — that knob
+        forces dense-only *behaviour* (no sparse vectors computed at ingest,
+        no fusion request at query time), not a different collection shape,
+        so a dataset keeps one stable schema and can adopt the BM25 lane
+        later without a recreate.
+
+        Existing collections are adopted as they are: legacy collections
+        with an unnamed default vector keep ``vector_name=None`` (hybrid
+        simply doesn't apply to them), while collections already carrying
+        the named-vector schema are re-detected so a restart after creation
+        keeps working.  ``client`` (pre-built QdrantClient) and
+        ``bm25_stats_path`` are injectable for callers that own the client
+        or the dataset directory (DatasetManager passes the latter).
+        """
+        from qdrant_client import QdrantClient
+        from qdrant_client.models import Distance, SparseVectorParams, VectorParams
+
+        if client is None:
+            if qdrant_host:
+                client = QdrantClient(
+                    host=qdrant_host,
+                    port=qdrant_port,
+                    prefer_grpc=_qdrant_prefer_grpc(),
+                    timeout=_qdrant_client_timeout(),
+                )
+            else:
+                client = QdrantClient(path=qdrant_path)
 
         test_vec = embedding.embed_query("")
         vector_size = len(test_vec)
+
+        # An explicitly requested vector name wins over schema detection.
+        explicit_vector_name = kwargs.pop("vector_name", None)
 
         collections = retry_call(
             lambda: client.get_collections().collections,
@@ -1182,17 +1516,29 @@ class MultimodalRAG:
             base_delay=2.0,
             connection_delay=5.0,
         )
+        vector_name: str | None = None
         if not any(c.name == collection_name for c in collections):
             client.create_collection(
                 collection_name=collection_name,
-                vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
+                vectors_config={bm25_lane.DENSE_VECTOR_NAME: VectorParams(size=vector_size, distance=Distance.COSINE)},
+                sparse_vectors_config={bm25_lane.BM25_VECTOR_NAME: SparseVectorParams()},
                 quantization_config=_qdrant_quantization_config(),
             )
+            vector_name = bm25_lane.DENSE_VECTOR_NAME
+            # Payload indexes for metadata-filtered search (best-effort —
+            # filtering works without them, just slower).  Existing
+            # collections get theirs via the backfill-search-metadata
+            # admin endpoint.
+            ensure_search_payload_indexes(client, collection_name)
+        else:
+            vector_name = _detect_dense_vector_name(client, collection_name)
 
         return QdrantVectorStore(
             client=client,
             collection_name=collection_name,
             embedding=embedding,
+            vector_name=explicit_vector_name or vector_name,
+            bm25_stats_path=bm25_stats_path,
             **kwargs,
         )
 
@@ -1329,6 +1675,16 @@ class MultimodalRAG:
             elif isinstance(inp, dict):
                 text = inp.get("text", "")
                 meta = {k: v for k, v in inp.items() if k != "text"}
+                # Metadata-filtered search keys off metadata.file_type —
+                # classify once at ingest from the document source.  Docs
+                # without any source (raw text drops) stay unlabelled.
+                if "file_type" not in meta:
+                    src = meta.get("source") or meta.get("original_source")
+                    if src:
+                        # Lazy import: dataset_manager imports this module.
+                        from multimodal_rag.dataset_manager import _classify_file
+
+                        meta["file_type"] = _classify_file(str(src))
                 docs.append(Document(page_content=text, metadata=meta))
             else:
                 docs.append(Document(page_content=str(inp), metadata={}))
@@ -1811,6 +2167,13 @@ class MultimodalRAG:
         vs = self.vector_store
         assert vs is not None and not isinstance(vs, dict)
 
+        # ── 0f. Hybrid BM25 state (roadmap feature 2) ─────────────────────
+        # None unless the collection carries the named ``bm25`` sparse
+        # vector, RAG_HYBRID_SEARCH is on, and a stats sidecar is wired.
+        # The capability probe (get_collection round trip) runs on the
+        # Qdrant I/O pool — never on the event loop.
+        bm25_ctx = await asyncio.get_running_loop().run_in_executor(_QDRANT_IO_POOL, _bm25_ingest_context, vs)
+
         embed_batch_size = getattr(self.embed, "chunk_size", 64) or 64
         all_ids: list[str] = []
         t_embed_total = 0.0
@@ -1988,14 +2351,28 @@ class MultimodalRAG:
                 coll = vs.collection_name  # type: ignore[attr-defined]
                 vector_name = vs.vector_name  # type: ignore[attr-defined]
 
+                # ── 3b. BM25 sparse vectors for the docs actually stored ────
+                # Runs after dedup so dropped duplicates never pollute the
+                # df stats, and only for docs with indexable text (see
+                # _bm25_indexable_text — bare media placeholders out,
+                # caption text in).  Deltas accumulate in bm25_ctx and are
+                # persisted once after the last sub-batch.
+                sparse_vectors = _bm25_sparse_vectors(sub_docs, bm25_ctx)
+
                 points = []
-                for doc, emb in zip(sub_docs, sub_embs):
+                for i, (doc, emb) in enumerate(zip(sub_docs, sub_embs)):
                     doc_id = uuid.uuid4().hex
                     all_ids.append(doc_id)
+                    vector: Any = {vector_name: emb} if vector_name else emb
+                    if sparse_vectors[i] is not None:
+                        # bm25-capable collections are always named-vector
+                        # collections, so this never collides with the
+                        # unnamed-vector shape above.
+                        vector[bm25_lane.BM25_VECTOR_NAME] = sparse_vectors[i]
                     points.append(
                         PointStruct(
                             id=doc_id,
-                            vector={vector_name: emb} if vector_name else emb,
+                            vector=vector,
                             payload={
                                 "page_content": doc.page_content,
                                 "metadata": doc.metadata,
@@ -2014,6 +2391,9 @@ class MultimodalRAG:
             t_store_total += time.monotonic() - t2
             # sub_embs / sub_docs fall out of scope here — released before the
             # next sub-batch starts.
+
+        # ── 4. Persist the batch's BM25 df deltas (once, locked) ─────────
+        _bm25_persist_stats(bm25_ctx)
 
         if total_skipped:
             logger.info("Dedup total: skipped %d document(s)", total_skipped)
@@ -2047,7 +2427,8 @@ class MultimodalRAG:
     def _dedup_twins(results: list[tuple[Any, float]]) -> list[tuple[Any, float]]:
         """Remove duplicate results so downstream compute and LLM context isn't wasted.
 
-        Two dedup passes:
+        Thin wrapper over :meth:`_dedup_by_identity` with the single-dataset
+        twin-identity key (see :meth:`_twin_identity_key`).  Two dedup passes:
 
         1. **Twin vs parent**: twins (tagged ``_twin=True`` — both the
            text-only twins of real-text docs and the media+caption caption
@@ -2061,46 +2442,84 @@ class MultimodalRAG:
            higher-scoring one.  When one is a twin and the other isn't,
            prefer the non-twin (multimodal) version regardless of score.
         """
-        if not results:
-            return results
+        return [
+            (item.doc, item.score)
+            for item in MultimodalRAG._dedup_by_identity(
+                [_DedupItem(doc=doc, score=score) for doc, score in results],
+                lambda item: MultimodalRAG._twin_identity_key(item.doc),
+            )
+        ]
 
-        def _dedup_key(doc: Any) -> tuple | None:
-            if isinstance(doc, dict):
-                src = doc.get("source", "")
-                page = doc.get("page")
-                ci = doc.get("chunk_index")
-                # Video segments share (source, page=None, chunk_index=None);
-                # disambiguate by the segment's time window so a twin of one
-                # segment is not collapsed against a parent of another.
-                ts = (doc.get("timestamp_start"), doc.get("timestamp_end"))
-                if src:
-                    return (src, page, ci, ts)
-            return None
+    @staticmethod
+    def _twin_identity_key(doc: Any) -> tuple | None:
+        """Identity key for twin collapse: ``(source, page, chunk_index, time-window)``.
+
+        ``None`` for docs that cannot collide (not a dict, or no source).
+        """
+        if isinstance(doc, dict):
+            src = doc.get("source", "")
+            page = doc.get("page")
+            ci = doc.get("chunk_index")
+            # Video segments share (source, page=None, chunk_index=None);
+            # disambiguate by the segment's time window so a twin of one
+            # segment is not collapsed against a parent of another.
+            ts = (doc.get("timestamp_start"), doc.get("timestamp_end"))
+            if src:
+                return (src, page, ci, ts)
+        return None
+
+    @staticmethod
+    def _dedup_by_identity(
+        items: list["_DedupItem"],
+        key_fn: "Callable[[_DedupItem], tuple | None]",
+    ) -> list["_DedupItem"]:
+        """Generic two-pass dedup over scored items, keyed by *key_fn*.
+
+        Pass 1 drops ``_twin``-tagged docs whose identity key collides with a
+        non-twin doc in the pool (the parent carries the media).  Pass 2
+        collapses identical text content, keeping the best-scoring entry and
+        preferring the non-twin (multimodal) version.  Original order is
+        preserved (first occurrence wins ties).
+
+        Both passes are scoped by ``item.dataset`` — ``None`` for the
+        single-dataset twin collapse (so ``_dedup_twins`` behaves exactly as
+        before) and the dataset name for the federated merge, where the same
+        chunk stored in two datasets stays two labelled hits instead of
+        collapsing into one.
+
+        Shared verbatim by the single-dataset twin collapse
+        (:meth:`_dedup_twins`) and the federated multi-dataset merge
+        (:func:`dedup_federated_results`) so the two cannot drift.
+        """
+        if not items:
+            return items
 
         # ── Pass 1: drop twins whose multimodal parent is also present ──
         parent_keys: set[tuple] = set()
-        for doc, _ in results:
-            if isinstance(doc, dict) and doc.get("_twin"):
+        for item in items:
+            if isinstance(item.doc, dict) and item.doc.get("_twin"):
                 continue
-            key = _dedup_key(doc)
+            key = key_fn(item)
             if key is not None:
                 parent_keys.add(key)
 
-        pass1: list[tuple[Any, float]] = []
-        for doc, score in results:
-            if isinstance(doc, dict) and doc.get("_twin"):
-                key = _dedup_key(doc)
+        pass1: list[_DedupItem] = []
+        for item in items:
+            if isinstance(item.doc, dict) and item.doc.get("_twin"):
+                key = key_fn(item)
                 if key is not None and key in parent_keys:
                     continue
-            pass1.append((doc, score))
+            pass1.append(item)
 
         # ── Pass 2: dedup by text content, keep best score ─────────────
         # When a twin and non-twin share the same text, prefer the non-twin
         # (it has images).  Otherwise keep the higher-scoring entry.
         import hashlib as _hashlib
 
-        best_by_text: dict[str, tuple[Any, float, bool]] = {}
-        for doc, score in pass1:
+        best_by_text: dict[str, _DedupItem] = {}
+        for item in pass1:
+            doc = item.doc
+            score = item.score
             if isinstance(doc, dict):
                 text = (doc.get("text") or "").strip()
             elif isinstance(doc, str):
@@ -2109,26 +2528,23 @@ class MultimodalRAG:
                 text = str(doc).strip()
             if not text:
                 continue
-            text_hash = _hashlib.md5(text.encode()).hexdigest()
+            text_hash = (item.dataset, _hashlib.md5(text.encode()).hexdigest())
             is_twin = isinstance(doc, dict) and doc.get("_twin", False)
             if text_hash not in best_by_text:
-                best_by_text[text_hash] = (doc, score, is_twin)
+                best_by_text[text_hash] = item
             else:
-                _, _, existing_is_twin = best_by_text[text_hash]
+                existing = best_by_text[text_hash]
+                existing_is_twin = isinstance(existing.doc, dict) and existing.doc.get("_twin", False)
                 # Replace if: current is non-twin and existing is twin,
                 # or current scores higher and twin-status is equal
-                if (
-                    not is_twin
-                    and existing_is_twin
-                    or is_twin == existing_is_twin
-                    and score > best_by_text[text_hash][1]
-                ):
-                    best_by_text[text_hash] = (doc, score, is_twin)
+                if not is_twin and existing_is_twin or is_twin == existing_is_twin and score > existing.score:
+                    best_by_text[text_hash] = item
 
         # Preserve original order (first occurrence wins ties)
         seen_hashes: set[str] = set()
-        deduped: list[tuple[Any, float]] = []
-        for doc, score in pass1:
+        deduped: list[_DedupItem] = []
+        for item in pass1:
+            doc = item.doc
             if isinstance(doc, dict):
                 text = (doc.get("text") or "").strip()
             elif isinstance(doc, str):
@@ -2136,15 +2552,14 @@ class MultimodalRAG:
             else:
                 text = str(doc).strip()
             if not text:
-                deduped.append((doc, score))
+                deduped.append(item)
                 continue
-            text_hash = _hashlib.md5(text.encode()).hexdigest()
+            text_hash = (item.dataset, _hashlib.md5(text.encode()).hexdigest())
             if text_hash in seen_hashes:
                 continue
             seen_hashes.add(text_hash)
             # Only keep if this doc is the best for its text hash
-            best_doc, best_score, _ = best_by_text[text_hash]
-            deduped.append((best_doc, best_score))
+            deduped.append(best_by_text[text_hash])
         return deduped
 
     async def _arerank_results(
@@ -2153,28 +2568,12 @@ class MultimodalRAG:
         results: list[tuple[Any, float]],
         reranker_top_k: int = 3,
     ) -> list[tuple[Any, float]]:
-        reranked = await self.rank.arerank(query, [self._extract_doc(d) for d, _ in results])
-        # reranked[0] is a list of result dicts, e.g.
-        # [{"index": 2, "relevance_score": 0.95, ...},
-        #  {"index": 0, "relevance_score": 0.87, ...}]
-        # Map each index back to its reranker score, then attach
-        # both the embedding score and the reranker score to each doc.
-        score_by_idx: dict[int, float] = {}
-        for r in reranked[0] if reranked else []:
-            score_by_idx[r.get("index", -1)] = r.get("relevance_score", r.get("score", 0.0))
-        paired: list[tuple[Any, float]] = []
-        for i, (d, emb_score) in enumerate(results):
-            rerank_score = score_by_idx.get(i, 0.0)
-            if isinstance(d, dict):
-                # Copy the doc before annotating so we never mutate the
-                # caller's dicts (e.g. the `documents=` path passes the
-                # caller's own objects through here).
-                d = dict(d)
-                d["_embedding_score"] = round(emb_score, 4)
-                d["_reranker_score"] = round(rerank_score, 4)
-            paired.append((d, rerank_score))
-        paired.sort(key=lambda x: x[1], reverse=True)
-        return paired[:reranker_top_k]
+        """Rerank this dataset's results with the configured cross-encoder.
+
+        Thin delegate to :func:`_arerank_with` (the shared implementation also
+        used for the federated merged-pool rerank).
+        """
+        return await _arerank_with(self.rank, self._extract_doc, query, results, reranker_top_k)
 
     def retrieve(
         self,
@@ -2185,6 +2584,7 @@ class MultimodalRAG:
         reranker_top_k: int = 3,
         query_vector: list[float] | None = None,
         need_media: bool | None = None,
+        filters: dict[str, Any] | None = None,
     ) -> list[tuple[Any, float]]:
         """Sync wrapper around :meth:`aretrieve`."""
         return sync_wrapper_safe(
@@ -2197,6 +2597,7 @@ class MultimodalRAG:
                 "reranker_top_k": reranker_top_k,
                 "query_vector": query_vector,
                 "need_media": need_media,
+                "filters": filters,
             },
         )
 
@@ -2209,6 +2610,7 @@ class MultimodalRAG:
         reranker_top_k: int = 3,
         query_vector: list[float] | None = None,
         need_media: bool | None = None,
+        filters: dict[str, Any] | None = None,
     ) -> list[tuple[Any, float]]:
 
         # Auto-compute need_media: base64 media payloads are needed when the
@@ -2218,6 +2620,19 @@ class MultimodalRAG:
             need_media = use_reranker and self.reranker is not None
 
         if documents is not None:
+            if filters:
+                # Metadata-filtered search over caller-provided documents:
+                # apply the same predicate the stores apply, over each doc's
+                # metadata view (every non-'text' key).
+                pred = filters_to_predicate(filters)
+                if pred is not None:
+                    documents = [
+                        d
+                        for d in documents
+                        if isinstance(d, dict) and pred({k: v for k, v in d.items() if k != "text"})
+                    ]
+                    if not documents:
+                        return []
             if query_vector is not None:
                 query_emb = query_vector
             else:
@@ -2239,12 +2654,14 @@ class MultimodalRAG:
                     query_emb,
                     top_k,
                     need_media=need_media,
+                    filters=filters,
                 )
             else:
                 docs_and_scores = await vs.asimilarity_search_with_relevance_scores(
                     query,
                     k=top_k,
                     need_media=need_media,
+                    filters=filters,
                 )
             results = [(self._extract_doc(doc), score) for doc, score in docs_and_scores]
 

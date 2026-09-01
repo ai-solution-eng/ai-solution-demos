@@ -26,6 +26,7 @@ data:
   MODEL_ASR_URL: {{ .Values.models.asr.url | quote }}
   MODEL_ASR_EXTRA: {{ .Values.models.asr.extra | toJson | quote }}
   # RAG pipeline
+  RAG_OCR_DEFAULT: {{ .Values.rag.ocr | default false | quote }}
   RAG_CAPTION_WITH_ASR: {{ .Values.rag.captionWithAsr | quote }}
   RAG_CAPTION_WITH_VLM: {{ .Values.rag.captionWithVlm | quote }}
   RAG_REMOTE: {{ .Values.rag.remote | quote }}

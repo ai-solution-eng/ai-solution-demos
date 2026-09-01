@@ -30,7 +30,13 @@ from urllib.parse import urlencode
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from multimodal_rag.dataset_manager import DatasetManager
-from multimodal_rag.rag_system import MultimodalRAG, _media_payloads_needed
+from multimodal_rag.rag_system import (
+    MultimodalRAG,
+    _arerank_with,
+    _media_payloads_needed,
+    merge_federated_results,
+    resolve_federated_targets,
+)
 from multimodal_rag.utils.logging_utils import logging, setup_logger
 
 logger = logging.getLogger(__name__)
@@ -1132,6 +1138,9 @@ def _resolve_query_vector(
         vec = _lookup_dataset_vector(rag, dataset_name, path)
         if vec is not None:
             logger.info("query vector: reused existing Qdrant vector for %s", path[-60:])
+            from multimodal_rag.utils.metrics import CACHE_EVENTS
+
+            CACHE_EVENTS.labels(cache="query_emb", event="hit").inc()
             return vec
 
     # Otherwise: hash-based in-process cache.
@@ -1141,8 +1150,14 @@ def _resolve_query_vector(
         cached = _query_emb_cache.get(cache_key)
     if cached is not None:
         logger.info("query vector: cache HIT (%d media file(s))", len(paths))
+        from multimodal_rag.utils.metrics import CACHE_EVENTS
+
+        CACHE_EVENTS.labels(cache="query_emb", event="hit").inc()
         return list(cached)
 
+    from multimodal_rag.utils.metrics import CACHE_EVENTS
+
+    CACHE_EVENTS.labels(cache="query_emb", event="miss").inc()
     return None
 
 
@@ -1338,7 +1353,12 @@ def _format_memory_provenance(doc: dict[str, Any]) -> str:
     return "[Provenance: " + ", ".join(parts) + "]"
 
 
-async def _arun_retrieval(
+def _llm_modality_set(base_llm_modalities: list[str] | None) -> set[str]:
+    """Normalise the ``base_llm_modalities`` tool argument to a set."""
+    return set(base_llm_modalities if base_llm_modalities is not None else ["text"])
+
+
+async def _acore_retrieval(
     rag: "MultimodalRAG",
     dataset_name: str,
     query_dict: "str | dict[str, Any]",
@@ -1347,26 +1367,22 @@ async def _arun_retrieval(
     use_reranker: bool,
     reranker_top_k: int,
     base_llm_modalities: list[str] | None,
-    verified_password: str | None,
-    media_base_url: str | None,
-) -> str:
-    """Run retrieval, post-process modalities, and format the JSON result.
+    filters: dict[str, Any] | None = None,
+) -> "tuple[list[Any], list[float]] | None":
+    """Retrieval half of :func:`_arun_retrieval`.
 
-    Async version of the former ``_run_retrieval``.  Calls ``aretrieve``
-    and ``aembed_query`` directly so I/O runs on the caller's event loop
-    instead of being serialised through the single background event loop
-    in ``sync_wrapper_safe``.  This allows concurrent searches to proceed
-    in parallel (embed HTTP + Qdrant gRPC overlap across requests).
+    Resolves the query vector (reusing cached/stored media embeddings),
+    runs the two-phase media-payload-aware ``aretrieve`` and returns
+    ``(retrieved_docs, scores)`` — or ``None`` when the dataset returned no
+    hits, so callers can reproduce ``_arun_retrieval``'s exact
+    "No results found." short-circuit.
 
-    The sync helpers ``_resolve_query_vector`` / ``_resolve_audio_query_vector``
-    (multimodal-only) do blocking I/O (Qdrant scroll, file hashing, ASR) and
-    are offloaded to the MCP thread pool via ``_offload`` so they never stall
-    the event loop.  ``Postprocessor.acall`` runs async so it doesn't block
-    the event loop.
+    Split out of ``_arun_retrieval`` so federated search (roadmap feature 8)
+    can run this exact retrieval path per dataset, merge the pools, and only
+    then post-process/format — without changing what the single-dataset
+    tools return.
     """
-    if base_llm_modalities is None:
-        base_llm_modalities = ["text"]
-    llm_modalities = set(base_llm_modalities)
+    llm_modalities = _llm_modality_set(base_llm_modalities)
 
     # Try to reuse a cached/stored query vector so we don't re-embed
     # the same media twice (covers both "LLM passes back a result URL"
@@ -1419,9 +1435,10 @@ async def _arun_retrieval(
         reranker_top_k=reranker_top_k,
         query_vector=query_vector,
         need_media=reranker_needs_media,
+        filters=filters,
     )
     if not results:
-        return "No results found."
+        return None
 
     retrieved_docs = [doc for doc, _ in results]
 
@@ -1439,24 +1456,59 @@ async def _arun_retrieval(
             reranker_top_k=reranker_top_k,
             query_vector=query_vector,
             need_media=True,
+            filters=filters,
         )
         retrieved_docs = [doc for doc, _ in results]
-    scores = [score for _, score in results]
 
-    # -- Post-process: convert unsupported modalities for the LLM --
+    return retrieved_docs, [score for _, score in results]
+
+
+async def _apostprocess_docs(
+    rag: "MultimodalRAG",
+    retrieved_docs: list[Any],
+    query: str,
+    base_llm_modalities: list[str] | None,
+) -> list[Any]:
+    """Post-process retrieval hits: convert modalities the calling LLM
+    cannot consume natively (image/video → VLM description → text,
+    audio → ASR transcription → text).
+
+    Content-based and dataset-independent (the VLM/ASR models are
+    server-wide), so the federated merge reuses a single pass over the
+    merged pool.
+    """
+    llm_modalities = _llm_modality_set(base_llm_modalities)
     needs_conversion = rag._postprocessor is not None and any(
         isinstance(d, dict) and any(k in d for k in ("image", "video", "audio")) for d in retrieved_docs
     )
 
     if needs_conversion:
-        postprocessed = await rag._postprocessor.acall(
+        return await rag._postprocessor.acall(
             retrieved_docs,
             llm_modalities=llm_modalities,
             query=query,
         )
-    else:
-        postprocessed = retrieved_docs
+    return retrieved_docs
 
+
+def _format_retrieval_result(
+    dataset_name: str,
+    retrieved_docs: list[Any],
+    postprocessed: list[Any],
+    scores: list[float],
+    media_base_url: str | None,
+) -> "str | dict[str, Any]":
+    """Format one dataset's retrieval slice exactly as ``search_dataset``
+    has always returned it.
+
+    Returns the structured ``{"context": …, "results": …}`` payload (NOT
+    json-encoded) so federated search can combine several datasets'
+    payloads under per-dataset headers; ``_arun_retrieval`` json-encodes it
+    for the single-dataset tools, keeping their output byte-identical.
+
+    Returns a plain string instead in the degenerate case where no result
+    carried any textual content (the historical behaviour).
+    """
     # -- Format context for the LLM --
     context_parts: list[str] = []
     for i, doc in enumerate(postprocessed):
@@ -1631,14 +1683,364 @@ async def _arun_retrieval(
             "so the user can open the source files:\n" + "\n".join(doc_link_lines)
         )
 
+    return {
+        "context": context,
+        "results": raw_results,
+    }
+
+
+async def _arun_retrieval(
+    rag: "MultimodalRAG",
+    dataset_name: str,
+    query_dict: "str | dict[str, Any]",
+    query: str,
+    top_k: int,
+    use_reranker: bool,
+    reranker_top_k: int,
+    base_llm_modalities: list[str] | None,
+    verified_password: str | None,
+    media_base_url: str | None,
+    filters: dict[str, Any] | None = None,
+) -> str:
+    """Run retrieval, post-process modalities, and format the JSON result.
+
+    Composition of the three factored stages — :func:`_acore_retrieval`
+    (retrieval), :func:`_apostprocess_docs` (modality conversion) and
+    :func:`_format_retrieval_result` (formatting) — so the federated
+    ``search_datasets`` tool reuses the exact same pipeline per dataset
+    while this function keeps the single-dataset tools' output unchanged.
+
+    Async version of the former ``_run_retrieval``.  Calls ``aretrieve``
+    and ``aembed_query`` directly so I/O runs on the caller's event loop
+    instead of being serialised through the single background event loop
+    in ``sync_wrapper_safe``.  This allows concurrent searches to proceed
+    in parallel (embed HTTP + Qdrant gRPC overlap across requests).
+
+    The sync helpers ``_resolve_query_vector`` / ``_resolve_audio_query_vector``
+    (multimodal-only) do blocking I/O (Qdrant scroll, file hashing, ASR) and
+    are offloaded to the MCP thread pool via ``_offload`` so they never stall
+    the event loop.  ``Postprocessor.acall`` runs async so it doesn't block
+    the event loop.
+
+    ``verified_password`` is accepted for signature compatibility with the
+    tools (the retrieval path itself needs no password — access was already
+    checked before retrieval).
+    """
+    core = await _acore_retrieval(
+        rag,
+        dataset_name,
+        query_dict,
+        query,
+        top_k,
+        use_reranker,
+        reranker_top_k,
+        base_llm_modalities,
+        filters,
+    )
+    if core is None:
+        return "No results found."
+    retrieved_docs, scores = core
+
+    postprocessed = await _apostprocess_docs(rag, retrieved_docs, query, base_llm_modalities)
+
+    payload = _format_retrieval_result(dataset_name, retrieved_docs, postprocessed, scores, media_base_url)
+    if isinstance(payload, str):
+        return payload
     return json.dumps(
-        {
-            "context": context,
-            "results": raw_results,
-        },
+        payload,
         indent=2,
         default=str,
     )
+
+
+# ---------------------------------------------------------------------------
+# Federated multi-dataset search (roadmap feature 8)
+# ---------------------------------------------------------------------------
+#
+# One query fanned out over several datasets concurrently, merged into a
+# single labelled pool.  The fan-out / merge / dedup logic lives in these
+# module-level functions (not inside the tool closure) so offline tests can
+# exercise it directly, without the MCP runtime.
+
+
+def _resolve_federated_targets(
+    dm: "DatasetManager",
+    datasets: "list[str] | str",
+    is_unlocked: Any = None,
+) -> "tuple[list[str], list[dict[str, str]], list[dict[str, str]]]":
+    """MCP adapter over :func:`multimodal_rag.rag_system.resolve_federated_targets`.
+
+    Same semantics (targets / skipped notes / error notes; ``"all"`` expands
+    to every dataset readable WITHOUT a password), with the module's
+    per-client unlock cache as the unlock predicate and a malformed
+    *datasets* argument surfaced as a ``ToolError``.
+    """
+    try:
+        return resolve_federated_targets(dm, datasets, is_unlocked if is_unlocked is not None else _is_unlocked)
+    except (TypeError, ValueError) as exc:
+        raise ToolError(str(exc))
+
+
+_FEDERATED_DATASET_KEY = "_federated_dataset"
+
+
+async def _arerank_federated(
+    rag: "MultimodalRAG",
+    query: str,
+    entries: "list[tuple[str, Any, float]]",
+    reranker_top_k: int,
+) -> "list[tuple[str, Any, float]]":
+    """Single rerank pass over the MERGED multi-dataset pool.
+
+    Reuses the shared rerank helper (:func:`multimodal_rag.rag_system._arerank_with`,
+    the exact ``rank.arerank`` call path ``search_dataset`` uses).  The
+    reranker is content-based, so cross-dataset pairs are fine; the dataset
+    label is carried ON each doc through the sort/truncate and read back
+    afterwards.  The reranker's input conversion only reads ``text`` and the
+    media keys, so the private label key never reaches the model.
+    """
+    labelled: list[tuple[Any, float]] = []
+    for ds, doc, score in entries:
+        if isinstance(doc, dict):
+            d = dict(doc)
+        else:
+            # Metadata-less payloads surface as bare strings; wrap them so
+            # the label (and the reranker-score annotation) can ride along.
+            d = {"text": str(doc)}
+        d[_FEDERATED_DATASET_KEY] = ds
+        labelled.append((d, score))
+
+    ranked = await _arerank_with(rag.rank, rag._extract_doc, query, labelled, reranker_top_k)
+
+    out: list[tuple[str, Any, float]] = []
+    for doc, rerank_score in ranked:
+        ds = ""
+        if isinstance(doc, dict):
+            ds = doc.pop(_FEDERATED_DATASET_KEY, "") or ""
+        out.append((ds, doc, rerank_score))
+    return out
+
+
+async def _afederated_one_dataset(
+    dm: "DatasetManager",
+    name: str,
+    query_dict: "str | dict[str, Any]",
+    query: str,
+    top_k: int,
+    base_llm_modalities: list[str] | None,
+    filters: dict[str, Any] | None,
+) -> "tuple[Any, list[tuple[str, Any, float]]]":
+    """Retrieve one dataset's candidate pool for the federated merge.
+
+    Runs the SAME retrieval core as ``search_dataset`` (two-phase media
+    fetch, twin dedup) but with ``use_reranker=False`` — reranking happens
+    ONCE over the merged pool instead of per dataset.  Returns
+    ``(rag, [(dataset, doc, score), …])``; raises on failure (the caller's
+    ``gather(return_exceptions=True)`` turns that into a per-dataset error
+    note, never a failed call).
+    """
+
+    def _setup() -> Any:
+        return dm._get_rag(name)
+
+    rag = await _offload(_setup)
+    core = await _acore_retrieval(
+        rag,
+        name,
+        query_dict,
+        query,
+        top_k,
+        use_reranker=False,  # single merged rerank pass happens after the merge
+        reranker_top_k=top_k,
+        base_llm_modalities=base_llm_modalities,
+        filters=filters,
+    )
+    if core is None:
+        return rag, []
+    retrieved_docs, scores = core
+    return rag, [(name, doc, score) for doc, score in zip(retrieved_docs, scores)]
+
+
+def _merge_federated_sections(
+    formatted: "list[tuple[str, str | dict[str, Any]]]",
+    targets: list[str],
+    skipped: list[dict[str, str]],
+    errors: list[dict[str, str]],
+) -> dict[str, Any]:
+    """Combine per-dataset formatted payloads into one federated response.
+
+    The ``context`` text is grouped under a per-dataset header (datasets in
+    the order they were searched, so output is stable); the ``results`` array
+    keeps the MERGED ranking order with a ``dataset`` label on every entry.
+    Skips/failures are surfaced both as notes in the context text (for
+    text-only consumers) and as structured ``skipped``/``errors`` lists.
+    """
+    notes: list[str] = []
+    if targets:
+        notes.append(f"Federated search across {len(targets)} dataset(s): {', '.join(targets)}")
+    for note in skipped:
+        notes.append(f"Skipped dataset '{note['dataset']}': {note['reason']}")
+    for note in errors:
+        notes.append(f"Dataset '{note['dataset']}' failed: {note['error']}")
+
+    sections: list[str] = []
+    merged_results: list[dict[str, Any]] = []
+    for name, payload in formatted:
+        if isinstance(payload, str):
+            # Degenerate single-dataset slice: no result carried any text.
+            sections.append(f"### Dataset: {name}\n{payload}")
+            continue
+        count = len(payload["results"])
+        sections.append(f"### Dataset: {name} — {count} result(s)\n\n{payload['context']}")
+        for entry in payload["results"]:
+            merged_results.append({"dataset": name, **entry})
+
+    # The context is grouped per dataset (stable, readable); the structured
+    # results array is the ranking — score-ordered across datasets (score is
+    # the reranker score when the merged rerank ran, else the embedding
+    # score).  Stable sort: ties keep the dataset order.
+    merged_results.sort(key=lambda r: float(r.get("score", 0.0)), reverse=True)
+
+    if not formatted:
+        sections.append("No results found in any dataset.")
+
+    context = "\n\n".join([*notes, *sections]) if (notes or sections) else "No results found in any dataset."
+    return {
+        "context": context,
+        "results": merged_results,
+        "datasets_searched": targets,
+        "skipped": skipped,
+        "errors": errors,
+    }
+
+
+async def _afederated_search(
+    dm: "DatasetManager",
+    datasets: "list[str] | str",
+    query: str,
+    image: str | None = None,
+    video: str | None = None,
+    audio: str | None = None,
+    top_k: int = 5,
+    use_reranker: bool = False,
+    reranker_top_k: int = 3,
+    base_llm_modalities: list[str] | None = None,
+    filters: dict[str, Any] | None = None,
+    media_base_url: str | None = None,
+    is_unlocked: Any = None,
+) -> dict[str, Any]:
+    """Fan one query out over several datasets and merge the results.
+
+    The testable core behind the MCP ``search_datasets`` tool (the tool is
+    thin glue: clamping, filter validation and JSON encoding happen there).
+    Steps:
+
+    1. Resolve *datasets* (a list of names, one name, or ``"all"``) via
+       :func:`_resolve_federated_targets` — locked datasets are skipped with
+       a note, never a hard failure.
+    2. Fan the retrieval out CONCURRENTLY (``asyncio.gather`` with
+       ``return_exceptions=True``); a failing dataset becomes an error note.
+    3. Merge the per-dataset pools into one dataset-labelled pool
+       (:func:`multimodal_rag.rag_system.merge_federated_results` —
+       dataset-qualified twin/text dedup + score sort).
+    4. Optionally run ONE rerank pass over the merged pool
+       (:func:`_arerank_federated`) and truncate to *reranker_top_k*.
+    5. Post-process each dataset's slice (concurrently) and format it with
+       the single-dataset formatter, under per-dataset headers.
+    """
+    targets, skipped, errors = await _offload(_resolve_federated_targets, dm, datasets, is_unlocked)
+
+    if not targets:
+        return _merge_federated_sections([], [], skipped, errors)
+
+    # -- Build the multimodal query dict once (shared by every dataset) --
+    query_dict: str | dict[str, Any] = query
+    if image or video or audio:
+        query_dict = {}
+        if query:
+            query_dict["text"] = query
+        if image:
+            query_dict["image"] = image
+        if video:
+            query_dict["video"] = video
+        if audio:
+            query_dict["audio"] = audio
+
+    # -- Concurrent fan-out; per-dataset failures become error notes --
+    outcomes = await asyncio.gather(
+        *[
+            _afederated_one_dataset(dm, name, query_dict, query, top_k, base_llm_modalities, filters)
+            for name in targets
+        ],
+        return_exceptions=True,
+    )
+
+    rags: dict[str, Any] = {}
+    entries: list[tuple[str, Any, float]] = []
+    for name, outcome in zip(targets, outcomes):
+        if isinstance(outcome, BaseException):
+            errors.append({"dataset": name, "error": f"{type(outcome).__name__}: {outcome}"})
+            continue
+        rag, dataset_entries = outcome
+        rags[name] = rag
+        entries.extend(dataset_entries)
+
+    # -- Merge into one dataset-labelled pool (dedup + score sort) --
+    merged = merge_federated_results(entries)
+
+    # -- Optional single rerank pass over the MERGED pool --
+    if use_reranker and merged:
+        rerank_rag = next((r for r in rags.values() if getattr(r, "reranker", None) is not None), None)
+        if rerank_rag is None:
+            logger.warning("Federated rerank requested but no dataset has a reranker — keeping embedding order.")
+        else:
+            merged = await _arerank_federated(rerank_rag, query, merged, reranker_top_k)
+
+    # -- Group the merged pool back per dataset for formatting --
+    groups: dict[str, dict[str, list[Any]]] = {}
+    for ds, doc, score in merged:
+        group = groups.setdefault(ds, {"docs": [], "scores": []})
+        group["docs"].append(doc)
+        group["scores"].append(score)
+
+    # -- Post-process each dataset's slice (concurrently) --
+    # Per dataset rather than one merged call: the Postprocessor may DROP a
+    # doc entirely (unconvertible media), which would shift a merged call's
+    # index alignment across dataset boundaries.  VLM/ASR calls are async
+    # I/O, so the per-dataset passes overlap.
+    formatted: list[tuple[str, str | dict[str, Any]]] = []
+    names = list(groups)
+
+    async def _post_one(name: str) -> list[Any]:
+        rag = rags.get(name)
+        if rag is None:
+            return groups[name]["docs"]
+        return await _apostprocess_docs(rag, groups[name]["docs"], query, base_llm_modalities)
+
+    pp_outcomes = await asyncio.gather(
+        *[_post_one(name) for name in names],
+        return_exceptions=True,
+    )
+    for name, outcome in zip(names, pp_outcomes):
+        group = groups[name]
+        if isinstance(outcome, BaseException):
+            errors.append(
+                {
+                    "dataset": name,
+                    "error": f"post-processing failed: {type(outcome).__name__}: {outcome}",
+                }
+            )
+            outcome = group["docs"]  # best effort: surface the raw docs
+        payload = _format_retrieval_result(
+            name,
+            group["docs"],
+            outcome,
+            group["scores"],
+            media_base_url,
+        )
+        formatted.append((name, payload))
+
+    return _merge_federated_sections(formatted, targets, skipped, errors)
 
 
 # ---------------------------------------------------------------------------
@@ -1758,6 +2160,11 @@ try:
         base_llm_modalities: list[str] | None = None,
         password: str | None = None,
         media_base_url: str | None = None,
+        file_types: list[str] | None = None,
+        severities: list[str] | None = None,
+        source_prefix: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
     ) -> str:
         """Search a multimodal RAG dataset and return formatted context.
 
@@ -1797,6 +2204,21 @@ try:
             without large inline base64 payloads.  Use the exact host seen in
             the returned ``source`` URLs — never invent or substitute a
             hostname (there is no valid ``rag-mcp-server.example.com``).
+        file_types:
+            Optional metadata filter: only results whose file type is one of
+            these (``pdf``, ``image``, ``video``, ``audio``, ``text``,
+            ``json``, ``table``, ``code``, ``office``, ``html``, ``xml``,
+            ``yaml``, ``notebook``, ``ebook``, ``log``).
+        severities:
+            Optional metadata filter for log corpora: only results whose
+            observed severities include one of these (``ERROR``, ``WARN``,
+            ``INFO``, ...).
+        source_prefix:
+            Optional metadata filter: only results whose stored source path
+            starts with this prefix (e.g. ``reports/2025/``).
+        date_from / date_to:
+            Optional metadata filters (ISO-8601 datetimes) on a document's
+            ``timestamp_start`` — log entries and timestamped documents.
         """
 
         # Sync setup — cheap (cached singleton, meta.json read, cached RAG).
@@ -1816,6 +2238,29 @@ try:
         # Clamp paging/ranking params to safe bounds (see _clamp_tool_limit).
         top_k = _clamp_tool_limit(top_k, "top_k", maximum=100)
         reranker_top_k = _clamp_tool_limit(reranker_top_k, "reranker_top_k", maximum=min(50, top_k))
+
+        # Metadata filters (feature: filtered search) — validated here so a
+        # bad date surfaces as a tool error instead of a silent no-op filter.
+        filters: dict[str, Any] | None = None
+        _raw_filters: dict[str, Any] = {}
+        if file_types:
+            _raw_filters["file_types"] = list(file_types)
+        if severities:
+            _raw_filters["severities"] = list(severities)
+        if source_prefix and source_prefix.strip():
+            _raw_filters["source_prefix"] = source_prefix.strip()
+        if date_from and date_from.strip():
+            _raw_filters["date_from"] = date_from.strip()
+        if date_to and date_to.strip():
+            _raw_filters["date_to"] = date_to.strip()
+        if _raw_filters:
+            from multimodal_rag.vector_store import build_payload_filter
+
+            try:
+                build_payload_filter(_raw_filters)
+            except ValueError as exc:
+                raise ToolError(f"Search filter rejected: {exc}")
+            filters = _raw_filters
 
         # -- Build multimodal query dict --
         query_dict: str | dict[str, Any] = query
@@ -1855,7 +2300,125 @@ try:
             base_llm_modalities,
             verified_password,
             media_base_url,
+            filters,
         )
+
+    @mcp.tool()
+    async def search_datasets(
+        datasets: "list[str] | str",
+        query: str = "",
+        image: str | None = None,
+        video: str | None = None,
+        audio: str | None = None,
+        top_k: int = 5,
+        use_reranker: bool = False,
+        reranker_top_k: int = 3,
+        base_llm_modalities: list[str] | None = None,
+        file_types: list[str] | None = None,
+        severities: list[str] | None = None,
+        source_prefix: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> str:
+        """Search SEVERAL datasets at once with one query and merge the results.
+
+        Use this instead of ``search_dataset`` when you don't know which
+        dataset holds the answer, or when the answer may span datasets.
+        Every hit is labelled with its dataset; duplicate chunks that appear
+        in several datasets are kept per dataset (labelled), duplicates
+        within a dataset are collapsed.
+
+        Parameters
+        ----------
+        datasets:
+            List of dataset names — or the string ``"all"`` to search every
+            dataset that is readable WITHOUT a password (no password set, or
+            unlocked in this session via ``unlock_dataset``).
+        query:
+            Search query text.
+        image / video / audio:
+            Optional media (data URL or remote URL) to search with.
+        top_k:
+            Number of results to retrieve PER DATASET (max 100).
+        use_reranker:
+            Whether to re-rank the MERGED result pool with the cross-encoder
+            reranker (one pass over all datasets' candidates).
+        reranker_top_k:
+            Number of results to keep after re-ranking (max 50).
+        base_llm_modalities:
+            Modalities the calling LLM supports natively, e.g.
+            ``["text"]`` or ``["text", "image"]``.  Unsupported modalities
+            are automatically converted (image/video → VLM description →
+            text, audio → ASR transcription → text).
+        file_types / severities / source_prefix / date_from / date_to:
+            Optional metadata filters applied to EVERY dataset (same
+            meanings as in ``search_dataset``).
+
+        Password-protected datasets that are not unlocked for this session
+        are SKIPPED and reported under ``skipped`` — this tool deliberately
+        accepts no ``password`` argument (unlock with ``unlock_dataset``
+        first, then call again).  A dataset that fails to search is reported
+        under ``errors`` and never fails the whole call; each remaining
+        dataset still contributes its results.
+        """
+
+        # Clamp paging/ranking params to safe bounds (see _clamp_tool_limit).
+        # top_k is PER DATASET; the merged pool is bounded by
+        # len(datasets) * top_k, and reranker_top_k is applied to that pool.
+        top_k = _clamp_tool_limit(top_k, "top_k", maximum=100)
+        reranker_top_k = _clamp_tool_limit(reranker_top_k, "reranker_top_k", maximum=50)
+
+        # Metadata filters (feature: filtered search) — validated here so a
+        # bad date surfaces as a tool error instead of a silent no-op filter.
+        filters: dict[str, Any] | None = None
+        _raw_filters: dict[str, Any] = {}
+        if file_types:
+            _raw_filters["file_types"] = list(file_types)
+        if severities:
+            _raw_filters["severities"] = list(severities)
+        if source_prefix and source_prefix.strip():
+            _raw_filters["source_prefix"] = source_prefix.strip()
+        if date_from and date_from.strip():
+            _raw_filters["date_from"] = date_from.strip()
+        if date_to and date_to.strip():
+            _raw_filters["date_to"] = date_to.strip()
+        if _raw_filters:
+            from multimodal_rag.vector_store import build_payload_filter
+
+            try:
+                build_payload_filter(_raw_filters)
+            except ValueError as exc:
+                raise ToolError(f"Search filter rejected: {exc}")
+            filters = _raw_filters
+
+        # Query-time SSRF guard: remote media URLs are fetched server-side
+        # by the embedder (loopback allowed — clients may hand back the
+        # server's own media URLs).
+        if image or video or audio:
+            try:
+                from multimodal_rag.dataset_manager import _check_media_url_policy
+
+                for media_value in (image, video, audio):
+                    if media_value:
+                        _check_media_url_policy(media_value)
+            except ValueError as exc:
+                raise ToolError(f"Query media rejected: {exc}")
+
+        payload = await _afederated_search(
+            get_manager(),
+            datasets,
+            query,
+            image=image,
+            video=video,
+            audio=audio,
+            top_k=top_k,
+            use_reranker=use_reranker,
+            reranker_top_k=reranker_top_k,
+            base_llm_modalities=base_llm_modalities,
+            filters=filters,
+            media_base_url=None,  # fall back to the global MEDIA_BASE_URL
+        )
+        return json.dumps(payload, indent=2, default=str)
 
     @mcp.tool()
     async def add_memory(
@@ -2131,6 +2694,221 @@ try:
             verified_pw,
             None,
         )
+
+    def _memory_tool_dataset(dataset_name: str | None, password: str | None):
+        """Shared setup for the memory-management tools: resolve + unlock.
+
+        Returns ``(dm, ds_name)`` after verifying the dataset exists and the
+        caller may access it — the same header-based identity resolution the
+        other memory tools use, so memory headers can never unlock another
+        dataset.
+        """
+        ds_name = _resolve_memory_dataset(dataset_name)
+        pw = _resolve_memory_password(password)
+        dm = get_manager()
+        try:
+            dm.get_dataset(ds_name)
+        except FileNotFoundError:
+            raise ToolError(f"Memory dataset '{ds_name}' not found.")
+        _resolve_and_unlock(dm, ds_name, pw)
+        return dm, ds_name
+
+    @mcp.tool()
+    async def delete_memory(
+        memory_ids: list[str],
+        dataset_name: str | None = None,
+        password: str | None = None,
+    ) -> str:
+        """Delete memories from your personal long-term memory store by point ID.
+
+        Pass the ``memory_id`` values reported by ``search_memory`` /
+        ``list_memories``.  Explicit-IDs-only **by design** — there is no
+        query/similarity-directed deletion, so an LLM can never delete
+        anything it has not first seen listed.  Deleting one chunk of a split
+        memory (``memory_chunks`` > 1) leaves the other chunks; pass every
+        chunk id to remove the memory completely.
+
+        Parameters
+        ----------
+        memory_ids:
+            Non-empty list of point IDs to delete.
+        dataset_name / password:
+            Optional — resolved from request headers / env var.  The model
+            usually does NOT pass these.
+        """
+
+        def _impl() -> str:
+            dm, ds_name = _memory_tool_dataset(dataset_name, password)
+
+            ids = [str(m).strip() for m in (memory_ids or []) if str(m).strip()]
+            if not ids:
+                raise ToolError(
+                    "memory_ids must be a non-empty list of point IDs "
+                    "(copy them from search_memory / list_memories results)."
+                )
+
+            # Audit trail: fetch payloads first so the response states exactly
+            # what was removed (and unknown IDs are visible as "not found").
+            previews: list[dict[str, Any]] = []
+            try:
+                rag = dm._get_rag(ds_name)
+                vs = rag.vector_store
+                if vs is not None and not isinstance(vs, dict):
+                    client = vs._client  # type: ignore[attr-defined]
+                    pts = client.retrieve(
+                        vs.collection_name,  # type: ignore[attr-defined]
+                        ids=ids,
+                        with_payload=True,
+                        with_vectors=False,
+                    )
+                    found = {str(p.id) for p in pts}
+                    for pt in pts:
+                        payload = pt.payload or {}
+                        meta = payload.get("metadata", {}) or {}
+                        text = str(payload.get("page_content", ""))
+                        previews.append(
+                            {
+                                "memory_id": str(pt.id),
+                                "kind": meta.get("memory_kind"),
+                                "preview": " ".join(text.split())[:120],
+                            }
+                        )
+                    missing = [i for i in ids if i not in found]
+                else:
+                    missing = []
+            except Exception:
+                previews, missing = [], []
+
+            deleted = dm.delete_documents(ds_name, ids)
+            return json.dumps(
+                {
+                    "status": "deleted",
+                    "dataset": ds_name,
+                    "requested": len(ids),
+                    "deleted": deleted,
+                    "not_found": missing,
+                    "deleted_memories": previews,
+                },
+                indent=2,
+                default=str,
+            )
+
+        return await _offload(_impl)
+
+    @mcp.tool()
+    async def list_memories(
+        limit: int = 20,
+        kind: str | None = None,
+        tags: list[str] | None = None,
+        include_session_history: bool = False,
+        dataset_name: str | None = None,
+        password: str | None = None,
+    ) -> str:
+        """List your stored memories so you can review or delete them.
+
+        Returns the newest memories first, each with its ``memory_id`` (pass
+        it to ``delete_memory`` to remove one), ``kind``, timestamp, tags and
+        a text preview.  Session histories are hidden unless requested —
+        they are machine-managed by the session-history plugin.
+
+        Parameters
+        ----------
+        limit:
+            Max memories to list (default 20, max 200).
+        kind:
+            Only list memories of this ``kind`` (e.g. ``decision``,
+            ``preference``, ``gotcha``, ``fact``, ``note``).
+        tags:
+            Only list memories carrying ANY of these tags.
+        include_session_history:
+            Include ``session_history`` entries (default false).
+        dataset_name / password:
+            Optional — resolved from request headers / env var.
+        """
+
+        def _impl() -> str:
+            dm, ds_name = _memory_tool_dataset(dataset_name, password)
+            max_rows = _clamp_tool_limit(limit, "limit", maximum=200)
+
+            from qdrant_client.models import FieldCondition, Filter, MatchAny, MatchValue
+
+            must: list[Any] = []
+            must_not: list[Any] = []
+            if kind:
+                must.append(FieldCondition(key="metadata.memory_kind", match=MatchValue(value=kind)))
+            if tags:
+                must.append(FieldCondition(key="metadata.memory_tags", match=MatchAny(any=[str(t) for t in tags])))
+            if not include_session_history and not kind:
+                must_not.append(FieldCondition(key="metadata.memory_kind", match=MatchValue(value="session_history")))
+            scroll_filter = Filter(must=must or None, must_not=must_not or None)
+
+            rows = dm.scroll_documents(ds_name, scroll_filter, limit=max_rows)
+
+            def _ts(row: tuple[str, dict[str, Any]]) -> str:
+                meta = row[1].get("metadata", {}) or {}
+                return str(meta.get("memory_ts") or "")
+
+            rows.sort(key=_ts, reverse=True)  # newest first
+
+            if not rows:
+                scope = f" (kind={kind})" if kind else ""
+                return f"0 memories in '{ds_name}'{scope} — the store is empty or nothing matches."
+
+            lines = [f"{len(rows)} memory(ies) in '{ds_name}' (newest first):", ""]
+            for pid, payload in rows:
+                meta = payload.get("metadata", {}) or {}
+                text = " ".join(str(payload.get("page_content", "")).split())
+                lines.append(f"- memory_id: {pid}")
+                lines.append(
+                    f"  kind: {meta.get('memory_kind', 'note')} | ts: {meta.get('memory_ts', '?')} "
+                    f"| tags: {meta.get('memory_tags') or []} "
+                    f"| session: {meta.get('session_id') or '-'}"
+                )
+                lines.append(f"  preview: {text[:200]}{'…' if len(text) > 200 else ''}")
+            return "\n".join(lines)
+
+        return await _offload(_impl)
+
+    @mcp.tool()
+    async def forget_session(
+        session_id: str,
+        dataset_name: str | None = None,
+        password: str | None = None,
+    ) -> str:
+        """Delete the stored session-history memory for one session.
+
+        Session histories are written automatically by the session-memory
+        plugin (``kind: session_history``) and replaced in place when a
+        session is re-flushed; this tool removes one entirely — e.g. after a
+        session containing sensitive material.  It only ever touches
+        ``session_history`` documents, never curated memories.
+
+        Parameters
+        ----------
+        session_id:
+            The session whose stored history should be deleted.
+        dataset_name / password:
+            Optional — resolved from request headers / env var.
+        """
+
+        def _impl() -> str:
+            dm, ds_name = _memory_tool_dataset(dataset_name, password)
+            try:
+                deleted = dm.delete_session_history(ds_name, str(session_id))
+            except Exception as exc:
+                raise ToolError(f"Failed to delete session history: {exc}") from exc
+            return json.dumps(
+                {
+                    "status": "deleted" if deleted else "nothing to delete",
+                    "dataset": ds_name,
+                    "session_id": str(session_id),
+                    "deleted_chunks": deleted,
+                },
+                indent=2,
+                default=str,
+            )
+
+        return await _offload(_impl)
 
     @mcp.tool()
     async def get_dataset_files(

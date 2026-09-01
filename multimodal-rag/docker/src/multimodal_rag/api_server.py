@@ -54,7 +54,12 @@ from multimodal_rag.dataset_manager import (
     _check_media_url_policy,
     _cross_process_lock,
 )
-from multimodal_rag.rag_system import _ingest_warnings
+from multimodal_rag.rag_system import (
+    _arerank_with,
+    _ingest_warnings,
+    merge_federated_results,
+    resolve_federated_targets,
+)
 from multimodal_rag.utils.general_tools import sync_pool
 from multimodal_rag.utils.logging_utils import logging, setup_logger
 
@@ -192,7 +197,11 @@ class _UploadJobTracker:
             job["status"] = "complete"
             job["result"] = result
             job["completed_at"] = time.time()
+            source = str(job.get("source") or "files")
         self._redis_set(job)
+        from multimodal_rag.utils.metrics import INGEST_JOBS
+
+        INGEST_JOBS.labels(source=source, state="complete").inc()
 
     def fail(self, job_id: str, error: str) -> None:
         with self._lock:
@@ -202,7 +211,11 @@ class _UploadJobTracker:
             job["status"] = "error"
             job["error"] = error
             job["completed_at"] = time.time()
+            source = str(job.get("source") or "files")
         self._redis_set(job)
+        from multimodal_rag.utils.metrics import INGEST_JOBS
+
+        INGEST_JOBS.labels(source=source, state="error").inc()
 
     def get(self, job_id: str) -> dict[str, Any] | None:
         with self._lock:
@@ -312,6 +325,11 @@ QDRANT_PVC_SIZE = os.environ.get("QDRANT_PVC_SIZE", "")
 # configuration when these files change — no pod rollout required.
 CONFIG_DIR = os.environ.get("CONFIG_DIR", "")
 RAG_REMOTE = os.environ.get("RAG_REMOTE", "true").lower() in ("true", "1", "yes")
+RAG_OCR_DEFAULT = os.environ.get("RAG_OCR_DEFAULT", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
 RAG_CAPTION_WITH_ASR = os.environ.get("RAG_CAPTION_WITH_ASR", "false").lower() in (
     "true",
     "1",
@@ -753,6 +771,7 @@ _PUBLIC_ENDPOINT_NAMES = frozenset(
     {
         "healthz",
         "readyz",
+        "api_metrics",  # Prometheus exposition (in-cluster scrapers)
         "favicon",
         "index",
         "manage",
@@ -808,6 +827,63 @@ async def _api_key_auth(request: Request, call_next):
     if secrets.compare_digest(key, _RAG_API_KEY):
         return await call_next(request)
     return JSONResponse({"detail": "Missing or invalid API key"}, status_code=401)
+
+
+@app.middleware("http")
+async def _metrics_middleware(request: Request, call_next):
+    """HTTP request count + latency by route template (roadmap feature 7).
+
+    Registered after the API-key middleware so it is the OUTERMOST wrapper
+    (Starlette applies middleware in reverse registration order) — the
+    timings include auth overhead, which is the point.
+
+    The route template (e.g. ``/api/datasets/{name}/search``) keeps label
+    cardinality bounded; unmatched paths (404s, scanners) are labelled
+    ``unmatched``.  Route resolution mirrors the API-key middleware: routing
+    has not run when the middleware starts, so the template is resolved up
+    front via an explicit match against ``app.routes``.
+    """
+    from starlette.routing import Match
+
+    from multimodal_rag.utils.metrics import HTTP_LATENCY, HTTP_REQUESTS
+
+    route_template = "unmatched"
+    match_scope = {"type": "http", "path": request.url.path, "method": request.method}
+    for r in app.routes:
+        try:
+            match, _ = r.matches(match_scope)
+        except Exception:
+            continue
+        if match == Match.FULL:
+            route_template = getattr(r, "path", None) or route_template
+            break
+
+    start = time.perf_counter()
+    try:
+        response = await call_next(request)
+        status = str(response.status_code)
+    except Exception:
+        status = "500"
+        HTTP_REQUESTS.labels(route=route_template, method=request.method, status=status).inc()
+        HTTP_LATENCY.labels(route=route_template, method=request.method).observe(max(0.0, time.perf_counter() - start))
+        raise
+    HTTP_REQUESTS.labels(route=route_template, method=request.method, status=status).inc()
+    HTTP_LATENCY.labels(route=route_template, method=request.method).observe(max(0.0, time.perf_counter() - start))
+    return response
+
+
+@app.get("/metrics")
+async def api_metrics():
+    """Prometheus exposition (process-local counters/histograms).
+
+    Exempt from ``RAG_API_KEY`` like the health endpoints (scrapers are
+    in-cluster; bound the exposure with a NetworkPolicy / AuthorizationPolicy
+    if the pod is otherwise broadly reachable).
+    """
+    from multimodal_rag.utils.metrics import render_metrics
+
+    body, content_type = render_metrics()
+    return Response(content=body, media_type=content_type)
 
 
 def _reload_models() -> None:
@@ -1042,7 +1118,7 @@ async def api_create_dataset(body: dict[str, Any] = Body(...)):
 
     Request body::
 
-        {"name": "my-dataset", "description": "...", "caption_with_asr": false, "caption_with_vlm": false, "keep_originals": true, "password": "secret"}
+        {"name": "my-dataset", "description": "...", "caption_with_asr": false, "caption_with_vlm": false, "keep_originals": true, "ocr": false, "password": "secret"}
 
     ``caption_with_asr`` (defaults to the server config,
     ``RAG_CAPTION_WITH_ASR``) controls whether audio tracks from uploaded
@@ -1069,6 +1145,10 @@ async def api_create_dataset(body: dict[str, Any] = Body(...)):
     caption_with_vlm = body.get("caption_with_vlm", dm.caption_with_vlm)
     keep_originals = body.get("keep_originals", True)
     password = body.get("password") or None
+    # OCR fallback opt-in: omitted -> server-wide default (RAG_OCR_DEFAULT,
+    # chart values rag.ocr); explicit false in the body always wins.
+    body_ocr = body.get("ocr")
+    ocr = bool(body_ocr) if body_ocr is not None else RAG_OCR_DEFAULT
     try:
         loop = asyncio.get_running_loop()
         meta = await loop.run_in_executor(
@@ -1080,6 +1160,7 @@ async def api_create_dataset(body: dict[str, Any] = Body(...)):
             bool(caption_with_vlm),
             bool(keep_originals),
             password,
+            ocr,
         )
         return {"status": "ok", "dataset": meta}
     except FileExistsError as e:
@@ -1465,10 +1546,23 @@ async def api_upload_urls_batch(
 
     Returns a ``job_id`` immediately.  Poll ``GET /api/datasets/{name}/upload-status/{job_id}``
     every 2-3 seconds for progress updates.
+
+    Body flags (S3 prefix URLs only):
+
+      * ``sync: true`` — reconcile the dataset with the bucket prefix: after
+        the ingest, stored documents whose source is under a synced prefix
+        but absent from the bucket listing are pruned (objects deleted
+        upstream disappear here too).
+      * ``sync_dry_run: true`` — report the planned ingest/prune sets
+        (``would_ingest`` / ``would_prune``) without touching anything.
     """
     urls = body.get("urls", [])
     if not urls or not isinstance(urls, list):
         raise HTTPException(400, "Field 'urls' must be a non-empty array of URL strings")
+    sync = bool(body.get("sync", False))
+    sync_dry_run = bool(body.get("sync_dry_run", False))
+    if sync_dry_run:
+        sync = True
 
     dm = await get_manager_async()
     loop = asyncio.get_running_loop()
@@ -1477,6 +1571,17 @@ async def api_upload_urls_batch(
         await loop.run_in_executor(sync_pool, dm.get_dataset, name, False)
     except FileNotFoundError:
         raise HTTPException(404, f"Dataset '{name}' not found")
+
+    if sync_dry_run:
+        # No ingest — answer synchronously.
+        try:
+            plan = await loop.run_in_executor(
+                sync_pool,
+                partial(dm.add_urls_batch, name, urls, sync=True, sync_dry_run=True),
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        return {"dataset": name, **plan}
 
     job_id = _upload_jobs.create(name, len(urls), source="urls")
     warnings: list[str] = []
@@ -1488,7 +1593,7 @@ async def api_upload_urls_batch(
             def cb(e):
                 _upload_jobs.add_event(job_id, e)
 
-            r = dm.add_urls_batch(name, urls, progress_callback=cb)
+            r = dm.add_urls_batch(name, urls, progress_callback=cb, sync=sync)
             if warnings:
                 r["warnings"] = warnings
             _upload_jobs.complete(job_id, r)
@@ -1539,6 +1644,43 @@ async def api_upload_status(
 # -- Search ------------------------------------------------------------------
 
 
+def _search_filters_from_params(
+    file_types: str = "",
+    severities: str = "",
+    source_prefix: str = "",
+    date_from: str = "",
+    date_to: str = "",
+) -> dict[str, Any] | None:
+    """Build the metadata-filter dict for search endpoints from raw params.
+
+    ``file_types``/``severities`` are comma-separated strings; anything
+    unparsed is dropped.  Raises ``HTTPException(400)`` on an invalid date so
+    callers get a clear error instead of a silent no-op filter.
+    """
+    filters: dict[str, Any] = {}
+    ft = [t.strip() for t in (file_types or "").split(",") if t.strip()]
+    if ft:
+        filters["file_types"] = ft
+    sv = [t.strip() for t in (severities or "").split(",") if t.strip()]
+    if sv:
+        filters["severities"] = sv
+    if (source_prefix or "").strip():
+        filters["source_prefix"] = source_prefix.strip()
+    if (date_from or "").strip():
+        filters["date_from"] = date_from.strip()
+    if (date_to or "").strip():
+        filters["date_to"] = date_to.strip()
+    if not filters:
+        return None
+    from multimodal_rag.vector_store import build_payload_filter
+
+    try:
+        build_payload_filter(filters)  # validation pass (dates)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return filters
+
+
 @app.get("/api/datasets/{name}/search")
 async def api_search(
     name: str,
@@ -1547,26 +1689,44 @@ async def api_search(
     top_k: int = Query(10, ge=1, le=100),
     use_reranker: bool = Query(False),
     reranker_top_k: int = Query(3, ge=1, le=50),
+    file_types: str = Query(
+        "",
+        description="Comma-separated file-type filter (pdf,image,video,audio,text,json,table,code,office,html,xml,yaml,notebook,ebook,log,unknown)",
+    ),
+    severities: str = Query(
+        "", description="Comma-separated log-severity filter (TRACE,DEBUG,INFO,WARN,ERROR,FATAL,CRITICAL)"
+    ),
+    source_prefix: str = Query("", description="Only results whose stored source path starts with this prefix"),
+    date_from: str = Query("", description="Only results with timestamp_start >= this ISO-8601 datetime"),
+    date_to: str = Query("", description="Only results with timestamp_start <= this ISO-8601 datetime"),
     x_dataset_password: str | None = Header(None, alias="X-Dataset-Password"),
 ):
     """Search within a dataset using a text query.
 
     Returns ranked results with content and similarity scores.
+
+    Optional metadata filters (AND-combined, applied in Qdrant before
+    ranking): ``file_types``, ``severities``, ``source_prefix``,
+    ``date_from``/``date_to``.
     """
     dm = await get_manager_async()
     try:
         await _require_dataset_password(dm, name, x_dataset_password, request)
+        filters = _search_filters_from_params(file_types, severities, source_prefix, date_from, date_to)
         loop = asyncio.get_running_loop()
         results = await loop.run_in_executor(
             sync_pool,
-            dm.search,
-            name,
-            q,
-            top_k,
-            use_reranker,
-            reranker_top_k,
+            partial(
+                dm.search,
+                name,
+                q,
+                top_k=top_k,
+                use_reranker=use_reranker,
+                reranker_top_k=reranker_top_k,
+                filters=filters,
+            ),
         )
-        return {"query": q, "results": results}
+        return {"query": q, "filters": filters, "results": results}
     except FileNotFoundError:
         raise HTTPException(404, f"Dataset '{name}' not found")
 
@@ -1603,6 +1763,19 @@ async def api_search_multimodal(
       - A list of data URL strings
       - A remote HTTP(S) URL (``https://example.com/photo.jpg``)
 
+    An optional ``filters`` object narrows the search server-side
+    (AND-combined, applied in Qdrant before ranking)::
+
+        {
+            "filters": {
+                "file_types": ["pdf", "log"],
+                "severities": ["ERROR"],
+                "source_prefix": "reports/2025/",
+                "date_from": "2026-08-01T00:00:00",
+                "date_to": "2026-08-31T23:59:59"
+            }
+        }
+
     Returns ranked results with content and similarity scores.
     """
     query = body.get("query")
@@ -1631,19 +1804,234 @@ async def api_search_multimodal(
     dm = await get_manager_async()
     try:
         await _require_dataset_password(dm, name, password, request)
+        raw_filters = body.get("filters")
+        if raw_filters is not None and not isinstance(raw_filters, dict):
+            raise HTTPException(400, "Field 'filters' must be an object")
+        from multimodal_rag.vector_store import build_payload_filter
+
+        try:
+            build_payload_filter(raw_filters)  # validation pass (dates)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
         loop = asyncio.get_running_loop()
         results = await loop.run_in_executor(
             sync_pool,
-            dm.search,
-            name,
-            query,
-            top_k,
-            use_reranker,
-            reranker_top_k,
+            partial(
+                dm.search,
+                name,
+                query,
+                top_k=top_k,
+                use_reranker=use_reranker,
+                reranker_top_k=reranker_top_k,
+                filters=raw_filters,
+            ),
         )
-        return {"query": query, "results": results}
+        return {"query": query, "filters": raw_filters, "results": results}
     except FileNotFoundError:
         raise HTTPException(404, f"Dataset '{name}' not found")
+
+
+# -- Federated multi-dataset search (roadmap feature 8) ----------------------
+
+
+async def _federated_rerank_rag(dm: DatasetManager, targets: list[str]) -> Any:
+    """Return the first target dataset's RAG that has a reranker configured.
+
+    The reranker is server-wide (per-dataset model overrides are explicitly
+    not planned), so any dataset's instance works for the merged pass.
+    """
+    loop = asyncio.get_running_loop()
+    for name in targets:
+        rag = await loop.run_in_executor(sync_pool, dm._get_rag, name)
+        if getattr(rag, "reranker", None) is not None:
+            return rag
+    return None
+
+
+async def _federated_rest_search(
+    dm: DatasetManager,
+    datasets: "list[str] | str",
+    q: str,
+    top_k: int = 5,
+    use_reranker: bool = False,
+    reranker_top_k: int = 3,
+    filters: dict[str, Any] | None = None,
+    is_unlocked: "Any" = None,
+) -> dict[str, Any]:
+    """Fan one query out over several datasets and merge the pools.
+
+    Testable core behind ``POST /api/search`` (the endpoint only parses the
+    request body and wires the per-client unlock predicate).  Per-dataset
+    searches are the same sync ``dm.search`` calls the single-dataset
+    endpoints use, offloaded to ``sync_pool`` and gathered concurrently; a
+    failing dataset becomes a per-dataset error note and never fails the
+    call.  Merging labels every hit with its dataset, dedups on the
+    dataset-qualified twin-identity key and sorts by score; *use_reranker*
+    runs ONE rerank pass over the merged pool (the reranker is content-based,
+    so cross-dataset pairs are fine).
+
+    Password-protected datasets without a cached unlock for the caller are
+    skipped with a note — no password is accepted here, mirroring the MCP
+    federated tool (v3.0.0: passwords stay out of request/tool signatures;
+    use ``POST /api/datasets/{name}/unlock`` first).
+    """
+    loop = asyncio.get_running_loop()
+    try:
+        targets, skipped, errors = await loop.run_in_executor(
+            sync_pool, resolve_federated_targets, dm, datasets, is_unlocked
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, str(exc))
+
+    if not targets:
+        return {"query": q, "filters": filters, "results": [], "skipped": skipped, "errors": errors}
+
+    async def _search_one(name: str) -> list[dict[str, Any]]:
+        return await loop.run_in_executor(
+            sync_pool,
+            partial(
+                dm.search,
+                name,
+                q,
+                top_k=top_k,
+                use_reranker=False,  # one rerank pass over the merged pool instead
+                reranker_top_k=top_k,
+                filters=filters,
+            ),
+        )
+
+    outcomes = await asyncio.gather(*(_search_one(name) for name in targets), return_exceptions=True)
+
+    entries: list[tuple[str, Any, float]] = []
+    extra_fields: dict[int, dict[str, Any]] = {}
+    for name, outcome in zip(targets, outcomes):
+        if isinstance(outcome, BaseException):
+            errors.append({"dataset": name, "error": f"{type(outcome).__name__}: {outcome}"})
+            continue
+        for entry in outcome:
+            doc = entry.get("content")
+            extra = {k: v for k, v in entry.items() if k not in ("content", "score")}
+            if extra:
+                extra_fields[id(doc)] = extra
+            entries.append((name, doc, float(entry.get("score", 0.0))))
+
+    merged = merge_federated_results(entries)
+
+    if use_reranker and merged:
+        rerank_rag = await _federated_rerank_rag(dm, targets)
+        if rerank_rag is None:
+            logger.warning("Federated rerank requested but no target dataset has a reranker — keeping embedding order.")
+        else:
+            labelled: list[tuple[Any, float]] = []
+            for name, doc, score in merged:
+                d = dict(doc) if isinstance(doc, dict) else {"text": str(doc)}
+                # The label rides on the doc through the sort/truncate; the
+                # reranker input conversion reads only text + media keys, so
+                # the private key never reaches the model.
+                d["_federated_dataset"] = name
+                labelled.append((d, score))
+            ranked = await _arerank_with(rerank_rag.rank, rerank_rag._extract_doc, q, labelled, reranker_top_k)
+            merged = [
+                ((d.pop("_federated_dataset", "") if isinstance(d, dict) else ""), d, score) for d, score in ranked
+            ]
+
+    results: list[dict[str, Any]] = []
+    for name, doc, score in merged:
+        entry_out: dict[str, Any] = {"dataset": name}
+        extra = extra_fields.get(id(doc))
+        if extra:
+            entry_out.update(extra)
+        entry_out["content"] = doc
+        entry_out["score"] = round(float(score), 4)
+        if isinstance(doc, dict):
+            if "_embedding_score" in doc and "embedding_score" not in entry_out:
+                entry_out["embedding_score"] = doc["_embedding_score"]
+            if "_reranker_score" in doc and "reranker_score" not in entry_out:
+                entry_out["reranker_score"] = doc["_reranker_score"]
+        results.append(entry_out)
+
+    return {"query": q, "filters": filters, "results": results, "skipped": skipped, "errors": errors}
+
+
+@app.post("/api/search")
+async def api_search_federated(
+    request: Request,
+    body: dict[str, Any] = Body(...),
+):
+    """Search SEVERAL datasets with one query and merge the results.
+
+    Request body::
+
+        {
+            "datasets": ["notes", "reports"] | "all",
+            "q": "deployment runbook",
+            "top_k": 5,
+            "use_reranker": false,
+            "reranker_top_k": 3,
+            "filters": {"file_types": ["pdf"], "severities": ["ERROR"]}
+        }
+
+    ``datasets`` is a list of dataset names, a single name, or ``"all"`` —
+    which expands to every dataset readable WITHOUT a password (no password
+    set, or unlocked for this caller via ``POST /api/datasets/{name}/unlock``).
+
+    ``filters`` is the same metadata-filter dict the per-dataset search
+    endpoints accept (``file_types``, ``severities``, ``source_prefix``,
+    ``date_from``/``date_to`` — AND-combined, applied in Qdrant before
+    ranking) and is applied to EVERY dataset.
+
+    ``top_k`` is PER DATASET (the merged pool holds at most
+    ``len(datasets) * top_k`` hits); ``reranker_top_k`` truncates the merged
+    pool after the single rerank pass.  Every returned hit carries the
+    ``dataset`` it came from and keeps its per-dataset score breakdown.
+
+    Password-protected datasets that are not unlocked for this caller are
+    skipped and reported under ``skipped`` (federated search never accepts a
+    password — unlock the dataset first).  A dataset that fails to search is
+    reported under ``errors``; the other datasets still contribute results.
+    """
+    q = body.get("q")
+    if not isinstance(q, str):
+        raise HTTPException(400, "Field 'q' is required (string)")
+    datasets = body.get("datasets")
+    if datasets is None:
+        raise HTTPException(400, "Field 'datasets' is required (list of names or \"all\")")
+    if isinstance(datasets, str):
+        pass  # a single name or "all" — resolved by _federated_rest_search
+    elif not isinstance(datasets, (list, tuple)):
+        raise HTTPException(400, "Field 'datasets' must be a list of dataset names or \"all\"")
+
+    top_k = body.get("top_k", 5)
+    if not isinstance(top_k, int) or isinstance(top_k, bool) or not 1 <= top_k <= 100:
+        raise HTTPException(400, "Field 'top_k' must be an integer between 1 and 100")
+    reranker_top_k = body.get("reranker_top_k", 3)
+    if not isinstance(reranker_top_k, int) or isinstance(reranker_top_k, bool) or not 1 <= reranker_top_k <= 50:
+        raise HTTPException(400, "Field 'reranker_top_k' must be an integer between 1 and 50")
+    use_reranker = bool(body.get("use_reranker", False))
+
+    raw_filters = body.get("filters")
+    if raw_filters is not None and not isinstance(raw_filters, dict):
+        raise HTTPException(400, "Field 'filters' must be an object")
+    from multimodal_rag.vector_store import build_payload_filter
+
+    try:
+        build_payload_filter(raw_filters)  # validation pass (dates)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+    dm = await get_manager_async()
+    cid = _unlock_client_id(request)
+
+    return await _federated_rest_search(
+        dm,
+        datasets,
+        q,
+        top_k=top_k,
+        use_reranker=use_reranker,
+        reranker_top_k=reranker_top_k,
+        filters=raw_filters,
+        is_unlocked=lambda name: _unlock_cache_get(name, cid) is not None,
+    )
 
 
 # -- Documents list ----------------------------------------------------------
@@ -2938,6 +3326,35 @@ async def api_migrate_tier_schema(
     return await loop.run_in_executor(sync_pool, _do_migrate)
 
 
+@app.post("/api/admin/datasets/{name}/backfill-search-metadata")
+async def api_backfill_search_metadata(
+    name: str,
+    request: Request,
+    x_dataset_password: str | None = Header(None, alias="X-Dataset-Password"),
+) -> dict[str, Any]:
+    """Backfill ``metadata.file_type`` + search payload indexes on a dataset.
+
+    Metadata-filtered search keys off ``metadata.file_type``, which only docs
+    ingested after the feature carry.  This idempotent migration derives the
+    file type from each stored point's ``metadata.source`` and creates the
+    payload indexes (``file_type``/``severities``/``source`` keyword,
+    ``timestamp_start`` datetime).  Points that already carry ``file_type``
+    are untouched.  Safe to re-run (e.g. after ingesting into a dataset
+    concurrently).
+
+    Password-protected datasets require the ``X-Dataset-Password`` header
+    (or a cached unlock) — this rewrites the collection's payloads.
+    """
+    dm = await get_manager_async()
+    await _require_dataset_password(dm, name, x_dataset_password, request)
+
+    def _do_backfill() -> dict[str, Any]:
+        return dm.backfill_search_metadata(name)
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(sync_pool, _do_backfill)
+
+
 @app.post("/api/admin/datasets/{name}/recreate")
 async def api_recreate_dataset(
     name: str,
@@ -2985,6 +3402,120 @@ async def api_recreate_dataset(
     return {"job_id": job_id, "status": "recreating", "total_files": len(file_entries)}
 
 
+@app.post("/api/admin/datasets/import")
+async def api_import_dataset(request: Request) -> dict[str, Any]:
+    """Restore a dataset from a ``GET /api/datasets/{name}/export`` backup.
+
+    Accepts either a multipart upload (``file`` = the ``.tar.gz`` export;
+    optional form fields ``new_name``, ``overwrite``, ``password``) or a JSON
+    body ``{"s3_uri": "s3://bucket/backup.tar.gz", "overwrite": false,
+    "new_name": "...", "password": "..."}`` — the backup CronJob writes
+    exports to S3, so restores can pull straight from there.
+
+    The export carries no vectors (``documents.jsonl`` is payloads only), so
+    a restore **re-embeds**: datasets with ``files/`` go through the same
+    recreate flow as an embedder swap (twins, captions and media tiers are
+    rebuilt like a fresh ingest); raw-documents backups (no files) replay
+    their ``documents.jsonl`` text through the embedder instead.
+
+    Returns a ``job_id`` immediately — poll
+    ``GET /api/datasets/{name}/upload-status/{job_id}`` for progress.  The
+    restored dataset is unprotected unless ``password`` is provided (the
+    exported ``meta.json`` strips the password hash by design).
+    """
+    dm = await get_manager_async()
+    content_type = request.headers.get("content-type", "")
+    tmp_path: Path | None = None
+    completed = False
+    try:
+        loop = asyncio.get_running_loop()
+        if "multipart/form-data" in content_type:
+            form = await request.form()
+            upload = form.get("file")
+            if upload is None or isinstance(upload, str):
+                raise HTTPException(400, "Multipart field 'file' with the export .tar.gz is required")
+            raw_new_name = form.get("new_name")
+            new_name = raw_new_name if isinstance(raw_new_name, str) and raw_new_name.strip() else None
+            raw_overwrite = form.get("overwrite")
+            overwrite = str(raw_overwrite or "").lower() in ("1", "true", "yes", "on")
+            raw_password = form.get("password")
+            password = raw_password if isinstance(raw_password, str) and raw_password else None
+            fd, tmp_name = tempfile.mkstemp(suffix=".tar.gz")
+            os.close(fd)
+            tmp_path = Path(tmp_name)
+            with open(tmp_path, "wb") as out:
+                await _stream_upload(upload, out)
+        elif "application/json" in content_type:
+            body = await request.json()
+            s3_uri = str(body.get("s3_uri") or "").strip()
+            if not s3_uri:
+                raise HTTPException(400, "JSON body must provide 's3_uri' (or upload multipart 'file')")
+            new_name = body.get("new_name") or None
+            overwrite = bool(body.get("overwrite", False))
+            password = body.get("password") or None
+            from multimodal_rag.dataset_manager import _download_s3
+
+            tmp_path = Path(await loop.run_in_executor(sync_pool, _download_s3, s3_uri))
+        else:
+            raise HTTPException(415, "Send multipart/form-data with a 'file' field, or JSON with 's3_uri'")
+
+        plan = await loop.run_in_executor(
+            sync_pool,
+            partial(dm.prepare_import, tmp_path, new_name=new_name, overwrite=overwrite),
+        )
+        target = plan["dataset"]
+        if password:
+            await loop.run_in_executor(sync_pool, dm.set_password, target, password)
+
+        expected = plan["file_count"] or plan["document_rows"] or 1
+        job_id = _upload_jobs.create(target, expected, source="import")
+        tar_for_job = str(tmp_path)
+
+        def _process() -> None:
+            try:
+                if plan["mode"] == "re-embed-files":
+                    result = dm.recreate_dataset(target)
+                else:
+                    result = dm.replay_imported_documents(target, tar_for_job)
+                _upload_jobs.complete(job_id, result)
+            except Exception as exc:
+                _upload_jobs.fail(job_id, str(exc))
+            finally:
+                try:
+                    os.unlink(tar_for_job)
+                except OSError:
+                    pass
+
+        loop.run_in_executor(None, _process)
+        completed = True
+        return {
+            "job_id": job_id,
+            "status": "importing",
+            "dataset": target,
+            "mode": plan["mode"],
+            "backup_was_protected": plan["had_password"],
+            "password_restored": bool(password),
+            "note": (
+                f"Poll GET /api/datasets/{target}/upload-status/{job_id} — the export "
+                "carries no vectors, so the restore re-embeds everything."
+            ),
+        }
+    except HTTPException:
+        raise
+    except FileExistsError as exc:
+        raise HTTPException(409, str(exc))
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    finally:
+        if tmp_path is not None and not completed:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
 # ---------------------------------------------------------------------------
 # HTML frontend
 # ---------------------------------------------------------------------------
@@ -3001,18 +3532,24 @@ async def index():
             _HTML_INDEX = html_path.read_text(encoding="utf-8")
         else:
             _HTML_INDEX = "<html><body><h1>Frontend not found</h1></body></html>"
+    # Server-injected page configuration via meta tags: the OCR-fallback
+    # default (RAG_OCR_DEFAULT, chart values rag.ocr) pre-checks the create
+    # form's "OCR fallback" box; the API key (when auth is on) lets the
+    # browser keep working — the page is public by design and IS the auth
+    # boundary for browser users; direct/scripted callers still send
+    # X-RAG-Api-Key themselves.
+    html = _HTML_INDEX
+    if RAG_OCR_DEFAULT:
+        html = html.replace(
+            "</head>", '<meta name="rag-ocr-default" content="true"></head>', 1
+        )
     if _RAG_API_KEY:
-        # API-key auth is on: embed the key into the served page (as a meta
-        # tag the page's JS picks up) so the browser UI keeps working.  The
-        # page is public by design — it IS the auth boundary for browser
-        # users; direct/scripted API callers must still send X-RAG-Api-Key
-        # (or Authorization: Bearer) themselves.
-        return _HTML_INDEX.replace(
+        html = html.replace(
             "</head>",
             f'<meta name="rag-api-key" content="{_RAG_API_KEY}"></head>',
             1,
         )
-    return _HTML_INDEX
+    return html
 
 
 @app.get("/favicon.png")

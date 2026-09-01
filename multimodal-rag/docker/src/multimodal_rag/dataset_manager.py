@@ -34,6 +34,7 @@ except ImportError:  # pragma: no cover - Windows dev only
     fcntl = None  # type: ignore[assignment]
     _HAS_FCNTL = False
 
+import multimodal_rag.utils.bm25 as bm25_lane
 from multimodal_rag.input_processing import (
     ArchiveProcessor,
     CodeProcessor,
@@ -56,6 +57,16 @@ from multimodal_rag.utils.general_tools import retry_call
 from multimodal_rag.utils.logging_utils import logging
 
 logger = logging.getLogger(__name__)
+
+# Collection/dataset schema version recorded in meta.json.  v2 (current) is
+# the hybrid layout: a *named* "dense" vector plus a named "bm25" sparse
+# vector (roadmap feature 2).  Datasets created before the field existed are
+# implicitly v1 — their collections hold one unnamed default vector, which
+# cannot host a second lane, so they keep dense-only retrieval until
+# recreated.  The fingerprint guard nudges that with a warning (see
+# _nudge_schema_upgrade); it is deliberately NOT an error — v1 retrieval is
+# fully functional.
+DATASET_SCHEMA_VERSION = 2
 
 
 class EmbedderMismatchError(ValueError):
@@ -515,6 +526,23 @@ def _is_s3_directory_url(url: str) -> bool:
         return True
     # No extension → likely a prefix
     return "." not in key.rsplit("/", 1)[-1]
+
+
+def _sync_prefixes(urls: list[str]) -> list[str]:
+    """Normalize the S3 URLs an S3 sync reconciles against.
+
+    One prefix per directory-like S3 URL: query stripped, exactly one
+    trailing slash.  Single-object S3 URLs raise — syncing one object has no
+    meaningful prune scope (use a prefix).
+    """
+    out: list[str] = []
+    for u in urls:
+        if not u.startswith("s3://"):
+            continue
+        if not _is_s3_directory_url(u):
+            raise ValueError(f"sync requires an s3:// prefix (directory) URL, got a single-object URL: {u}")
+        out.append(u.split("?")[0].rstrip("/") + "/")
+    return out
 
 
 def _list_s3_prefix(s3_url: str) -> list[str]:
@@ -1305,6 +1333,7 @@ class DatasetManager:
         caption_with_vlm: bool = False,
         keep_originals: bool = True,
         password: str | None = None,
+        ocr: bool = False,
     ) -> dict[str, Any]:
         """Create a new dataset.
 
@@ -1328,6 +1357,12 @@ class DatasetManager:
         password:
             Optional password to protect read access to the dataset.
             Stored as a PBKDF2-SHA256 hash.
+        ocr:
+            Whether to OCR scanned PDF pages (pages carrying images but no
+            text layer) through the tesseract CLI during preprocessing.
+            Off by default — OCR on a large scan is expensive and must be
+            opted into.  Requires the tesseract binary in the image (shipped
+            in the Dockerfile); without it the flag is a no-op.
         """
         self._validate_name(name)
         dataset_dir = self.datasets_path / name
@@ -1342,8 +1377,14 @@ class DatasetManager:
             "caption_with_asr": caption_with_asr,
             "caption_with_vlm": caption_with_vlm,
             "keep_originals": keep_originals,
+            "ocr": bool(ocr),
             "created": datetime.now().isoformat(),
             "document_count": 0,
+            # The collection _get_rag creates below uses the current schema
+            # (hybrid dense+BM25, roadmap feature 2) — record it so the
+            # fingerprint guard can tell v1 datasets apart when nudging a
+            # recreate.
+            "schema_version": DATASET_SCHEMA_VERSION,
         }
         if password:
             meta["password_hash"] = _hash_password(password)
@@ -1524,7 +1565,16 @@ class DatasetManager:
             meta.pop("embedder_model", None)
             meta.pop("embedder_dim", None)
             meta.pop("embedder_updated_at", None)
+            # The rebuilt collection carries the CURRENT schema (named dense
+            # + bm25 sparse) — record it so the schema-upgrade nudge stops
+            # firing for this dataset.
+            meta["schema_version"] = DATASET_SCHEMA_VERSION
             self._write_meta(dataset_name, meta)
+
+        # The BM25 df stats belong to the old collection — re-ingesting on
+        # top of them would double every document frequency and flatten the
+        # idf weighting.
+        self.reset_bm25_stats(dataset_name)
 
         logger.info(
             "Recreating dataset '%s' from %d file(s)",
@@ -1537,6 +1587,223 @@ class DatasetManager:
         # file — leaving a freshly-dropped, empty collection.
         self._clear_ingested_hashes(dataset_name)
         return self.add_files_batch(dataset_name, file_entries, progress_callback=progress_callback)
+
+    # ------------------------------------------------------------------
+    # Backup restore / import (roadmap feature 4)
+    # ------------------------------------------------------------------
+
+    # Payload keys that reference media stored *outside* documents.jsonl —
+    # dropped in text-replay mode where the referenced files were never
+    # exported (raw-documents datasets have no files/).
+    _REPLAY_STRIP_KEYS = (
+        "image",
+        "video",
+        "audio",
+        "original_image",
+        "original_video",
+        "preprocessed_image",
+        "preprocessed_video",
+    )
+
+    def prepare_import(
+        self,
+        tar_path: str | Path,
+        *,
+        new_name: str | None = None,
+        overwrite: bool = False,
+    ) -> dict[str, Any]:
+        """Validate and unpack a dataset export; return the restore plan.
+
+        Fast, side-effect-only-up-to-meta step of a restore: reads the
+        archive (structure-checked), restores ``files/`` under the target
+        dataset dir and writes the restored ``meta.json`` — everything the
+        slow re-embed phase needs.  The caller then jobifies either
+        :meth:`recreate_dataset` (files mode) or
+        :meth:`replay_imported_documents` (text-replay mode).
+
+        Raises ``ValueError`` for non-export archives, unsafe members, bad
+        target names, or existing targets without ``overwrite=True``.
+        """
+        import tarfile
+
+        src = Path(tar_path)
+        if not src.is_file():
+            raise FileNotFoundError(f"Backup archive not found: {src}")
+
+        with tarfile.open(src, "r:*") as tar:
+            members = tar.getmembers()
+            for m in members:
+                name = m.name
+                if name not in ("meta.json", "documents.jsonl") and not name.startswith("files/"):
+                    raise ValueError(f"Unexpected member in backup archive: {name!r}")
+                if name.startswith(("/", "..")) or ".." in Path(name).parts:
+                    raise ValueError(f"Unsafe path in backup archive: {name!r}")
+
+            meta_member = tar.extractfile("meta.json")
+            if meta_member is None:
+                raise ValueError("Backup archive has no meta.json — not a dataset export")
+            backup_meta = json.loads(meta_member.read().decode("utf-8"))
+            if not isinstance(backup_meta, dict):
+                raise TypeError("Backup meta.json is malformed")
+
+            original_name = str(backup_meta.get("name") or src.stem)
+
+            docs_member = None
+            try:
+                docs_member = tar.extractfile("documents.jsonl")
+            except KeyError:
+                docs_member = None  # tolerate archives without a documents member
+            row_count = 0
+            if docs_member is not None:
+                for line in docs_member.read().decode("utf-8").splitlines():
+                    if line.strip():
+                        row_count += 1
+
+            target = new_name or original_name
+            self._validate_name(target)
+
+            dataset_dir = self.datasets_path / target
+            if dataset_dir.exists():
+                if not overwrite:
+                    raise FileExistsError(f"Dataset '{target}' already exists; pass overwrite=true to replace it.")
+                self.delete_dataset(target)
+
+            files_dir = dataset_dir / "files"
+            files_dir.mkdir(parents=True, exist_ok=True)
+            file_members = [m for m in members if m.name.startswith("files/") and m.isfile()]
+            if file_members:
+                # filter="data" refuses traversal, absolute paths, devices.
+                tar.extractall(dataset_dir, members=file_members, filter="data")
+
+            has_files = any(p.is_file() for p in files_dir.rglob("*"))
+
+        restored_meta = dict(backup_meta)
+        restored_meta["name"] = target
+        restored_meta["document_count"] = 0
+        # both restore modes rebuild the collection with the current schema -
+        # stamp it so the hybrid-capability nudge does not fire spuriously
+        restored_meta["schema_version"] = DATASET_SCHEMA_VERSION
+        for stale in (
+            "password_hash",
+            "embedder_model",
+            "embedder_dim",
+            "embedder_updated_at",
+            "file_type_counts",
+        ):
+            restored_meta.pop(stale, None)
+        self._write_meta(target, restored_meta)
+
+        mode = "re-embed-files" if has_files else ("text-replay" if row_count else None)
+        if mode is None:
+            # Nothing restorable — clean up the half-made dataset.
+            self.delete_dataset(target)
+            raise ValueError("Backup archive contains no files and no documents — nothing to restore")
+
+        return {
+            "dataset": target,
+            "original_name": original_name,
+            "mode": mode,
+            "file_count": len(file_members),
+            "document_rows": row_count,
+            "had_password": "password_hash" in backup_meta,
+        }
+
+    def replay_imported_documents(
+        self,
+        dataset_name: str,
+        tar_path: str | Path,
+        progress_callback: Any | None = None,
+    ) -> dict[str, Any]:
+        """Text-replay half of a restore: re-embed ``documents.jsonl`` rows.
+
+        For backups of raw-documents datasets (no ``files/``).  Each row's
+        ``page_content`` is re-embedded as a raw document with its lightweight
+        metadata (media payload keys are stripped — they reference files the
+        backup never contained).  Rows whose text is a bare media placeholder
+        are skipped.  ``metadata.source`` values keep pointing at the
+        original PVC paths and may dangle; ``file_type`` is re-stamped from
+        the source extension.  Run under a job — it embeds everything.
+        """
+        import re as _re
+        import tarfile
+
+        placeholder = _re.compile(r"^\s*\[(?:Image|Video|Audio)[^\]]*\][\d\s–—-]*$")
+        counted = 0
+        skipped = 0
+        batch: list[dict[str, Any]] = []
+
+        def _flush() -> None:
+            nonlocal counted
+            if batch:
+                self.add_documents(dataset_name, batch)
+                counted += len(batch)
+                batch.clear()
+                if progress_callback:
+                    try:
+                        progress_callback({"event": "embedding", "chunks": counted})
+                    except Exception:
+                        logger.debug("import progress callback failed", exc_info=True)
+
+        with tarfile.open(Path(tar_path), "r:*") as tar:
+            member = tar.extractfile("documents.jsonl")
+            if member is None:
+                raise ValueError("Backup archive has no documents.jsonl")
+            for raw in member.read().decode("utf-8").splitlines():
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    skipped += 1
+                    continue
+                payload = row.get("payload") or {}
+                text = str(payload.get("page_content") or "")
+                meta = payload.get("metadata") or {}
+                if not text.strip() or placeholder.match(text):
+                    skipped += 1
+                    continue
+                doc: dict[str, Any] = {"text": text}
+                for k, v in meta.items():
+                    if k not in self._REPLAY_STRIP_KEYS:
+                        doc[k] = v
+                batch.append(doc)
+                if len(batch) >= 64:
+                    _flush()
+            _flush()
+
+        return {
+            "status": "ok",
+            "dataset": dataset_name,
+            "mode": "text-replay",
+            "documents": counted,
+            "skipped": skipped,
+        }
+
+    def import_dataset(
+        self,
+        tar_path: str | Path,
+        *,
+        new_name: str | None = None,
+        overwrite: bool = False,
+        password: str | None = None,
+        progress_callback: Any | None = None,
+    ) -> dict[str, Any]:
+        """Synchronous end-to-end restore (prepare + re-embed).
+
+        Convenience wrapper running :meth:`prepare_import` and then the
+        appropriate slow phase inline.  The REST endpoint jobifies the two
+        phases separately instead; tests and scripts use this.
+        """
+        plan = self.prepare_import(tar_path, new_name=new_name, overwrite=overwrite)
+        target = plan["dataset"]
+        if password:
+            self.set_password(target, password)
+        if plan["mode"] == "re-embed-files":
+            result = self.recreate_dataset(target, progress_callback=progress_callback)
+            return {**plan, "result": result, "password_set": bool(password)}
+        result = self.replay_imported_documents(target, tar_path, progress_callback=progress_callback)
+        return {**plan, "result": result, "password_set": bool(password)}
 
     def list_datasets(self) -> list[dict[str, Any]]:
         """Return metadata for all existing datasets (password hash stripped)."""
@@ -1598,11 +1865,11 @@ class DatasetManager:
             if not meta:
                 raise FileNotFoundError(f"Dataset '{name}' not found")
             caption_changed = False
-            for key in ("description", "caption_with_asr", "caption_with_vlm", "keep_originals"):
+            for key in ("description", "caption_with_asr", "caption_with_vlm", "keep_originals", "ocr"):
                 if key in updates:
-                    if key in ("caption_with_asr", "caption_with_vlm"):
+                    if key in ("caption_with_asr", "caption_with_vlm", "ocr"):
                         meta[key] = bool(updates[key])
-                        caption_changed = True
+                        caption_changed = key != "ocr"  # ocr needs no RAG rebuild (read per file at ingest)
                     else:
                         meta[key] = updates[key]
             self._write_meta(name, meta)
@@ -1685,6 +1952,7 @@ class DatasetManager:
         file_entries: list[tuple[str, str]],
         progress_callback: Any | None = None,
         batch_score: float = 128.0,
+        force_names: set[str] | None = None,
     ) -> dict[str, Any]:
         """Process multiple files and store dedup-aware chunk counts.
 
@@ -1694,6 +1962,11 @@ class DatasetManager:
         accumulating chunks.  When *batch_score* is reached the batch is
         handed off to a background consumer thread and the producer
         immediately starts on the next file.
+
+        ``force_names`` (S3 sync): original file names whose content-hash
+        dedup skip is bypassed — used for URLs that have no stored points
+        (a file pruned after an upstream delete and re-appeared), so the
+        content is re-embedded instead of silently skipped.
 
         **Consumer** (background thread): calls the embedding API and
         stores results in Qdrant.  This overlap hides the embedding
@@ -1901,7 +2174,7 @@ class DatasetManager:
                 stored_path = str(dst)  # tier-0 stored path (before preprocessing)
                 file_type = _classify_file(dst_str)
                 content_hash = _sha256_file(dst)
-                if self._is_ingested(dataset_name, content_hash):
+                if self._is_ingested(dataset_name, content_hash) and not (force_names and fname in force_names):
                     file_results.append({"file": fname, "chunks": 0, "deduplicated": True})
                     if progress_callback:
                         progress_callback({"file": fname, "status": "skipped", "chunks": 0, "deduplicated": True})
@@ -1919,6 +2192,7 @@ class DatasetManager:
                         chunk_size=chunk_size,
                         chunk_overlap=chunk_overlap,
                         text_splitter=rag.embedder.text_splitter,
+                        ocr=self._get_ocr_enabled(dataset_name),
                     ):
                         pdf_batch.append(chunk)
                         chunk_count += 1
@@ -2148,6 +2422,10 @@ class DatasetManager:
             else:
                 file_results.append({"file": fname, "chunks": count})
 
+        # Metrics: one line summarising file outcomes + embedded chunks.
+        from multimodal_rag.utils.metrics import observe_ingest_results
+
+        observe_ingest_results(file_results, dataset_name)
         return {"status": "ok", "file_count": len(file_entries), "files": file_results}
 
     def add_urls_batch(
@@ -2156,6 +2434,8 @@ class DatasetManager:
         urls: list[str],
         progress_callback: Any | None = None,
         batch_score: float = 128.0,
+        sync: bool = False,
+        sync_dry_run: bool = False,
     ) -> dict[str, Any]:
         """Download files from URLs (``s3://``, ``http://``, ``https://``)
         and process them as a batch.
@@ -2168,11 +2448,55 @@ class DatasetManager:
         Each file URL is downloaded to a temporary file, then delegated to
         :meth:`add_files_batch` for chunking, embedding and storage.
         Temporary files are cleaned up after ingestion.
+
+        **Sync mode** (S3 prefix URLs only): ``sync=True`` makes the ingest a
+        two-way reconciliation with the bucket — after the normal ingest, any
+        stored document whose ``metadata.source`` starts with one of the
+        synced prefixes but is **not** in the current listing is pruned (its
+        Qdrant points are deleted), so objects deleted upstream disappear
+        from the dataset instead of lingering forever.  URLs that have no
+        stored points yet are force-re-ingested even when their content hash
+        was recorded before (heals a file that was pruned and re-appeared).
+        ``sync_dry_run=True`` reports the planned ingest/prune sets without
+        touching anything.  Known limitation: an object whose *content*
+        changed under the same key is re-ingested (its hash changes) but the
+        old version's points stay — source-keyed pruning cannot see versions.
         """
         # Expand S3 directory prefixes to individual file URLs
         expanded = _expand_urls(urls)
         if not expanded:
+            if sync or sync_dry_run:
+                return {
+                    "status": "dry-run" if sync_dry_run else "ok",
+                    "file_count": 0,
+                    "files": [],
+                    "sync": {"pruned_points": 0, "pruned_sources": [], "scope": []},
+                }
             return {"status": "ok", "file_count": 0, "files": []}
+
+        sync_prefixes = _sync_prefixes(urls)
+        stored_sources: set[str] = set()
+        if sync or sync_dry_run:
+            non_s3 = [u for u in expanded if not u.startswith("s3://")]
+            if non_s3:
+                raise ValueError(
+                    "sync / sync_dry_run require s3:// prefix URLs only — got non-S3 URL(s): " + ", ".join(non_s3[:3])
+                )
+            stored_sources = self._stored_sources(dataset_name, sync_prefixes)
+
+        if sync_dry_run:
+            expected = {u.split("?")[0].rstrip("/") for u in expanded}
+            return {
+                "status": "dry-run",
+                "scope": sync_prefixes,
+                "listed": sorted(expected),
+                "would_ingest": sorted(expected - stored_sources),
+                "would_prune": sorted(stored_sources - expected),
+            }
+
+        # Force-re-ingest URLs with no stored points (see docstring): keyed by
+        # the original file name the producer loop sees.
+        force_names = {Path(u.split("?")[0].rstrip("/")).name for u in expanded if u not in stored_sources}
 
         file_entries: list[tuple[str, str]] = []
         tmp_paths: list[str] = []
@@ -2198,7 +2522,12 @@ class DatasetManager:
                 file_entries,
                 progress_callback=progress_callback,
                 batch_score=batch_score,
+                force_names=force_names or None,
             )
+            if sync:
+                result["sync"] = self._prune_sources(
+                    dataset_name, sync_prefixes, expected={u.split("?")[0].rstrip("/") for u in expanded}
+                )
             return result
         finally:
             for tmp_path in tmp_paths:
@@ -3208,10 +3537,16 @@ class DatasetManager:
         top_k: int = 10,
         use_reranker: bool = False,
         reranker_top_k: int = 3,
+        filters: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Search a dataset and return ranked results.
 
         Returns a list of ``{"content": …, "score": …}`` dicts.
+
+        *filters* is the public metadata-filter dict (see
+        ``vector_store.build_payload_filter``): ``file_types``, ``severities``,
+        ``source_prefix``, ``date_from``/``date_to`` — all optional,
+        AND-combined, applied server-side in Qdrant before ranking.
         """
         rag = self._get_rag(dataset_name)
         results = rag.retrieve(
@@ -3220,6 +3555,7 @@ class DatasetManager:
             use_reranker=use_reranker,
             reranker_top_k=reranker_top_k,
             need_media=use_reranker and rag.reranker is not None,
+            filters=filters,
         )
         output = []
         for doc, score in results:
@@ -3279,6 +3615,8 @@ class DatasetManager:
         client = vs._client  # type: ignore[attr-defined]
         from qdrant_client.models import PointIdsList
 
+        # Fetch the point's terms for the BM25 df decrement BEFORE deletion.
+        self.forget_bm25_documents(dataset_name, [doc_id])
         client.delete(
             collection_name=vs.collection_name,  # type: ignore[attr-defined]
             points_selector=PointIdsList(points=[doc_id]),
@@ -3333,6 +3671,8 @@ class DatasetManager:
                 break
 
         if ids:
+            # Fetch terms for the BM25 df decrement BEFORE deletion.
+            self.forget_bm25_documents(dataset_name, ids)
             client.delete(
                 collection_name=coll,
                 points_selector=PointIdsList(points=ids),
@@ -3340,6 +3680,226 @@ class DatasetManager:
             )
             self._decrement_count(dataset_name, len(ids))
         return len(ids)
+
+    def delete_documents(self, dataset_name: str, doc_ids: list[str]) -> int:
+        """Delete multiple documents by Qdrant point ID in one batched call.
+
+        Returns the number of IDs actually submitted (blank entries are
+        dropped).  Used by the MCP ``delete_memory`` tool; unlike
+        :meth:`delete_session_history` the caller supplies exact point IDs,
+        so nothing is deleted by similarity or by filter.
+        """
+        clean = [str(d).strip() for d in (doc_ids or []) if str(d).strip()]
+        if not clean:
+            return 0
+        rag = self._get_rag(dataset_name)
+        vs = rag.vector_store
+        assert vs is not None and not isinstance(vs, dict)
+        client = vs._client  # type: ignore[attr-defined]
+        from qdrant_client.models import PointIdsList
+
+        # Fetch terms for the BM25 df decrement BEFORE deletion.
+        self.forget_bm25_documents(dataset_name, clean)
+        client.delete(
+            collection_name=vs.collection_name,  # type: ignore[attr-defined]
+            points_selector=PointIdsList(points=clean),
+            wait=True,
+        )
+        self._decrement_count(dataset_name, len(clean))
+        return len(clean)
+
+    def scroll_documents(
+        self,
+        dataset_name: str,
+        scroll_filter: Any = None,
+        limit: int = 500,
+        batch_size: int = 256,
+        payload_keys: list[str] | None = None,
+    ) -> list[tuple[str, dict[str, Any]]]:
+        """Scroll documents (id, payload) up to *limit*, optionally filtered.
+
+        A paginated, payload-filtered counterpart to :meth:`list_documents`
+        (which is unfiltered).  *scroll_filter* is a
+        ``qdrant_client.models.Filter`` applied server-side.  *payload_keys*
+        restricts the transferred payload to the given top-level keys
+        (``PayloadSelectorInclude``) — e.g. ``["metadata"]`` for source
+        scans over large collections.  Used by the MCP ``list_memories``
+        tool and the S3 sync / metadata backfill migrations.
+        """
+        rag = self._get_rag(dataset_name)
+        vs = rag.vector_store
+        if vs is None or isinstance(vs, dict):
+            return []
+        client = vs._client  # type: ignore[attr-defined]
+        coll = vs.collection_name  # type: ignore[attr-defined]
+        with_payload: Any = True
+        if payload_keys:
+            from qdrant_client.models import PayloadSelectorInclude
+
+            with_payload = PayloadSelectorInclude(include=payload_keys)
+        out: list[tuple[str, dict[str, Any]]] = []
+        offset: int | str | None = None
+        while len(out) < limit:
+            pts, offset = client.scroll(
+                coll,
+                limit=min(batch_size, limit - len(out)),
+                offset=offset,
+                scroll_filter=scroll_filter,
+                with_payload=with_payload,
+                with_vectors=False,
+            )
+            for pt in pts:
+                out.append((str(pt.id), dict(pt.payload or {})))
+            if offset is None:
+                break
+        return out
+
+    def _stored_sources(self, dataset_name: str, prefixes: list[str]) -> set[str]:
+        """Distinct stored ``metadata.source`` values under any of *prefixes*.
+
+        S3 sync helper: the sources a prefix currently has points for (URL
+        ingestion records the original URL as the canonical source).
+        """
+        if not prefixes:
+            return set()
+        from qdrant_client.models import FieldCondition, Filter, MatchPrefix
+
+        scroll_filter = Filter(
+            should=[FieldCondition(key="metadata.source", match=MatchPrefix(prefix=p)) for p in prefixes]
+        )
+        out: set[str] = set()
+        for _, payload in self.scroll_documents(
+            dataset_name, scroll_filter, limit=1_000_000, payload_keys=["metadata"]
+        ):
+            src = (payload.get("metadata") or {}).get("source")
+            if src:
+                out.add(str(src).rstrip("/"))
+        return out
+
+    def _prune_sources(self, dataset_name: str, prefixes: list[str], expected: set[str]) -> dict[str, Any]:
+        """Delete stored documents whose source is under *prefixes* but not in *expected*.
+
+        S3 sync's prune half: objects deleted upstream disappear from the
+        dataset instead of lingering.  Deletes are batched by point ID and
+        the document counter is decremented accordingly.
+        """
+        from qdrant_client.models import FieldCondition, Filter, MatchPrefix, PointIdsList
+
+        rag = self._get_rag(dataset_name)
+        vs = rag.vector_store
+        if vs is None or isinstance(vs, dict) or not prefixes:
+            return {"pruned_points": 0, "pruned_sources": [], "scope": prefixes}
+        client = vs._client  # type: ignore[attr-defined]
+        coll = vs.collection_name  # type: ignore[attr-defined]
+
+        scroll_filter = Filter(
+            should=[FieldCondition(key="metadata.source", match=MatchPrefix(prefix=p)) for p in prefixes]
+        )
+        stale_ids: list[Any] = []
+        stale_sources: set[str] = set()
+        stale_texts: list[str] = []  # for the BM25 df decrement (payloads are already here)
+        offset: int | str | None = None
+        while True:
+            pts, offset = client.scroll(
+                coll,
+                limit=256,
+                offset=offset,
+                scroll_filter=scroll_filter,
+                with_payload=True,
+                with_vectors=False,
+            )
+            for pt in pts:
+                payload = pt.payload or {}
+                meta = payload.get("metadata") or {}
+                src = str(meta.get("source") or "").rstrip("/")
+                if src and src not in expected:
+                    stale_ids.append(pt.id)
+                    stale_sources.add(src)
+                    stale_texts.append(payload.get("page_content") or "")
+            if offset is None:
+                break
+
+        deleted = 0
+        if stale_ids:
+            # Terms for the BM25 df decrement — the payloads were already
+            # fetched by the scroll above, so no extra round trip.
+            self._forget_bm25_texts(dataset_name, stale_texts)
+        for i in range(0, len(stale_ids), 500):
+            chunk = stale_ids[i : i + 500]
+            client.delete(coll, points_selector=PointIdsList(points=chunk), wait=True)
+            deleted += len(chunk)
+        if deleted:
+            self._decrement_count(dataset_name, deleted)
+        return {"pruned_points": deleted, "pruned_sources": sorted(stale_sources), "scope": prefixes}
+
+    def backfill_search_metadata(self, dataset_name: str) -> dict[str, Any]:
+        """Backfill ``metadata.file_type`` and search payload indexes.
+
+        Metadata-filtered search (roadmap feature 1) keys off
+        ``metadata.file_type``, which only docs ingested after the feature
+        carry.  This idempotent migration scrolls every point, derives the
+        file type from the stored ``metadata.source`` extension, and writes
+        the full metadata object back (grouped by identical metadata so a
+        batch touches Qdrant once per unique payload — the same pattern the
+        media payload-stripping pass uses).  It also creates the payload
+        indexes filtered search benefits from (best-effort, idempotent).
+
+        Safe to run on any dataset, any time; points that already carry
+        ``file_type`` are left untouched.  Runs on the caller's thread —
+        the API endpoint offloads it to ``sync_pool``.
+
+        Note: the read-scroll / write-set_payload window is not transactional;
+        docs ingested *while* the backfill runs may be missed (re-run later —
+        it is idempotent).
+        """
+        from multimodal_rag.vector_store import ensure_search_payload_indexes
+
+        rag = self._get_rag(dataset_name)
+        vs = rag.vector_store
+        if vs is None or isinstance(vs, dict):
+            return {"scanned": 0, "updated": 0, "indexes": []}
+        client = vs._client  # type: ignore[attr-defined]
+        coll = vs.collection_name  # type: ignore[attr-defined]
+
+        indexes = ensure_search_payload_indexes(client, coll)
+
+        scanned = 0
+        updated = 0
+        offset: int | str | None = None
+        while True:
+            pts, offset = client.scroll(
+                coll,
+                limit=256,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            # group point ids by their complete new metadata so each unique
+            # payload costs one set_payload call
+            by_meta: dict[str, tuple[dict[str, Any], list[Any]]] = {}
+            for pt in pts:
+                scanned += 1
+                payload = pt.payload or {}
+                meta = dict(payload.get("metadata", {}) or {})
+                if meta.get("file_type"):
+                    continue
+                src = str(meta.get("source") or meta.get("original_source") or "")
+                if not src:
+                    continue
+                meta["file_type"] = _classify_file(src)
+                key = json.dumps(meta, sort_keys=True, default=str)
+                by_meta.setdefault(key, (meta, []))[1].append(pt.id)
+            for meta, point_ids in by_meta.values():
+                client.set_payload(
+                    coll,
+                    payload={"metadata": meta},
+                    points=point_ids,
+                    wait=True,
+                )
+                updated += len(point_ids)
+            if offset is None:
+                break
+        return {"scanned": scanned, "updated": updated, "indexes": indexes}
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -3349,6 +3909,11 @@ class DatasetManager:
         """Read the keep_originals flag from dataset metadata (default True)."""
         meta = self._read_meta(dataset_name) or {}
         return meta.get("keep_originals", True)
+
+    def _get_ocr_enabled(self, dataset_name: str) -> bool:
+        """Read the OCR fallback flag from dataset metadata (default False)."""
+        meta = self._read_meta(dataset_name) or {}
+        return bool(meta.get("ocr", False))
 
     def _get_rag(self, dataset_name: str, check_embedder: bool = True) -> MultimodalRAG:
         """Return (or create and cache) a MultimodalRAG for *dataset_name*.
@@ -3382,6 +3947,11 @@ class DatasetManager:
                             "qdrant_host": self.qdrant_host,
                             "qdrant_port": self.qdrant_port,
                             "collection_name": dataset_name,
+                            # Where the hybrid BM25 lane reads/writes the
+                            # dataset's document-frequency stats (roadmap
+                            # feature 2).  Harmless for legacy collections —
+                            # they never take the hybrid path.
+                            "bm25_stats_path": str(self._bm25_stats_path(dataset_name)),
                         },
                     )
                     self._rag_cache[dataset_name] = rag
@@ -3396,6 +3966,9 @@ class DatasetManager:
                                 client.close()
                         except Exception:
                             logger.debug("Evicted RAG client close failed", exc_info=True)
+                        from multimodal_rag.utils.metrics import CACHE_EVENTS
+
+                        CACHE_EVENTS.labels(cache="rag", event="eviction").inc()
                 else:
                     self._rag_cache.move_to_end(dataset_name)
         else:
@@ -3404,6 +3977,7 @@ class DatasetManager:
                     self._rag_cache.move_to_end(dataset_name)
         if check_embedder and dataset_name not in self._embedder_verified:
             self._assert_embedder_compatible(dataset_name)
+            self._nudge_schema_upgrade(dataset_name)
             self._embedder_verified.add(dataset_name)
         return rag
 
@@ -3465,6 +4039,31 @@ class DatasetManager:
                 f"{cur_name!r} (same dim {cur_dim}). Existing vectors are "
                 "semantically incompatible — recreate the dataset to rebuild it "
                 "(POST /api/admin/datasets/{name}/recreate)."
+            )
+
+    def _nudge_schema_upgrade(self, dataset_name: str) -> None:
+        """Warn once per process when a dataset predates the current schema.
+
+        meta.json lacking (or carrying an older) ``schema_version`` means the
+        collection holds one unnamed default vector: it cannot host the
+        hybrid ``bm25`` sparse lane (roadmap feature 2), so retrieval stays
+        dense-only until the dataset is recreated.  A warning, not an error —
+        dense retrieval is fully functional; the existing Recreate flow is
+        the adoption path.
+        """
+        meta = self._read_meta(dataset_name) or {}
+        if not meta:
+            return
+        stored = int(meta.get("schema_version", 1) or 1)
+        if stored < DATASET_SCHEMA_VERSION:
+            logger.warning(
+                "Dataset '%s' uses collection schema v%s; v%s adds hybrid dense+BM25 retrieval. "
+                "Recreate it (POST /api/admin/datasets/%s/recreate) to enable the BM25 lane — "
+                "dense-only search continues to work in the meantime.",
+                dataset_name,
+                stored,
+                DATASET_SCHEMA_VERSION,
+                dataset_name,
             )
 
     def _write_embedder_fingerprint(self, dataset_name: str) -> None:
@@ -3606,6 +4205,74 @@ class DatasetManager:
         if content_hash and result.get("stored_ids"):
             self._mark_ingested(dataset_name, content_hash)
         return result
+
+    # ------------------------------------------------------------------
+    # Hybrid BM25 (roadmap feature 2): per-dataset document-frequency
+    # counts for the lexical lane, in a sidecar next to .hashes.json.
+    # The ingest path (rag_system → utils.bm25.record_documents) does the
+    # writing, under the same cross-process lock discipline as the dedup
+    # hashes; these are the dataset-manager-side hooks — the path, the
+    # recreate reset, and the delete-path decrements that keep df from
+    # inflating forever (memory datasets churn session history constantly).
+    # ------------------------------------------------------------------
+
+    def _bm25_stats_path(self, dataset_name: str) -> Path:
+        return self._dataset_dir(dataset_name) / "files" / bm25_lane.BM25_STATS_FILENAME
+
+    def reset_bm25_stats(self, dataset_name: str) -> None:
+        """Forget every BM25 df count for *dataset_name*.
+
+        :meth:`recreate_dataset` must reset the stats together with the
+        collection: re-ingesting the same files on top of the old counts
+        would double every document frequency and flatten idf.
+        """
+        bm25_lane.reset_stats(self._bm25_stats_path(dataset_name))
+
+    def forget_bm25_documents(self, dataset_name: str, doc_ids: list[Any]) -> None:
+        """Decrement BM25 df stats for points that are about to be deleted.
+
+        The deleted points' texts are fetched (payloads still exist here —
+        call BEFORE ``client.delete``) and their terms decremented, mirroring
+        the ingest-side increment.  Strictly best-effort: any failure only
+        leaves the idf weighting slightly stale, so it must never break a
+        delete.  No-op for legacy collections (no BM25 lane) — probed once
+        per process via the store's capability cache.
+        """
+        if not doc_ids:
+            return
+        try:
+            vs = self._get_rag(dataset_name, check_embedder=False).vector_store
+            if vs is None or isinstance(vs, dict) or not getattr(vs, "supports_hybrid", lambda: False)():
+                return
+            from qdrant_client.models import PayloadSelectorInclude
+
+            client = vs._client  # type: ignore[attr-defined]
+            texts: list[str] = []
+            # Chunked like the delete batches themselves — a huge prune would
+            # otherwise build one oversized retrieve request.
+            ids = list(doc_ids)
+            for i in range(0, len(ids), 500):
+                records = client.retrieve(
+                    collection_name=vs.collection_name,  # type: ignore[attr-defined]
+                    ids=ids[i : i + 500],
+                    # page_content is all the df decrement needs — never the
+                    # multi-MB tier-3 base64 media payloads.
+                    with_payload=PayloadSelectorInclude(include=["page_content"]),
+                    with_vectors=False,
+                )
+                texts.extend((rec.payload or {}).get("page_content") or "" for rec in records)
+            self._forget_bm25_texts(dataset_name, texts)
+        except Exception:
+            logger.debug("BM25 df decrement failed", exc_info=True)
+
+    def _forget_bm25_texts(self, dataset_name: str, texts: list[str]) -> None:
+        """Decrement the BM25 df stats by *texts* (locked, best-effort)."""
+        try:
+            term_maps = [bm25_lane.term_counts(t) for t in texts if t]
+            if term_maps:
+                bm25_lane.forget_documents(self._bm25_stats_path(dataset_name), term_maps)
+        except Exception:
+            logger.debug("BM25 df decrement failed", exc_info=True)
 
     def _store_file(
         self,

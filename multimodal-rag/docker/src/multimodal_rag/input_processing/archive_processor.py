@@ -148,9 +148,7 @@ def _single_file_decompress(path: str, dest_dir: str, ext: str) -> None:
                 break
             written += len(chunk)
             if max_bytes and written > max_bytes:
-                raise ValueError(
-                    f"Decompressed file exceeds the configured archive size cap ({max_bytes} bytes)"
-                )
+                raise ValueError(f"Decompressed file exceeds the configured archive size cap ({max_bytes} bytes)")
             dst.write(chunk)
 
 

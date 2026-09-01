@@ -401,6 +401,9 @@
       <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-weight:400;margin-left:16px" title="Keep original full-quality files on disk after preprocessing. Uncheck to save disk space (preprocessed copies are retained).">
         Keep originals <input type="checkbox" id="ds-keep-originals" checked>
       </label>
+      <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-weight:400;margin-left:16px" title="OCR fallback: scanned pages (images, no text layer) are OCR'd via tesseract at ingest. Text pages are never OCR'd - costs nothing unless a page needs it.">
+        OCR fallback <input type="checkbox" id="ds-ocr">
+      </label>
     </div>
     <div class="form-group" style="margin-top:10px">
       <label for="ds-password">Password (optional — protects dataset access)</label>
@@ -530,7 +533,8 @@
     <div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-weight:400;font-size:.85rem" title="Transcribe video audio tracks via ASR for NEW uploads to this dataset.">Caption with ASR <input type="checkbox" id="edit-caption-asr"></label>
       <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-weight:400;font-size:.85rem;margin-left:8px" title="VLM-describe images/videos at ingest for NEW uploads. Enables VLM-skip at retrieval.">Caption with VLM <input type="checkbox" id="edit-caption-vlm"></label>
-      <button class="btn btn-primary btn-sm" onclick="saveDatasetSettings()" title="Apply captioning settings now — affects future ingests/retrievals">Save Captions</button>
+      <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-weight:400;font-size:.85rem;margin-left:8px" title="OCR fallback via tesseract for scanned pages (images, no text layer) for NEW uploads to this dataset.">OCR fallback <input type="checkbox" id="edit-ocr"></label>
+      <button class="btn btn-primary btn-sm" onclick="saveDatasetSettings()" title="Apply captioning/OCR settings now — affects future ingests/retrievals">Save Flags</button>
     </div>
     <div id="doc-list" style="margin-top:12px"></div>
   </div>
@@ -637,10 +641,12 @@ async function createDataset() {
   const captionWithAsr = document.getElementById('ds-caption-asr').checked;
   const captionWithVlm = document.getElementById('ds-caption-vlm').checked;
   const keepOriginals = document.getElementById('ds-keep-originals').checked;
+  const dsOcr = document.getElementById('ds-ocr');
+  const ocr = dsOcr ? dsOcr.checked : false;
   const pw = document.getElementById('ds-password').value.trim();
   input.disabled = true;
   try {
-    const body = { name, caption_with_asr: captionWithAsr, caption_with_vlm: captionWithVlm, keep_originals: keepOriginals };
+    const body = { name, caption_with_asr: captionWithAsr, caption_with_vlm: captionWithVlm, keep_originals: keepOriginals, ocr: ocr };
     if (desc) body.description = desc;
     if (pw) body.password = pw;
     await api('POST', '/api/datasets', body);
@@ -692,6 +698,8 @@ async function selectDataset(name) {
   const cVlm = document.getElementById('edit-caption-vlm');
   if (cAsr) cAsr.checked = !!d.caption_with_asr;
   if (cVlm) cVlm.checked = !!d.caption_with_vlm;
+  const cOcr = document.getElementById('edit-ocr');
+  if (cOcr) cOcr.checked = !!d.ocr;
   document.getElementById('doc-list').innerHTML = '';
 
   // If dataset is password-protected and we don't have a password yet, prompt
@@ -1597,16 +1605,22 @@ async function saveDatasetSettings() {
   const cAsr = document.getElementById('edit-caption-asr');
   const cVlm = document.getElementById('edit-caption-vlm');
   if (!cAsr || !cVlm) return;
+  const cOcr = document.getElementById('edit-ocr');
   const body = {
     caption_with_asr: cAsr.checked,
     caption_with_vlm: cVlm.checked,
+    ocr: cOcr ? cOcr.checked : undefined,
   };
   try {
     await api('PATCH', '/api/datasets/' + selectedDataset, body, undefined, passwordHeader());
-    toast('Caption settings applied (affects new content)');
+    toast('Dataset flags applied (affects new content)');
     listDatasets();
     const d = datasets.find(x => x.name === selectedDataset);
-    if (d) { d.caption_with_asr = cAsr.checked; d.caption_with_vlm = cVlm.checked; }
+    if (d) {
+      d.caption_with_asr = cAsr.checked;
+      d.caption_with_vlm = cVlm.checked;
+      if (cOcr) d.ocr = cOcr.checked;
+    }
   } catch (e) {
     toast(e.message, 'error');
   }
@@ -2120,6 +2134,13 @@ async function initCaptionCheckboxes() {
     // If endpoint unavailable, leave checkboxes unchecked + enabled
   }
 }
+</script>
+<script>
+  (function () {
+    var m = document.querySelector('meta[name="rag-ocr-default"]');
+    var box = document.getElementById('ds-ocr');
+    if (m && box && (m.content || '').toLowerCase() === 'true') box.checked = true;
+  })();
 </script>
 </body>
 </html>

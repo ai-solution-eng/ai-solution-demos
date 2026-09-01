@@ -73,6 +73,39 @@ spec:
                       except Exception as exc:
                           print(f"[backup] FAILED {name}: {exc}")
                           failed += 1
+                  retention = int(os.environ.get("BACKUP_RETENTION_DAYS") or "0")
+                  if retention > 0:
+                      try:
+                          cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=retention)
+                          pruned = 0
+                          prefixes, token = [], None
+                          while True:
+                              kw = {"Bucket": bucket, "Delimiter": "/"}
+                              if token:
+                                  kw["ContinuationToken"] = token
+                              r = s3.list_objects_v2(**kw)
+                              prefixes += [p["Prefix"] for p in r.get("CommonPrefixes", [])]
+                              if not r.get("IsTruncated"):
+                                  break
+                              token = r.get("NextContinuationToken")
+                          for pfx in prefixes:
+                              token = None
+                              while True:
+                                  kw = {"Bucket": bucket, "Prefix": pfx}
+                                  if token:
+                                      kw["ContinuationToken"] = token
+                                  r = s3.list_objects_v2(**kw)
+                                  stale = [{"Key": o["Key"]} for o in r.get("Contents", []) if o["LastModified"] < cutoff]
+                                  while stale:
+                                      s3.delete_objects(Bucket=bucket, Delete={"Objects": stale[:1000], "Quiet": True})
+                                      pruned += len(stale[:1000])
+                                      stale = stale[1000:]
+                                  if not r.get("IsTruncated"):
+                                      break
+                                  token = r.get("NextContinuationToken")
+                          print(f"[backup] retention: pruned {pruned} object(s) older than {retention}d")
+                      except Exception as exc:
+                          print(f"[backup] retention prune failed (non-fatal): {exc}")
                   print(f"[backup] done: {exported} exported, {skipped} skipped (protected), {failed} failed")
                   raise SystemExit(1 if failed and not exported else 0)
               envFrom:
@@ -85,6 +118,8 @@ spec:
                   value: "http://{{ .Values.deployment.name }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.api.targetPort }}"
                 - name: BACKUP_BUCKET
                   value: {{ .Values.backups.bucket | quote }}
+                - name: BACKUP_RETENTION_DAYS
+                  value: {{ .Values.backups.retentionDays | default 0 | quote }}
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true

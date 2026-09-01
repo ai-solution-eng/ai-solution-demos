@@ -71,3 +71,7 @@ boto3>=1.34.0
 
 # Redis (optional — cross-pod unlock cache when running multiple replicas)
 redis>=5.0.0
+
+# Prometheus metrics (/metrics endpoint; optional at runtime — the server
+# degrades to no-op counters when the import is unavailable)
+prometheus-client>=0.20.0

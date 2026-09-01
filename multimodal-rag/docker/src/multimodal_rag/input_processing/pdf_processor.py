@@ -1,11 +1,51 @@
 import base64
+import os
 import re
+import shutil
+import subprocess
 from collections.abc import Generator
 from typing import Any
 
 from multimodal_rag.utils.logging_utils import logging
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# OCR fallback for scanned PDFs (roadmap feature 3)
+# ---------------------------------------------------------------------------
+# Pages that carry images but no extractable text layer (scans) are
+# rasterized and OCR'd through the tesseract CLI — no python binding, the
+# repo already drives ffmpeg/unrar via subprocess.  Gated per dataset via the
+# ``ocr`` flag (default off); when the binary is missing the fallback is
+# skipped silently and scanned pages keep their image-only behaviour (plus
+# VLM caption twins when captioning is enabled).
+
+_OCR_LANG = os.environ.get("OCR_LANG", "eng")
+_OCR_DPI = int(os.environ.get("OCR_DPI", "150"))
+_OCR_TIMEOUT_S = float(os.environ.get("OCR_TIMEOUT_S", "120"))
+
+
+def _tesseract_available() -> bool:
+    """True when the tesseract CLI is on PATH."""
+    return shutil.which("tesseract") is not None
+
+
+def _ocr_png(png_bytes: bytes) -> str | None:
+    """OCR a PNG raster via the tesseract CLI; ``None`` on any failure."""
+    try:
+        proc = subprocess.run(
+            ["tesseract", "stdin", "stdout", "-l", _OCR_LANG],
+            input=png_bytes,
+            capture_output=True,
+            timeout=_OCR_TIMEOUT_S,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        logger.debug("tesseract exited %d: %s", proc.returncode, (proc.stderr or b"")[:200])
+        return None
+    text = " ".join(proc.stdout.decode("utf-8", "replace").split())
+    return text.strip() or None
 
 
 def _collapse_whitespace(text: str) -> str:
@@ -160,6 +200,25 @@ _TOC_HEADER = re.compile(
     r"^\s*(?:Contents|Table\s+of\s+Contents)\s*:?\s*$",
     re.IGNORECASE,
 )
+
+# Content-based ToC/Index detection: PyMuPDF frequently flattens a whole
+# ToC/Index page into one or two run-on lines, which defeats line-oriented
+# heuristics (observed on real papers: "Contents 1 Introduction 4 2
+# Architecture 6 2.1 Designs . . . . 7 ...").  These patterns work on the
+# flattened text itself.
+_TOC_HEADER_PREFIX = re.compile(r"^\s*(?:contents|table\s+of\s+contents|index)\b", re.IGNORECASE)
+# Dotted leaders, with or without spaces between the dots
+_TOC_DOT_RUN = re.compile(r"(?:\.\s*){3,}")
+# Section references like 2.3.1 / 3.4.2.1
+_TOC_SECTION_REF = re.compile(r"\b\d{1,2}(?:\.\d{1,2}){1,3}\b")
+# Standalone small page numbers (ToC/Index entries end with them)
+_TOC_PAGE_NUM = re.compile(r"(?:^|\s)\d{1,3}(?:\s|$)")
+# Index-style entries: term, 42
+_TOC_INDEX_ENTRY = re.compile(r"\b\w{3,},\s*\d{1,3}\b")
+_TOC_MIN_DOT_RUNS = 4
+_TOC_MIN_SECTION_REFS = 6
+_TOC_MIN_PAGE_NUMS = 10
+_TOC_MIN_INDEX_ENTRIES = 8
 
 _LINE_TOC_PATTERNS = [
     # Dotted leaders followed by a page number (very distinctive of ToCs)
@@ -350,17 +409,32 @@ def _is_toc_chunk(text: str) -> bool:
 
     # Heuristic 2: line-density of ToC-like patterns
     lines = [line.strip() for line in text.split("\n") if line.strip()]
-    if len(lines) < _TOC_MIN_LINES:
-        return False
+    # NOTE: no early return on few lines - flattened ToC/Index extractions
+    # collapse onto one or two run-on lines and must still reach the
+    # content-based heuristics below.
+    if len(lines) >= _TOC_MIN_LINES:
+        match_count = 0
+        for line in lines:
+            for pat in _LINE_TOC_PATTERNS:
+                if pat.search(line):
+                    match_count += 1
+                    break
+        if (match_count / len(lines)) >= _TOC_LINE_THRESHOLD:
+            return True
 
-    match_count = 0
-    for line in lines:
-        for pat in _LINE_TOC_PATTERNS:
-            if pat.search(line):
-                match_count += 1
-                break
-
-    return (match_count / len(lines)) >= _TOC_LINE_THRESHOLD
+    # Content-based heuristics for flattened extractions (whole ToC/Index
+    # collapsed into one run-on line).
+    head = text.lstrip()[:64]
+    if _TOC_HEADER_PREFIX.match(head):
+        return True
+    if len(_TOC_DOT_RUN.findall(text)) >= _TOC_MIN_DOT_RUNS:
+        return True
+    if (
+        len(_TOC_SECTION_REF.findall(text)) >= _TOC_MIN_SECTION_REFS
+        and len(_TOC_PAGE_NUM.findall(text)) >= _TOC_MIN_PAGE_NUMS
+    ):
+        return True
+    return len(_TOC_INDEX_ENTRY.findall(text)) >= _TOC_MIN_INDEX_ENTRIES
 
 
 class PDFProcessor:
@@ -807,12 +881,23 @@ class PDFProcessor:
             result.extend(pages[pn])
         return result
 
+    def _ocr_page_raster(self, page: Any) -> str | None:
+        """Rasterize one PDF page and OCR it; ``None`` on any failure."""
+        try:
+            pix = page.get_pixmap(dpi=_OCR_DPI)
+            png = pix.tobytes("png")
+        except Exception:
+            logger.debug("page rasterization for OCR failed", exc_info=True)
+            return None
+        return _ocr_png(png)
+
     def extract_chunks(
         self,
         pdf_path: str,
         chunk_size: int = 8192,
         chunk_overlap: int = 512,
         text_splitter=None,
+        ocr: bool | None = None,
     ) -> list[dict[str, Any]]:
         """
         Split a PDF into multimodal chunks of roughly *chunk_size* characters
@@ -848,6 +933,7 @@ class PDFProcessor:
                 chunk_size=chunk_size,
                 chunk_overlap=chunk_overlap,
                 text_splitter=text_splitter,
+                ocr=ocr,
             )
         )
 
@@ -857,6 +943,7 @@ class PDFProcessor:
         chunk_size: int = 8192,
         chunk_overlap: int = 512,
         text_splitter=None,
+        ocr: bool | None = None,
     ) -> Generator[dict[str, Any], None, None]:
         """
         Generator version of :meth:`extract_chunks`.
@@ -867,11 +954,23 @@ class PDFProcessor:
 
         This allows callers to start processing (e.g. embedding) the first
         chunks while later pages are still being extracted.
+
+        *ocr*: OCR fallback for scanned pages (roadmap feature 3).  ``None``
+        resolves to "on when the tesseract binary is present"; ``False``
+        disables it; ``True`` forces the attempt.  A page qualifies when it
+        carries images but its text layer is empty — the raster is OCR'd and
+        the recognised text becomes the page's text blocks (tagged
+        ``[OCR page N]``).
         """
         try:
             import pymupdf
         except ImportError:
             raise ImportError("PyMuPDF is required. pip install PyMuPDF")
+
+        if ocr is None:
+            ocr_enabled = _tesseract_available()
+        else:
+            ocr_enabled = bool(ocr) and _tesseract_available()
 
         def _exceeds_budget(text: str) -> bool:
             if text_splitter is not None:
@@ -901,6 +1000,23 @@ class PDFProcessor:
                 key=lambda b: b["bbox"][1],
             )
             image_blocks = [b for b in page_blocks if b["block_type"] == "image" and b.get("image_data_url")]
+
+            # OCR fallback: an image-only page (no text layer — typically a
+            # scan) gets its raster OCR'd into a synthetic text block so the
+            # normal chunking path picks the recognised text up.
+            if ocr_enabled and not text_blocks and image_blocks:
+                ocr_text = self._ocr_page_raster(page)
+                if ocr_text:
+                    logger.debug("OCR page %d of %s: %d chars", pn, pdf_path, len(ocr_text))
+                    text_blocks = [
+                        {
+                            "block_num": 0,
+                            "text": f"[OCR page {pn}] {ocr_text}",
+                            "block_type": "text",
+                            "bbox": (0.0, 0.0, float(page.rect.width), float(page.rect.height)),
+                            "nearby_images": [],
+                        }
+                    ]
 
             if not text_blocks:
                 # Flush overlap text from the previous page before yielding
