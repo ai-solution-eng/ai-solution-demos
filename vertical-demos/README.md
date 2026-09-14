@@ -14,6 +14,7 @@ Here is the list of demos you will find in this vertical folder:
 
 | Demo                                                          | Short Description          |
 | --------------------------------------------------------------|----------------------------|
+| [AI Vulnerability Scanner](ai-vulnerability-scanner)            | An AI-powered scanner that crawls a bundled **OWASP Juice Shop** app and uses an LLM (deployed via **MLIS**) to analyze each page like a pentester, surfacing ranked, remediated findings in a live dashboard. |
 | [Blood Vessel Geometry Analysis and Reconstruction](blood-vessel-geometry-analysis-and-reconstruction)              | A streamlit application relying on **NVIDIA Vista 3D model** (deployed using **MLIS**) to analyze, reconstruct and render vessels in 3D. |
 | [Molecular Aligned Multi-Modal Architecture and Language (Biomed-MAMMAL)](biomed-mammal) | A **BentoML** inference service for a **biomedical foundation model** which achieves state-of-the-art results over a variety of tasks across the entire **drug discovery** pipeline and diverse **biomedical domains**. |
 | [Defence Ops](defence-ops)                          | A web application leveraging a VLM (deployed using **MLIS**)to analyze videos, with preloaded defence-related ones provided for example.             |
