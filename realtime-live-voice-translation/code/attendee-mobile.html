@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <title>Live Translation</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="theme-color" content="#061019" />
+    <link rel="icon" href="./logo.jpg" type="image/jpeg" />
+    <script>
+        (function () {
+            try {
+                var stored = localStorage.getItem("rt-theme");
+                var theme = stored || (window.matchMedia &&
+                    window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+                document.documentElement.dataset.theme = theme;
+            } catch (e) {
+                document.documentElement.dataset.theme = "dark";
+            }
+        })();
+    </script>
+    <link rel="stylesheet" href="./frontend/styles/attendee.css" />
+    <link rel="stylesheet" href="./frontend/styles/attendee-mobile.css" />
+</head>
+
+<body>
+    <div id="recordingBanner">conversation recording in progress</div>
+
+    <header class="mobile-header">
+        <div class="mobile-header-row">
+            <div class="hero-brand">
+                <div class="hero-brand-copy">
+                    <div class="hero-eyebrow">HPE Private Cloud AI</div>
+                </div>
+                <button id="themeToggleBtn" class="theme-toggle" type="button"
+                    aria-label="Switch to light theme" aria-pressed="false" title="Toggle theme">
+                    <svg class="theme-icon-sun" viewBox="0 0 24 24" width="20" height="20" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                        aria-hidden="true">
+                        <circle cx="12" cy="12" r="4" />
+                        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+                    </svg>
+                    <svg class="theme-icon-moon" viewBox="0 0 24 24" width="20" height="20" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                        aria-hidden="true">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+                    </svg>
+                </button>
+            </div>
+        </div>
+        <div class="mobile-status-row">
+            <div class="status-grid">
+                <!-- #currentRoom is required by setRoomLabel() (unguarded) but kept out of sight;
+                     only the connection status is shown. -->
+                <span id="currentRoom" data-tone="warning">Room not joined</span>
+                <span id="connectionStatus" data-tone="warning">Disconnected</span>
+            </div>
+            <button id="connectBtn" class="btn-primary" type="button">Join</button>
+        </div>
+        <!-- Autojoin page: the room comes from the presenter's phone link (?room=...).
+             The input stays in the DOM (hidden) because the attendee scripts read/bind
+             it unconditionally; Join re-connects to the auto-filled room. -->
+        <input id="roomInput" type="hidden" />
+        <div class="field-group language-field" id="languageField">
+            <input id="languageSelect" type="hidden" value="es" />
+            <button id="languageTrigger" class="language-trigger" type="button" aria-haspopup="dialog"
+                aria-expanded="false" aria-controls="languagePicker">
+                <span class="language-trigger-copy">
+                    <span class="language-trigger-label" data-language-label>Spanish</span>
+                    <span class="language-trigger-meta" data-language-meta>Español · ES</span>
+                </span>
+                <span class="language-trigger-caret">▾</span>
+            </button>
+            <div id="languagePicker" class="language-picker" hidden>
+                <div class="language-picker-head">
+                    <input id="languageSearch" class="language-search" type="text"
+                        placeholder="Search language or code" autocomplete="off" spellcheck="false" />
+                </div>
+                <div class="language-picker-body">
+                    <div id="languageList" class="language-option-list" role="listbox"
+                        aria-label="Translation languages"></div>
+                    <div id="languageEmpty" class="language-empty" hidden>No languages match that search.</div>
+                </div>
+            </div>
+        </div>
+        <div id="footerNote" class="status-note"></div>
+    </header>
+
+    <main class="mobile-transcript translation-box">
+        <div class="translation-heading">
+            <div class="translation-label">Live Transcript</div>
+            <button id="liveFullscreenBtn" class="fs-toggle" type="button"
+                aria-label="Expand live transcript" aria-expanded="false" title="Fullscreen">
+                <svg class="fs-icon-expand" viewBox="0 0 24 24" width="20" height="20" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                    aria-hidden="true">
+                    <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M3 16v3a2 2 0 0 0 2 2h3" />
+                </svg>
+                <svg class="fs-icon-contract" viewBox="0 0 24 24" width="20" height="20" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                    aria-hidden="true">
+                    <path d="M8 3v3a2 2 0 0 1-2 2H3M21 8h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3M16 21v-3a2 2 0 0 1 2-2h3" />
+                </svg>
+            </button>
+        </div>
+        <div class="translation-scroll" id="center">
+            <div id="stack" class="stack"></div>
+        </div>
+    </main>
+
+    <details class="history-panel" id="historyPanel">
+        <summary>
+            <span class="history-summary-main">
+                <span class="translation-label">History</span>
+                <span class="history-count" id="historyCount">0 earlier turns</span>
+            </span>
+        </summary>
+        <div class="history-body">
+            <div id="historyList" class="history-list"></div>
+        </div>
+    </details>
+
+    <div id="exportOverlay" aria-live="polite" aria-busy="true">
+        <div class="export-card">
+            <div class="export-title">Preparing download</div>
+            <div class="export-stage" id="exportStage">Queued</div>
+            <div class="export-detail" id="exportDetail">Preparing export.</div>
+            <div class="export-bar-wrap">
+                <div class="export-bar" id="exportBar"></div>
+            </div>
+            <div class="export-meta">
+                <span id="exportPercent">0%</span>
+                <span id="exportHint">Please keep this page open.</span>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="./frontend/scripts/shared.js"></script>
+    <script src="./frontend/scripts/shared-transcript.js"></script>
+    <script src="./frontend/scripts/shared-export.js"></script>
+    <script src="./frontend/scripts/attendee/core.js"></script>
+    <script src="./frontend/scripts/attendee/transcript.js"></script>
+    <script src="./frontend/scripts/attendee/export.js"></script>
+    <script src="./frontend/scripts/attendee/connection.js"></script>
+    <script src="./frontend/scripts/attendee/mobile.js"></script>
+    <script src="./frontend/scripts/attendee.js"></script>
+    <script>
+        (function () {
+            var hasRoom = false;
+            try {
+                hasRoom = !!(new URLSearchParams(window.location.search).get("room") || "").trim();
+            } catch (e) {
+                hasRoom = /(^|[?&])room=/i.test(window.location.search || "");
+            }
+            if (hasRoom) return;
+            var note = document.getElementById("footerNote");
+            if (note) note.textContent = "Open this page from the presenter's phone link to join a room.";
+        })();
+    </script>
+</body>
+
+</html>

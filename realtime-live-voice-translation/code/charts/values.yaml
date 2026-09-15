@@ -67,9 +67,9 @@ images:
     tag: "0.6.0"
 
   frontend:
-    repository: "fcaliva/realtime-voice-translation-fe"
+    repository: "ghcr.io/ai-solution-eng/realtime-voice-translation-fe"
     pullPolicy: "IfNotPresent"
-    tag: "0.6.0"
+    tag: "0.6.3"
 
 resources:
   backend:

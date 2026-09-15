@@ -69,6 +69,7 @@
         roomCodeChipEl: document.getElementById("roomCodeChip"),
         newRoomBtn: document.getElementById("newRoomBtn"),
         copyRoomLinkBtn: document.getElementById("copyRoomLinkBtn"),
+        copyPhoneLinkBtn: document.getElementById("copyPhoneLinkBtn"),
         previousRoomNoteEl: document.getElementById("previousRoomNote"),
         previousRoomCodeEl: document.getElementById("previousRoomCode"),
         downloadPreviousRoomBtn: document.getElementById("downloadPreviousRoomBtn"),
@@ -166,10 +167,10 @@
         return existing;
     };
 
-    app.attendeeLink = function attendeeLink() {
+    app.attendeeLink = function attendeeLink(page = "attendee.html") {
         const roomId = app.ensurePresenterRoomId();
         if (!roomId) return "";
-        const url = new URL("/attendee.html", window.location.origin);
+        const url = new URL(`/${page}`, window.location.origin);
         url.searchParams.set("room", roomId);
         url.searchParams.set("lang", (refs.tgtLangEl?.value || "es").trim().toLowerCase() || "es");
         if (HTTP_BASE && HTTP_BASE !== window.location.origin) {

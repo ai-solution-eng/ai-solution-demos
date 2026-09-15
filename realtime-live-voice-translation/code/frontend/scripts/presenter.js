@@ -43,18 +43,19 @@
     }
 
     function bindRoomControls() {
-        if (refs.copyRoomLinkBtn) {
-            refs.copyRoomLinkBtn.onclick = async () => {
+        const bindCopyButton = (button, page, defaultLabel, copiedLabel) => {
+            if (!button) return;
+            button.onclick = async () => {
                 try {
                     await app.ensureBackendPresenterRoomId();
-                    await navigator.clipboard.writeText(app.attendeeLink());
-                    refs.copyRoomLinkBtn.textContent = "Link copied";
+                    await navigator.clipboard.writeText(app.attendeeLink(page));
+                    button.textContent = copiedLabel;
                     setTimeout(() => {
-                        refs.copyRoomLinkBtn.textContent = "Copy attendee link";
+                        button.textContent = defaultLabel;
                     }, 1200);
                 } catch (error) {
                     console.error(error);
-                    const fallbackLink = app.attendeeLink();
+                    const fallbackLink = app.attendeeLink(page);
                     if (fallbackLink) {
                         alert(`Copy this attendee link:\n\n${fallbackLink}`);
                     } else {
@@ -62,7 +63,10 @@
                     }
                 }
             };
-        }
+        };
+
+        bindCopyButton(refs.copyRoomLinkBtn, "attendee.html", "Copy attendee link", "Link copied");
+        bindCopyButton(refs.copyPhoneLinkBtn, "attendee-mobile.html", "Copy phone link", "Phone link copied");
 
         if (refs.newRoomBtn) {
             refs.newRoomBtn.onclick = () => {

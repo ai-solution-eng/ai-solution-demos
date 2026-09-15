@@ -1,0 +1,288 @@
+/* Mobile overrides for the attendee experience.
+   Loaded AFTER attendee.css on attendee-mobile.html only; the laptop page is untouched. */
+
+:root {
+    --mobile-safe-top: env(safe-area-inset-top, 0px);
+    --mobile-safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+html {
+    height: 100%;
+}
+
+body {
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    padding: calc(8px + var(--mobile-safe-top)) 14px calc(14px + var(--mobile-safe-bottom));
+    overscroll-behavior-y: none;
+    -webkit-text-size-adjust: 100%;
+}
+
+/* ---------- Header ---------- */
+
+.mobile-header {
+    flex: 0 0 auto;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    box-shadow: var(--shadow);
+    border-radius: 20px;
+    padding: 14px 16px 16px;
+    display: grid;
+    gap: 12px;
+    /* No backdrop-filter here: a filtered ancestor would become the containing
+       block for the fixed-position language bottom sheet. */
+}
+
+.mobile-header-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.mobile-header .hero-brand {
+    width: 100%;
+}
+
+.mobile-header .hero-eyebrow {
+    margin-bottom: 0;
+    font-size: 11px;
+}
+
+.status-grid {
+    margin-top: 0;
+    padding: 0;
+    gap: 8px;
+}
+
+.status-grid span {
+    min-height: 34px;
+    font-size: 12px;
+    padding: 0 12px;
+}
+
+/* Room-number chip stays in the DOM (required by the JS) but is not shown. */
+#currentRoom {
+    display: none;
+}
+
+.mobile-status-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.mobile-status-row .status-grid {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.mobile-status-row #connectBtn {
+    flex: 0 0 auto;
+    min-height: 44px;
+    padding: 10px 22px;
+    font-weight: 700;
+}
+
+/* ---------- Language picker: bottom sheet ---------- */
+
+.language-field {
+    min-width: 0;
+}
+
+.language-trigger {
+    min-height: 52px;
+    padding: 10px 16px;
+}
+
+.language-trigger-label {
+    font-size: 15px;
+}
+
+.language-picker {
+    position: fixed;
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    max-width: none;
+    border-radius: 24px 24px 0 0;
+    border-bottom: none;
+    max-height: 72dvh;
+    padding-bottom: var(--mobile-safe-bottom);
+    box-shadow: 0 -18px 60px rgba(0, 0, 0, 0.5);
+    animation: mobileSheetUp 180ms ease;
+}
+
+@keyframes mobileSheetUp {
+    from {
+        transform: translateY(24px);
+        opacity: 0;
+    }
+
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.language-picker-head {
+    position: sticky;
+    top: 0;
+    background: var(--surface-deep);
+    padding-top: 16px;
+}
+
+.language-picker-body {
+    max-height: calc(72dvh - 90px);
+    padding-bottom: 24px;
+}
+
+.language-option {
+    min-height: 52px;
+    border-radius: 18px;
+}
+
+/* ---------- Transcript ---------- */
+
+.mobile-transcript {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    box-shadow: var(--shadow);
+    border-radius: 20px;
+    padding: 14px 14px 16px;
+    margin-top: 12px;
+    overflow: hidden;
+}
+
+.translation-heading {
+    margin: 0;
+}
+
+.translation-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+}
+
+.stack,
+.history-list {
+    gap: 14px;
+}
+
+.pair {
+    padding: 16px;
+    border-radius: 18px;
+}
+
+.pair-meta {
+    margin-bottom: 12px;
+}
+
+.lang-chip,
+.status-chip {
+    min-height: 26px;
+    font-size: 12px;
+}
+
+.pair-copy.original {
+    font-size: clamp(15px, 4vw, 19px);
+    margin-bottom: 14px;
+}
+
+.pair-copy.translation {
+    font-size: clamp(28px, 7.5vw, 44px);
+}
+
+.pair.previous .pair-copy.translation,
+.history-item .pair-copy.translation {
+    font-size: clamp(22px, 5.5vw, 30px);
+}
+
+.pair.placeholder {
+    min-height: 200px;
+}
+
+/* ---------- History ---------- */
+
+.history-panel {
+    margin-top: 12px;
+    border-radius: 20px;
+}
+
+.history-panel summary {
+    padding: 14px 16px;
+}
+
+.history-body {
+    padding: 0 14px 16px;
+}
+
+/* ---------- Language search (inside bottom sheet) ---------- */
+
+.language-search {
+    min-height: 44px;
+    font-size: 16px; /* prevents iOS zoom-on-focus */
+}
+
+/* ---------- Fullscreen transcript ---------- */
+
+.translation-box.is-fullscreen {
+    padding: 14px;
+    gap: 12px;
+    border-radius: 0;
+}
+
+.translation-box.is-fullscreen .translation-heading {
+    margin: 0;
+}
+
+.translation-box.is-fullscreen .pair {
+    padding: 16px;
+    border-radius: 18px;
+}
+
+.translation-box.is-fullscreen .pair-copy.original {
+    font-size: clamp(15px, 4vw, 19px);
+    margin-bottom: 14px;
+}
+
+.translation-box.is-fullscreen .pair-copy.translation {
+    font-size: clamp(28px, 8vw, 48px);
+}
+
+.translation-box.is-fullscreen .pair.previous .pair-copy.translation {
+    font-size: clamp(22px, 6vw, 34px);
+}
+
+/* ---------- Recording banner ---------- */
+
+#recordingBanner {
+    margin: calc(-8px - var(--mobile-safe-top)) -14px 0;
+    height: 44px;
+}
+
+/* ---------- Misc ---------- */
+
+.status-note {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.status-note:empty {
+    display: none;
+}
+
+.export-card {
+    width: min(480px, calc(100vw - 28px));
+}
