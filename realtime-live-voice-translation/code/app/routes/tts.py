@@ -77,6 +77,9 @@ async def _transcribe_audio(
         audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
         wav_buf = io.BytesIO()
         audio.export(wav_buf, format="wav")
+        # The OpenAI SDK derives the multipart filename/content-type from the
+        # file object's .name; a bare BytesIO is rejected by the ASR endpoint.
+        wav_buf.name = "sample.wav"
         wav_buf.seek(0)
 
         asr_client = make_client(asr_base_url, asr_api_key)
@@ -94,8 +97,10 @@ async def _transcribe_audio(
         print(f"ASR transcription ({len(text)} chars): {text[:100]}")
         return text
     except asyncio.TimeoutError:
+        print("ASR transcription timed out")
         raise HTTPException(status_code=400, detail="ASR transcription timed out")
     except Exception as exc:
+        print(f"ASR transcription failed: {exc}")
         raise HTTPException(status_code=400, detail=f"Could not transcribe audio: {exc}")
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)

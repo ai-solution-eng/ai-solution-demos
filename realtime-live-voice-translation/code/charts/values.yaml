@@ -62,14 +62,14 @@ postgresql:
 # ============================================================
 images:
   backend:
-    repository: "fcaliva/realtime-voice-translation"
+    repository: "ghcr.io/ai-solution-eng/realtime-voice-translation"
     pullPolicy: "IfNotPresent"
-    tag: "0.6.0"
+    tag: "0.6.4"
 
   frontend:
     repository: "ghcr.io/ai-solution-eng/realtime-voice-translation-fe"
     pullPolicy: "IfNotPresent"
-    tag: "0.6.3"
+    tag: "0.6.4"
 
 resources:
   backend:

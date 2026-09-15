@@ -3,4 +3,4 @@ appVersion: 0.6.0
 description: A Real Time Translator Helm chart for Kubernetes
 name: realtime-translation
 type: application
-version: 0.6.3
+version: 0.6.4

@@ -102,8 +102,13 @@
                 body: formData
             });
             if (!resp.ok) {
-                const detail = await resp.text().catch(() => "");
-                showRefTextError(`Auto-transcription failed (${resp.status}). You can type the transcript below.`);
+                const raw = await resp.text().catch(() => "");
+                let detail = raw;
+                try {
+                    detail = (JSON.parse(raw) || {}).detail || raw;
+                } catch (e) { /* keep raw text */ }
+                if (detail.length > 300) detail = `${detail.slice(0, 300)}…`;
+                showRefTextError(`Auto-transcription failed (${resp.status})${detail ? `: ${detail}` : ""}. You can type the transcript below.`);
                 setTranscribeStatus("");
                 return;
             }
