@@ -2,8 +2,8 @@
 
 | Owner                 | Name              | Email                              |
 | ----------------------|-------------------|------------------------------------|
-| Use Case Owner        | *(fill in)*       | *(fill in)*                        |
-| PCAI Deployment Owner | Dung Cao          | dungcaovu@gmail.com                |
+| Use Case Owner        | Mauro Barberis        | mauro.barberis@hpe.com                        |
+| PCAI Deployment Owner | Daniel Cao          | daniel.cao@hpe.com                |
 
 ## Abstract
 
@@ -35,37 +35,7 @@ Recordings:
 
 Donna is a control-plane / data-plane app. The **API (FastAPI)** owns all policy — the UI never talks to models, object storage, or the vector DB directly. A **worker (ARQ)** performs ingest / embed / agent runs. The **web (Next.js)** UI is reached through the cluster Istio gateway. All stateful dependencies are on-cluster: bundled Postgres + Redis (this chart), and validated external frameworks **MinIO** (S3) and **Qdrant** (vectors), with **MLIS** serving the LLMs.
 
-```mermaid
-flowchart TB
-  subgraph User
-    B[Lawyer's browser]
-  end
-  subgraph Istio[Istio Ingress Gateway]
-    VS[VirtualService: /api,/health,/ready,/office → api · rest → web]
-  end
-  subgraph ns[PCAI namespace: donna]
-    W[web · Next.js]
-    A[api · FastAPI control plane]
-    K[worker · ARQ]
-    PG[(Postgres · bundled)]
-    RD[(Redis · bundled)]
-  end
-  subgraph plat[On-cluster platform / validated frameworks]
-    MLIS[[HPE MLIS<br/>glm-5.3-flash + bge-m3]]
-    MIN[[MinIO · S3<br/>Matter + Library buckets]]
-    QD[[Qdrant · donna_chunks]]
-  end
-  B --> VS --> W
-  VS --> A
-  W --> A
-  A --> PG
-  A --> RD
-  K --> RD
-  A -->|OpenAI-compatible| MLIS
-  K -->|embed| MLIS
-  A -->|blobs| MIN
-  A -->|vectors| QD
-```
+*Architecture diagram (To be added)*
 
 Value-proposition mapping (why this demo exists):
 
@@ -78,30 +48,7 @@ Value-proposition mapping (why this demo exists):
 
 ### Workflow
 
-```mermaid
-sequenceDiagram
-  participant L as Lawyer (web)
-  participant A as API (control plane)
-  participant K as Worker
-  participant M as MinIO (S3)
-  participant E as MLIS (bge-m3)
-  participant Q as Qdrant
-  participant C as MLIS (glm-5.3-flash)
-  L->>A: Upload matter file
-  A->>M: Store blob in Matter bucket
-  A->>K: Enqueue ingest (Redis)
-  K->>M: Read blob
-  K->>E: Embed chunks
-  E-->>K: Vectors
-  K->>Q: Upsert into donna_chunks
-  L->>A: Ask a question about the matter
-  A->>E: Embed query
-  A->>Q: Similarity search
-  Q-->>A: Top-k chunks
-  A->>C: Prompt + retrieved context
-  C-->>A: Cited answer
-  A-->>L: Answer with citation chips
-```
+*Workflow diagram (To be added)*
 
 Data landing points: source documents → **MinIO** Matter bucket; embeddings → **Qdrant** `donna_chunks`; metadata/sessions → **Postgres**; job queue → **Redis**; produced work product (DOCX/XLSX/PPTX/CSV/PDF-form) → **MinIO** `{matter_id}/outputs/…` (Library bytes never overwritten).
 
