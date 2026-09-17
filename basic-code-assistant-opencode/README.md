@@ -14,6 +14,7 @@ This demo details how to set up and use [OpenCode](https://opencode.ai/docs/), a
 This demo uses:
 - **HPE Machine Learning Inference Software (MLIS)**: To host the LLM to be used by OpenCode
 - **VS Code**: Coding interface, with embedded terminal on which OpenCode will run
+- **(Optional) [GitHub MCP Server](https://github.com/github/github-mcp-server/tree/main)**: Can be used to have OpenCode interact with your GitHub repositories
 
 **Recording:**
 
@@ -185,7 +186,45 @@ Opencode configuration file can be placed at different locations (see [Opencode 
   ![opencode-change-model](images/opencode-change-model.png)
   
   * Once your model deployed on MLIS selected, its name should appear on the Opencode interface with "MLIS" if you left this as your provider name, as visible on the screenshot above.
-
+  ```
+  {
+    "$schema": "https://opencode.ai/config.json",
+    "provider": {
+      "myprovider": {
+        "npm": "@ai-sdk/openai-compatible",
+        "name": "MLIS",
+        "options": {
+          "baseURL": "DEPLOYMENT URL/v1",
+          "apiKey" : "DEPLOYMENT TOKEN"
+        },
+        "models": {
+          "DEPLOYMENT MODEL ID": {
+            "name": "MODEL NAME DISPLAYED IN OPENCODE"
+          }
+        }
+      }
+    },
+    "permission": {
+    "*": "ask",
+    "bash": {
+      "*": "ask",
+      "ls *": "allow",
+      "grep *": "allow",
+      "glob *": "allow",
+      "rm *": "deny",
+    },
+    "edit": "ask",
+	"read": "allow",
+	"glob": "allow",
+	"question": "allow",
+	"webfetch": "ask",
+	"websearch": "ask",
+	"codesearch": "ask",
+	"external_directory": "deny",
+	"doom_loop": "deny"
+    }
+  }
+  ```
 4. **Use Opencode**
 
 At this stage, the Opencode setup is complete, you can use it by simply typing questions and instructions. A non-exhaustive list of things you could do with it is:
@@ -197,6 +236,42 @@ At this stage, the Opencode setup is complete, you can use it by simply typing q
   * ...
 
 Note that pressing Tab will switch between the two default agents: the Build one, that has access to all tools (with execution limitations defined in the config file), and the Plan one, with much more restricted permissions, meant to be used for planning and analysis tasks requiring no code change. See [Opencode documentation](https://opencode.ai/docs/agents/) for more details.
+
+5. **Optional: Show OpenCode interact with GitHub repositories**
+
+An easy way to allow OpenCode to interact with your GitHub repositories is to have it use the official [GitHub MCP server](https://github.com/github/github-mcp-server/tree/main). This requires to follow two steps:
+* Create a GitHub Personal Access Token (PAT), on GitHub:
+  * Go to your user's Settings -> Developer settings (at the bottom of the left column) -> Personal access tokens
+  * Either create a fine-grained token or a classic token. Fine-grained tokens are recommended for security reasons: unlike classic ones, they are limited to certain repositories and have restricted permissions (to be defined when creating the token).
+  * For more information on GitHub PAT, see this page from [GitHub's documentation](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens)
+* Add the following mcp section to your Opencode.json configuration file:
+```
+    "mcp": {
+    "github": {
+      "type": "remote",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "enabled": true,
+      "oauth": false,
+      "headers": {
+        "Authorization": "Bearer <YOUR_GITHUB_PAT>"
+      }
+    }
+  },
+```
+  * Replace <YOUR_GITHUB_PAT> with your actual GitHub PAT
+  * Note that the mcp section is at the same level as the "provider" and "permissions" sections
+
+ To check that Opencode is connected to the GitHub MCP server, you can run the `opencode mcp list` in your terminal (when not running/outside of an Opencode session):
+ 
+ ![opencode-mcp-connected](images/opencode-mcp-connected.png)
+
+ If successfully connected, OpenCode should now have access to the repositories you granted it access to (or all of them, if using a classic token) and many self-explanatory tools to interact with them:
+ 
+ ![github-mcp-tools](images/github-mcp-tools.png)
+
+**Notes:**
+* We highly recommend to showcase OpenCode interacting either with **your own GitHub repositories, or repositories from a disposable GitHub user**
+* Operations performed by OpenCode will be performed on behalf of your GitHub user (the one who created the PAT)
 
 ## Advanced Opencode usage
 
