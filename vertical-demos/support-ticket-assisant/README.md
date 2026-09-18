@@ -1,6 +1,8 @@
-# Predictive Maintenance Demo
+# Support Ticket Assistant Demo
 
-A gen-AI powered predictive maintenance application built with Streamlit, featuring three core capabilities:
+NOTE: Repurpose to "Support Ticket Assistant" use case demo - Work in progress
+
+A gen-AI powered support ticket assistant application built with Streamlit, featuring three core capabilities:
 
 1. **Resolution Prediction**: Leverages LLaMA models to predict maintenance resolutions based on historical ticket data and embeddings
 2. **Ticket Classification**: Uses BERT-based models to automatically classify maintenance tickets into appropriate categories
@@ -8,7 +10,7 @@ A gen-AI powered predictive maintenance application built with Streamlit, featur
 
 ![Maintenance use case workflow](./assets/overview.png)
 
-[Demo](https://storage.googleapis.com/ai-solution-engineering-videos/public/Predictive%20Maintenance%20Demo.mp4)
+[Demo](To be updated)
 
 ## Project Structure
 
