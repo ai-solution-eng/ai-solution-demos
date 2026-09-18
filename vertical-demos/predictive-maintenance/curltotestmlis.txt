@@ -1,0 +1,4 @@
+curl -X POST "YOURMODELENDPOINT/predict" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOURTOKEN" \
+  -d '{"air_temperature_k":300.0,"process_temperature_k":310.0,"rotational_speed_rpm":1200,"torque_nm":70.0,"tool_wear_min":250}'

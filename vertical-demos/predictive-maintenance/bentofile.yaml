@@ -1,0 +1,17 @@
+service: "service:svc"  
+labels:
+  owner: ai-solution-engineering
+  project: predictive-maintenance
+include:
+  - "*.py"  
+  - "random_forest_model.pkl" 
+  - "setup.sh"
+exclude:
+  - import_model.py
+  - service_echo.py
+python:
+  requirements_txt: "./requirements.txt"
+  lock_packages: false
+docker:
+  python_version: "3.10"
+  setup_script: "setup.sh"
