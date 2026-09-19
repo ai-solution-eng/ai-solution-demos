@@ -21,6 +21,15 @@ spec:
         - name: qdrant
           image: "{{ .Values.qdrant.image.repository }}:{{ .Values.qdrant.image.tag }}"
           imagePullPolicy: {{ .Values.qdrant.image.pullPolicy }}
+          env:
+            {{- if .Values.qdrant.telemetryDisabled }}
+            # Qdrant phones home to telemetry.qdrant.io hourly; on clusters
+            # without open internet egress that fails ~24x/day per node and
+            # drowns the ERROR signal (721 entries in 9 days on SE-G2 —
+            # found by logsearch-mcp's first cross-namespace sweep).
+            - name: QDRANT__TELEMETRY_DISABLED
+              value: "true"
+            {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

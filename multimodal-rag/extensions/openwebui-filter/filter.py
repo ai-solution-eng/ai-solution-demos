@@ -27,7 +27,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-import httpx
+import httpx2
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -491,7 +491,7 @@ class Filter:
             return None
         full_url = f"{base}{url}" if url.startswith("/") else url
         try:
-            async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+            async with httpx2.AsyncClient(timeout=60.0, follow_redirects=True) as client:
                 resp = await client.get(full_url)
                 resp.raise_for_status()
                 return resp.content
@@ -561,7 +561,7 @@ class Filter:
         api = self.valves.RAG_API_URL.rstrip("/")
         url = f"{api}{self.valves.STAGING_PATH}"
         try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            async with httpx2.AsyncClient(timeout=120.0) as client:
                 files = {"file": (filename, data, mime or "application/octet-stream")}
                 resp = await client.post(url, files=files, headers=self._rag_api_headers())
                 resp.raise_for_status()
@@ -584,7 +584,7 @@ class Filter:
         api = self.valves.RAG_API_URL.rstrip("/")
         url = f"{api}/api/datasets"
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            async with httpx2.AsyncClient(timeout=15.0) as client:
                 resp = await client.get(url, headers=self._rag_api_headers())
                 resp.raise_for_status()
                 return resp.json().get("datasets")
@@ -672,7 +672,7 @@ class Filter:
         user_pw = self._memory_password_for_user(user)
         # Check existence first to avoid creating duplicates / noisy logs.
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            async with httpx2.AsyncClient(timeout=15.0) as client:
                 resp = await client.get(
                     f"{api}/api/datasets/{dataset_name}",
                     headers=self._rag_api_headers(self._memory_headers(user)),
@@ -683,7 +683,7 @@ class Filter:
             logger.debug("dataset existence check failed", exc_info=True)
         # Create it.
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx2.AsyncClient(timeout=30.0) as client:
                 resp = await client.post(
                     f"{api}/api/datasets",
                     json={
@@ -723,7 +723,7 @@ class Filter:
         url = f"{api}/api/datasets/{dataset_name}/search"
         params = {"q": query[:500], "top_k": self.valves.MEMORY_RECALL_TOP_K}
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx2.AsyncClient(timeout=30.0) as client:
                 resp = await client.get(url, params=params, headers=self._rag_api_headers(self._memory_headers(user)))
                 resp.raise_for_status()
                 results = resp.json().get("results", [])
@@ -775,7 +775,7 @@ class Filter:
         if self.valves.SQL_LESSONS_PASSWORD:
             headers["X-Dataset-Password"] = self.valves.SQL_LESSONS_PASSWORD
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx2.AsyncClient(timeout=30.0) as client:
                 resp = await client.get(url, params=params, headers=headers)
                 resp.raise_for_status()
                 results = resp.json().get("results", [])
@@ -885,7 +885,7 @@ class Filter:
             "temperature": 0.1,
         }
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
+            async with httpx2.AsyncClient(timeout=60.0) as client:
                 resp = await client.post(url, json=payload, headers=headers)
                 resp.raise_for_status()
                 raw = resp.json()["choices"][0]["message"]["content"].strip()
@@ -928,7 +928,7 @@ class Filter:
                 "source": "openwebui:sql-lesson",
             }
             try:
-                async with httpx.AsyncClient(timeout=60.0) as client:
+                async with httpx2.AsyncClient(timeout=60.0) as client:
                     resp = await client.post(store_url, json=[doc], headers=headers)
                     resp.raise_for_status()
                 stored += 1
@@ -990,7 +990,7 @@ class Filter:
             "temperature": 0.1,
         }
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx2.AsyncClient(timeout=30.0) as client:
                 resp = await client.post(url, json=payload, headers=headers)
                 resp.raise_for_status()
                 memory = resp.json()["choices"][0]["message"]["content"].strip()
@@ -1017,7 +1017,7 @@ class Filter:
             "memory_ts": datetime.now(timezone.utc).isoformat(),
         }
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
+            async with httpx2.AsyncClient(timeout=60.0) as client:
                 resp = await client.post(store_url, json=[doc], headers=self._rag_api_headers(self._memory_headers(user)))
                 resp.raise_for_status()
         except Exception:

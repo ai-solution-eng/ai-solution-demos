@@ -1,7 +1,21 @@
+# Conversation Toolbox — speech-to-speech voice agent toolkit (ASR, LLM,
+# TTS, batch transcription, optional GPU diarization). PCAI (HPE Ezmeral
+# Unified Analytics) deployment with Redis-backed batch job state.
 apiVersion: v2
 name: conversation-toolbox
-description: Speech to speech tools Helm chart
+description: >-
+  Speech-to-speech voice agent toolkit: ASR, LLM, TTS, batch transcription,
+  and optional speaker diarization, served behind the PCAI Istio gateway.
 type: application
 version: 4.5.2
 appVersion: "v4.5.2"
+keywords:
+  - speech
+  - asr
+  - tts
+  - voice-agent
+  - hpe
+  - pcai
+maintainers:
+  - name: HPE AI Solution Engineering
 icon: file://icon.ico

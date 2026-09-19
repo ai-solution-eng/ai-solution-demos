@@ -1,0 +1,1253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Batch Transcription</title>
+    <style>
+        :root {
+            --primary: #01A982;
+            --primary-dark: #008567;
+            --success: #01A982;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+            --bg: #f5f7fa;
+            --surface: #ffffff;
+            --text: #1a1a1a;
+            --text-muted: #5e6b7a;
+            --border: #d4dce6;
+            --hpe-green: #01A982;
+            --hpe-dark: #1a1a1a;
+        }
+        [data-theme="dark"] {
+            --bg: #0f172a;
+            --surface: #1e293b;
+            --text: #e2e8f0;
+            --text-muted: #94a3b8;
+            --border: #334155;
+            --hpe-dark: #0a0f1e;
+        }
+        [data-theme="dark"] .stat-box.pending { background: #422006; }
+        [data-theme="dark"] .stat-box.processing { background: #1e3a5f; }
+        [data-theme="dark"] .stat-box.completed { background: #064e3b; }
+        [data-theme="dark"] .stat-box.failed { background: #7f1d1d; }
+        [data-theme="dark"] .status-pending { background: #422006; color: #fcd34d; }
+        [data-theme="dark"] .status-processing { background: #1e3a5f; color: #93c5fd; }
+        [data-theme="dark"] .status-completed { background: #064e3b; color: #6ee7b7; }
+        [data-theme="dark"] .status-failed { background: #7f1d1d; color: #fca5a5; }
+        [data-theme="dark"] .upload-zone:hover, [data-theme="dark"] .upload-zone.dragover { background: #1a3a32; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        @font-face {
+            font-family: 'MetricHPE';
+            src: local('MetricHPE'), local('Metric HPE'), local('Arial');
+        }
+        body {
+            font-family: 'MetricHPE', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, var(--hpe-green), var(--primary-dark));
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        .header h1 { font-size: 1.5rem; margin-bottom: 8px; }
+        .header p { opacity: 0.9; font-size: 0.9rem; }
+        
+        .nav {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 0 24px;
+            background: var(--hpe-dark);
+            height: 48px;
+        }
+        .nav-brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-right: 16px;
+            text-decoration: none;
+            color: white;
+            font-weight: 600;
+            font-size: 0.85rem;
+            letter-spacing: 0.02em;
+            padding: 4px 0;
+            white-space: nowrap;
+        }
+        .nav-brand .hpe-element {
+            display: inline-block;
+            width: 18px;
+            height: 18px;
+            background: var(--hpe-green);
+            clip-path: polygon(25% 0%, 100% 0%, 75% 100%, 0% 100%);
+            flex-shrink: 0;
+        }
+        .nav a {
+            padding: 8px 14px;
+            border-radius: 6px;
+            text-decoration: none;
+            color: rgba(255,255,255,0.75);
+            font-weight: 500;
+            font-size: 0.8rem;
+            transition: all 0.15s;
+            white-space: nowrap;
+        }
+        .nav a:hover { background: rgba(255,255,255,0.1); color: white; }
+        .nav a.active { background: var(--hpe-green); color: white; }
+        
+        .batch-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .card {
+            background: var(--surface);
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            margin-bottom: 20px;
+        }
+        
+        .upload-zone {
+            border: 3px dashed var(--border);
+            border-radius: 12px;
+            padding: 60px;
+            text-align: center;
+            margin-bottom: 20px;
+            transition: all 0.3s;
+            cursor: pointer;
+        }
+        .upload-zone:hover, .upload-zone.dragover {
+            border-color: var(--primary);
+            background: #f0f0ff;
+        }
+        .upload-zone h3 { margin-bottom: 8px; }
+        .upload-zone p { color: var(--text-muted); font-size: 0.9rem; }
+        
+        .file-list {
+            max-height: 300px;
+            overflow-y: auto;
+            margin-bottom: 20px;
+        }
+        .file-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px;
+            background: var(--bg);
+            border-radius: 8px;
+            margin-bottom: 8px;
+        }
+        .file-item button {
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 1.2rem;
+            color: var(--text-muted);
+        }
+        .file-item button:hover { color: var(--danger); }
+        
+        .form-row {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        .form-group {
+            min-width: 200px;
+        }
+        .form-group label {
+            display: block;
+            font-weight: 500;
+            margin-bottom: 6px;
+        }
+        .form-group select,
+        .form-group input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 0.95rem;
+        }
+        
+        .btn {
+            padding: 14px 28px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 1rem;
+        }
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+        .btn-primary:hover { background: var(--primary-dark); }
+        .btn-primary:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        .stats-row {
+            display: flex;
+            gap: 16px;
+            margin: 20px 0;
+            flex-wrap: wrap;
+        }
+        .stat-box {
+            flex: 1;
+            min-width: 120px;
+            padding: 16px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .stat-box.pending { background: #fef3c7; }
+        .stat-box.processing { background: #dbeafe; }
+        .stat-box.completed { background: #dcfce7; }
+        .stat-box.failed { background: #fee2e2; }
+        .stat-box .value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--text);
+        }
+        .stat-box .label {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+        
+        .job-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 16px;
+        }
+        .job-card {
+            background: var(--surface);
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            transition: box-shadow 0.2s;
+        }
+        .job-card:hover {
+            box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+        }
+        .job-card[data-complete="true"] {
+            border: 2px solid var(--success);
+        }
+        .job-card[data-failed="true"] {
+            border: 2px solid var(--danger);
+        }
+        .job-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        .job-header strong {
+            font-family: monospace;
+            font-size: 0.9rem;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+        .status-pending { background: #fef3c7; color: #92400e; }
+        .status-processing { background: #dbeafe; color: #1e40af; }
+        .status-completed { background: #dcfce7; color: #166534; }
+        .status-failed { background: #fee2e2; color: #991b1b; }
+        
+        .progress-bar {
+            height: 8px;
+            background: #e2e8f0;
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--hpe-green), #3dd4af);
+            transition: width 0.5s ease-out;
+        }
+        .job-stats {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+        .job-actions {
+            margin-top: 12px;
+            display: flex;
+            gap: 8px;
+        }
+        .job-actions button {
+            flex: 1;
+            padding: 8px 12px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--bg);
+            cursor: pointer;
+            font-size: 0.85rem;
+        }
+        .job-actions button:hover {
+            background: var(--border);
+        }
+        .job-actions button.download {
+            background: var(--success);
+            color: white;
+            border: none;
+        }
+        .job-actions button.download:hover {
+            background: #16a34a;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-muted);
+        }
+        
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-bottom: 16px;
+        }
+        .connection-status .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--text-muted);
+        }
+        .connection-status.connected .dot {
+            background: var(--success);
+        }
+        .connection-status.error .dot {
+            background: var(--danger);
+        }
+        
+        @media (max-width: 768px) {
+            .form-row { flex-direction: column; }
+            .job-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+    <script>if(localStorage.getItem('dark-mode')==='true')document.documentElement.setAttribute('data-theme','dark')</script>
+</head>
+<body>
+    <div class="header">
+        <h1>📚 Batch Audio Transcription</h1>
+        <p>Upload multiple audio files for scalable transcription. Process 1000+ files efficiently.</p>
+    </div>
+
+    <nav class="nav">
+        <a href="/" class="nav-brand">
+            <span class="hpe-element"></span>
+            <span>Hewlett Packard Enterprise</span>
+        </a>
+        <a href="/">Voice Assistant</a>
+        <a href="/voice-profiles">Voice Profiles</a>
+        <a href="/multi-user">Multi-User</a>
+        <a href="/transcribe-file">File Transcription</a>
+        <a href="/batch-transcription" class="active">Batch Transcription</a>
+            <button id="dark-mode-toggle" style="margin-left:auto;background:none;border:none;color:white;font-size:1.1rem;cursor:pointer;padding:8px;border-radius:6px;transition:background 0.15s;" title="Toggle dark mode">🌙</button>
+    </nav>
+
+    <div class="batch-container">
+        <!-- Upload Card -->
+        <div class="card">
+            <h2 style="margin-bottom: 16px;">📤 Upload Audio Files</h2>
+            
+            <div class="upload-zone" id="upload-zone">
+                <div style="font-size: 3rem; margin-bottom: 16px;">📁</div>
+                <h3>Drop audio files here or click to browse</h3>
+                <p>MP3, WAV, M4A, FLAC, OGG, AAC • Multiple files supported</p>
+            </div>
+            <input type="file" id="file-input" multiple accept=".mp3,.wav,.m4a,.flac,.ogg,.aac" hidden>
+            
+            <div id="file-list" class="file-list" style="display: none;"></div>
+            
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="num-speakers">Estimated Speakers</label>
+                    <select id="num-speakers">
+                        <option value="1" selected>1 Speaker</option>
+                        <option value="2">2 Speakers</option>
+                        <option value="3">3 Speakers</option>
+                        <option value="4">4 Speakers</option>
+                        <option value="5">5+ Speakers</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="language">Language</label>
+                    <select id="language">
+                        <option value="">Auto-detect</option>
+                        <option value="en">English (en)</option>
+                        <option value="es">Spanish (es)</option>
+                        <option value="fr">French (fr)</option>
+                        <option value="de">German (de)</option>
+                        <option value="zh">Chinese (zh)</option>
+                        <option value="ja">Japanese (ja)</option>
+                        <option value="ko">Korean (ko)</option>
+                        <option value="ru">Russian (ru)</option>
+                        <option value="ar">Arabic (ar)</option>
+                        <option value="pt">Portuguese (pt)</option>
+                        <option value="hi">Hindi (hi)</option>
+                        <option value="it">Italian (it)</option>
+                        <option value="nl">Dutch (nl)</option>
+                        <option value="pl">Polish (pl)</option>
+                        <option value="tr">Turkish (tr)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="webhook-url">Webhook URL (optional)</label>
+                    <input type="url" id="webhook-url" placeholder="https://your-server.com/webhook">
+                </div>
+            </div>
+            
+            <button id="btn-upload" class="btn btn-primary" onclick="uploadFiles()" disabled>
+                📤 Upload & Start Transcription
+            </button>
+        </div>
+
+        <!-- Jobs Status Card -->
+        <div class="card">
+            <!-- Connection Status -->
+            <div class="connection-status" id="connection-status">
+                <span class="dot"></span>
+                <span id="connection-text">Connecting...</span>
+            </div>
+            
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 10px;">
+                <h2>📊 Transcription Jobs</h2>
+                <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                    <input type="text" id="search-input" placeholder="🔍 Search by filename..." 
+                           style="padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.9rem; min-width: 180px;">
+                    <select id="status-filter" style="padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.9rem;">
+                        <option value="">All Statuses</option>
+                        <option value="pending">Pending</option>
+                        <option value="processing">Processing</option>
+                        <option value="completed">Completed</option>
+                        <option value="failed">Failed</option>
+                        <option value="cancelled">Cancelled</option>
+                    </select>
+                    <button onclick="cleanupStuckJobs()" class="btn btn-secondary" style="padding: 8px 12px; width: auto;">🧹 Cleanup Stuck</button>
+                </div>
+            </div>
+            
+            <div class="stats-row">
+                <div class="stat-box pending">
+                    <div class="value" id="count-pending">0</div>
+                    <div class="label">Pending</div>
+                </div>
+                <div class="stat-box processing">
+                    <div class="value" id="count-processing">0</div>
+                    <div class="label">Processing</div>
+                </div>
+                <div class="stat-box completed">
+                    <div class="value" id="count-completed">0</div>
+                    <div class="label">Completed</div>
+                </div>
+                <div class="stat-box failed">
+                    <div class="value" id="count-failed">0</div>
+                    <div class="label">Failed</div>
+                </div>
+            </div>
+            
+            <div id="job-grid" class="job-grid">
+                <div class="empty-state">
+                    <div style="font-size: 2rem; margin-bottom: 8px;">📋</div>
+                    <p>No transcription jobs yet. Upload files to get started.</p>
+                </div>
+            </div>
+            
+            <div id="pagination-controls" style="display: none; justify-content: center; align-items: center; gap: 12px; margin-top: 20px; flex-wrap: wrap;">
+                <button id="page-prev" onclick="changePage(-1)" style="padding: 8px 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); cursor: pointer;">← Previous</button>
+                <span id="page-info" style="font-size: 0.9rem; color: var(--text-muted);">Page 1</span>
+                <button id="page-next" onclick="changePage(1)" style="padding: 8px 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); cursor: pointer;">Next →</button>
+                <select id="page-size" style="padding: 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem;">
+                    <option value="10">10/page</option>
+                    <option value="20" selected>20/page</option>
+                    <option value="50">50/page</option>
+                    <option value="100">100/page</option>
+                </select>
+            </div>
+        </div>
+
+        <div style="margin-top: 32px;">
+            <h2 style="margin-bottom: 12px; display: flex; align-items: center; gap: 12px;">📂 Saved Transcripts
+                <button class="btn-secondary btn-small" id="refresh-saved" style="font-size: 0.85rem;">↻ Refresh</button>
+                <button class="btn-small" id="delete-all-saved" style="font-size: 0.85rem; color: var(--danger); border-color: var(--danger);">🗑️ Delete All</button>
+            </h2>
+            <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 12px;">
+                Transcripts saved on the PVC. These persist even after Redis job data expires.
+            </p>
+            <div id="saved-transcripts-list" style="display: flex; flex-direction: column; gap: 8px;">
+                <p style="color: var(--text-muted);">Loading...</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // State
+        const selectedFiles = [];
+        let jobs = [];  // Full job details (refreshed periodically)
+        let jobSummaries = {};  // Quick status updates from SSE
+        let eventSource = null;
+        let fullRefreshInterval = null;
+        let safetyPollInterval = null;
+        let sseReconnectAttempts = 0;
+        let sseMaxReconnectAttempts = 20;
+        let lastEventId = null;
+        let currentPage = 1;
+        let pageSize = 20;
+        let statusFilter = '';
+        let searchQuery = '';
+        let allJobs = [];  // complete list for filtering/pagination
+        
+        // DOM Elements
+        const uploadZone = document.getElementById('upload-zone');
+        const fileInput = document.getElementById('file-input');
+        const fileList = document.getElementById('file-list');
+        const btnUpload = document.getElementById('btn-upload');
+        
+        fetch('/api/config')
+            .then(r => r.ok ? r.json() : null)
+            .then(config => {
+                if (config && config.language) {
+                    document.getElementById('language').value = config.language;
+                }
+            })
+            .catch(() => {});
+        
+        // File handling
+        uploadZone.addEventListener('click', () => fileInput.click());
+        
+        uploadZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadZone.classList.add('dragover');
+        });
+        
+        uploadZone.addEventListener('dragleave', () => {
+            uploadZone.classList.remove('dragover');
+        });
+        
+        uploadZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadZone.classList.remove('dragover');
+            handleFiles(e.dataTransfer.files);
+        });
+        
+        fileInput.addEventListener('change', (e) => handleFiles(e.target.files));
+        
+        function handleFiles(files) {
+            for (const file of files) {
+                const ext = file.name.split('.').pop().toLowerCase();
+                const validExts = ['mp3', 'wav', 'm4a', 'flac', 'ogg', 'aac'];
+                
+                if (!validExts.includes(ext)) {
+                    showToast(`Skipped ${file.name}: unsupported format`, 'error');
+                    continue;
+                }
+                
+                if (!selectedFiles.find(f => f.name === file.name)) {
+                    selectedFiles.push(file);
+                }
+            }
+            renderFileList();
+        }
+        
+        function renderFileList() {
+            if (selectedFiles.length === 0) {
+                fileList.style.display = 'none';
+                btnUpload.disabled = true;
+                return;
+            }
+            
+            fileList.style.display = 'block';
+            btnUpload.disabled = false;
+            
+            fileList.innerHTML = selectedFiles.map((file, idx) => `
+                <div class="file-item">
+                    <span>🎵 ${file.name}</span>
+                    <span style="color: var(--text-muted); font-size: 0.85rem;">
+                        ${(file.size / 1024 / 1024).toFixed(2)} MB
+                    </span>
+                    <button onclick="removeFile(${idx})" title="Remove">✕</button>
+                </div>
+            `).join('');
+        }
+        
+        function removeFile(idx) {
+            selectedFiles.splice(idx, 1);
+            renderFileList();
+        }
+        
+        async function uploadFiles() {
+            if (selectedFiles.length === 0) return;
+            
+            const numSpeakers = parseInt(document.getElementById('num-speakers').value);
+            const language = document.getElementById('language').value;
+            const webhookUrl = document.getElementById('webhook-url').value;
+            
+            btnUpload.disabled = true;
+            const totalFiles = selectedFiles.length;
+            let uploaded = 0;
+            let errors = [];
+            
+            // Pipeline: upload files one at a time. The first upload kicks
+            // off a background processor on the server that starts
+            // WAV-converting and splitting immediately. Subsequent uploads
+            // overlap with processing — file 1 is being split while file 2
+            // is being uploaded. Jobs appear in the grid via 5s polling.
+            for (const file of selectedFiles) {
+                btnUpload.textContent = `📤 Uploading ${uploaded + 1}/${totalFiles}: ${file.name}`;
+                
+                const formData = new FormData();
+                formData.append('files', file);
+                formData.append('num_speakers', numSpeakers);
+                if (language) {
+                    formData.append('language', language);
+                }
+                if (webhookUrl) {
+                    formData.append('webhook_url', webhookUrl);
+                }
+                
+                try {
+                    const response = await fetch('/api/batch/upload', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const result = await response.json();
+                    if (result.errors && result.errors.length > 0) {
+                        errors.push(...result.errors);
+                    }
+                } catch (error) {
+                    errors.push({ filename: file.name, error: error.message });
+                }
+                uploaded++;
+            }
+            
+            if (errors.length > 0) {
+                showToast(`${errors.length} file(s) failed to upload`, 'error');
+            }
+            showToast(`Upload complete! ${totalFiles - errors.length} files queued. Processing in background.`, 'success');
+            selectedFiles.length = 0;
+            renderFileList();
+            btnUpload.disabled = false;
+            btnUpload.textContent = '📤 Upload & Start Transcription';
+        }
+        
+        // ==============================================================================
+        // SSE Connection - Real-time updates
+        // ==============================================================================
+        
+        function connectEventSource() {
+            // Close existing connection
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+            }
+            
+            updateConnectionStatus('connecting');
+            
+            let url = '/api/batch/stream';
+            if (lastEventId) {
+                url += '?lastEventId=' + encodeURIComponent(lastEventId);
+            }
+            
+            eventSource = new EventSource(url);
+            
+            eventSource.onopen = () => {
+                updateConnectionStatus('connected');
+                sseReconnectAttempts = 0;
+                console.log('SSE connected');
+            };
+            
+            // Handle status updates from server
+            eventSource.addEventListener('status_update', async (e) => {
+                lastEventId = e.lastEventId || null;
+                try {
+                    const data = JSON.parse(e.data);
+                    
+                    // Update counts immediately
+                    document.getElementById('count-pending').textContent = data.counts.pending;
+                    document.getElementById('count-processing').textContent = data.counts.processing;
+                    document.getElementById('count-completed').textContent = data.counts.completed;
+                    document.getElementById('count-failed').textContent = data.counts.failed;
+                    
+                    // Full refresh to stay in sync with actual API state
+                    await refreshJobs();
+                    
+                } catch (error) {
+                    console.error('Error parsing status update:', error);
+                }
+            });
+            
+            // Handle full refresh trigger
+            eventSource.addEventListener('full_refresh', async (e) => {
+                console.log('Full refresh triggered');
+                await refreshJobs();
+            });
+            
+            // Handle completion
+            eventSource.addEventListener('all_complete', async (e) => {
+                console.log('All jobs complete');
+                showToast('All transcription jobs completed!', 'success');
+                // Do a final full refresh
+                await refreshJobs();
+            });
+            
+            // Handle errors
+            eventSource.onerror = (error) => {
+                console.error('SSE error:', error);
+                updateConnectionStatus('error');
+                
+                // Auto-reconnect with exponential backoff
+                if (sseReconnectAttempts < sseMaxReconnectAttempts) {
+                    sseReconnectAttempts++;
+                    const delay = Math.min(1000 * Math.pow(1.5, sseReconnectAttempts), 15000);
+                    console.log(`SSE reconnecting in ${delay}ms (attempt ${sseReconnectAttempts})`);
+                    setTimeout(() => {
+                        if (!eventSource || eventSource.readyState === EventSource.CLOSED) {
+                            connectEventSource();
+                        }
+                    }, delay);
+                } else {
+                    console.log('SSE max reconnect attempts reached, falling back to polling');
+                    startPolling();
+                }
+            };
+        }
+        
+        function updateConnectionStatus(status) {
+            const statusEl = document.getElementById('connection-status');
+            const textEl = document.getElementById('connection-text');
+            
+            statusEl.className = 'connection-status ' + status;
+            
+            if (status === 'connected') {
+                textEl.textContent = 'Connected (real-time updates)';
+            } else if (status === 'connecting') {
+                textEl.textContent = 'Connecting...';
+            } else if (status === 'error') {
+                textEl.textContent = 'Connection error (falling back to polling)';
+            }
+        }
+        
+        // ==============================================================================
+        // Fallback Polling (used if SSE fails)
+        // ==============================================================================
+        
+        function startPolling() {
+            // Close SSE if open
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+            }
+            
+            updateConnectionStatus('error');
+            document.getElementById('connection-text').textContent = 'Using polling mode';
+            
+            // Refresh full job list every 10 seconds (not 3!)
+            fullRefreshInterval = setInterval(refreshJobs, 3000);
+        }
+        
+        // ==============================================================================
+        // Job Display Updates
+        // ==============================================================================
+        
+        function updateJobCardsQuick(summaries) {
+            const grid = document.getElementById('job-grid');
+            const cards = grid.querySelectorAll('.job-card[data-job-id]');
+            
+            cards.forEach(card => {
+                const jobId = card.dataset.jobId;
+                const summary = summaries[jobId];
+                
+                if (summary) {
+                    // Update progress bar
+                    const progressFill = card.querySelector('.progress-fill');
+                    const progressText = card.querySelector('.job-stats span:last-child');
+                    const segmentsText = card.querySelector('.job-stats span:first-child');
+                    
+                    if (progressFill) {
+                        progressFill.style.width = summary.progress + '%';
+                    }
+                    if (progressText) {
+                        progressText.textContent = Math.round(summary.progress) + '%';
+                    }
+                    if (segmentsText) {
+                        segmentsText.textContent = `${summary.completed}/${summary.total} segments`;
+                    }
+                    
+                    // Update status badge
+                    const badge = card.querySelector('.status-badge');
+                    if (badge && badge.textContent !== summary.status) {
+                        badge.textContent = summary.status;
+                        badge.className = `status-badge status-${summary.status}`;
+                    }
+                    
+                    // Update card styling for complete/failed
+                    if (summary.status === 'completed') {
+                        card.dataset.complete = 'true';
+                    } else if (summary.status === 'failed') {
+                        card.dataset.failed = 'true';
+                    }
+                }
+            });
+        }
+        
+        async function refreshJobs() {
+            try {
+                const response = await fetch('/api/batch/status?limit=1000');
+                const data = await response.json();
+                
+                // Update counts
+                document.getElementById('count-pending').textContent = data.pending;
+                document.getElementById('count-processing').textContent = data.processing;
+                document.getElementById('count-completed').textContent = data.completed;
+                document.getElementById('count-failed').textContent = data.failed;
+                
+                // Store all jobs for client-side filtering/pagination
+                allJobs = data.jobs || [];
+                applyFiltersAndRender();
+                
+            } catch (error) {
+                console.error('Failed to refresh jobs:', error);
+            }
+        }
+        
+        function applyFiltersAndRender() {
+            // Apply status filter
+            let filtered = allJobs;
+            if (statusFilter) {
+                filtered = filtered.filter(j => j.status === statusFilter);
+            }
+            
+            // Apply search query
+            if (searchQuery) {
+                const q = searchQuery.toLowerCase();
+                filtered = filtered.filter(j => 
+                    (j.file_name && j.file_name.toLowerCase().includes(q)) ||
+                    j.job_id.toLowerCase().includes(q)
+                );
+            }
+            
+            // Update pagination info
+            const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+            if (currentPage > totalPages) currentPage = totalPages;
+            
+            const start = (currentPage - 1) * pageSize;
+            const pageJobs = filtered.slice(start, start + pageSize);
+            
+            document.getElementById('page-info').textContent = `Page ${currentPage} of ${totalPages} (${filtered.length} jobs)`;
+            document.getElementById('pagination-controls').style.display = filtered.length > pageSize ? 'flex' : 'none';
+            document.getElementById('page-prev').disabled = currentPage <= 1;
+            document.getElementById('page-next').disabled = currentPage >= totalPages;
+            
+            renderJobGrid(pageJobs);
+        }
+        
+        function changePage(delta) {
+            currentPage += delta;
+            applyFiltersAndRender();
+        }
+        
+        function renderJobGrid(jobList) {
+            const grid = document.getElementById('job-grid');
+            
+            if (!jobList || jobList.length === 0) {
+                grid.innerHTML = `
+                    <div class="empty-state">
+                        <div style="font-size: 2rem; margin-bottom: 8px;">📋</div>
+                        <p>No transcription jobs yet. Upload files to get started.</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            grid.innerHTML = jobList.map(job => `
+                <div class="job-card" 
+                     data-job-id="${job.job_id}"
+                     data-complete="${job.status === 'completed'}"
+                     data-failed="${job.status === 'failed'}">
+                    <div class="job-header">
+                        <strong title="${job.job_id}">${job.job_id.substring(0, 8)}...</strong>
+                        <span class="status-badge status-${job.status}">${job.status}</span>
+                    </div>
+                    <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 8px;">${job.file_name || 'Unknown file'}</div>
+                    ${job.requested_speakers > 1 && job.diarization_used === false ? `
+                        <div style="font-size: 0.75rem; margin-bottom: 8px; color: #b45309;">
+                            ⚠️ Diarization not enabled — energy-based segmentation; speaker separation may be inaccurate.
+                        </div>` : ''}
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: ${job.progress_percent}%"></div>
+                    </div>
+                    <div class="job-stats">
+                        <span>${job.completed_segments}/${job.total_segments} segments</span>
+                        <span>${Math.round(job.progress_percent)}%</span>
+                    </div>
+                    <div class="job-actions">
+                        <button onclick="viewTranscript('${job.job_id}')">📄 View</button>
+                        ${job.transcript_path ? `
+                            <button class="download" onclick="downloadTranscript('${job.job_id}')">💾 Download</button>
+                        ` : ''}
+                        ${job.status === 'pending' || job.status === 'processing' ? `
+                            <button onclick="cancelJob('${job.job_id}')">🛑 Cancel</button>
+                        ` : ''}
+                        ${job.status === 'processing' || job.status === 'failed' ? `
+                            <button onclick="restartJob('${job.job_id}')">🔄 Retry</button>
+                        ` : ''}
+                        ${job.status === 'processing' ? `
+                            <button onclick="forceCompleteJob('${job.job_id}')">⏩ Force Complete</button>
+                        ` : ''}
+                        <button onclick="deleteJob('${job.job_id}')" style="color: var(--danger);">🗑️ Delete</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        // ==============================================================================
+        // Job Actions
+        // ==============================================================================
+        
+        async function viewTranscript(jobId) {
+            try {
+                const response = await fetch(`/api/batch/transcript/${jobId}`);
+                if (!response.ok) {
+                    const error = await response.json();
+                    showToast(error.detail || 'Failed to load transcript', 'error');
+                    return;
+                }
+                const data = await response.json();
+                
+                // Create modal to display transcript
+                const modal = document.createElement('div');
+                modal.id = 'transcript-modal';  // Add an ID for easy targeting
+                modal.style.cssText = `
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    right: 0;
+                    bottom: 0;
+                    background: rgba(0,0,0,0.5);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    z-index: 1000;
+                `;
+                modal.innerHTML = `
+                    <div style="
+                        background: var(--surface);
+                        color: var(--text);
+                        border: 1px solid var(--border);
+                        border-radius: 12px;
+                        padding: 24px;
+                        max-width: 800px;
+                        width: 90%;
+                        max-height: 80vh;
+                        overflow-y: auto;
+                    ">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 16px;">
+                            <h3 style="color: var(--text);">📄 Transcript: ${data.file_name}</h3>
+                            <button id="modal-close-btn" style="background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--text);">✕</button>
+                        </div>
+                        <pre style="white-space: pre-wrap; font-family: inherit; line-height: 1.6; color: var(--text);">${data.transcript || 'No transcript available'}</pre>
+                        <div style="margin-top: 16px; text-align: right;">
+                            <button onclick="downloadTranscript('${jobId}')" style="
+                                padding: 10px 20px;
+                                background: var(--success);
+                                color: white;
+                                border: none;
+                                border-radius: 6px;
+                                cursor: pointer;
+                            ">💾 Download</button>
+                        </div>
+                    </div>
+                `;
+                
+                // Close button handler
+                modal.querySelector('#modal-close-btn').addEventListener('click', () => {
+                    modal.remove();
+                });
+                
+                // Backdrop click handler
+                modal.addEventListener('click', (e) => {
+                    if (e.target === modal) modal.remove();
+                });
+                
+                document.body.appendChild(modal);
+            } catch (error) {
+                showToast('Failed to load transcript', 'error');
+            }
+        }
+
+        async function downloadTranscript(jobId) {
+            try {
+                const response = await fetch(`/api/batch/transcript/${jobId}`);
+                const data = await response.json();
+                
+                const blob = new Blob([data.transcript], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${data.file_name.split('.')[0]}_transcript.txt`;
+                a.click();
+                URL.revokeObjectURL(url);
+                showToast('Transcript downloaded!', 'success');
+            } catch (error) {
+                showToast('Download failed', 'error');
+            }
+        }
+        
+        async function cancelJob(jobId) {
+            if (!confirm('Cancel this transcription job?')) return;
+            
+            try {
+                const response = await fetch(`/api/batch/cancel/${jobId}`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                showToast(data.status, 'success');
+                await refreshJobs();
+            } catch (error) {
+                showToast('Failed to cancel job', 'error');
+            }
+        }
+        
+        async function restartJob(jobId) {
+            if (!confirm(`Restart job ${jobId.substring(0, 8)}...? This will reset stuck segments.`)) return;
+            try {
+                const response = await fetch(`/api/batch/restart/${jobId}`, { method: 'POST' });
+                const data = await response.json();
+                showToast(`Job restarted: ${data.segments_reset} segments reset`, 'success');
+                await refreshJobs();
+            } catch (error) {
+                showToast('Failed to restart job', 'error');
+            }
+        }
+        
+        async function forceCompleteJob(jobId) {
+            if (!confirm(`Force complete job ${jobId.substring(0, 8)}...? Unprocessed segments will be marked as unavailable.`)) return;
+            try {
+                const response = await fetch(`/api/batch/force-complete/${jobId}`, { method: 'POST' });
+                const data = await response.json();
+                showToast('Job force completed', 'success');
+                await refreshJobs();
+            } catch (error) {
+                showToast('Failed to force complete job', 'error');
+            }
+        }
+        
+        async function deleteJob(jobId) {
+            if (!confirm(`Permanently delete job ${jobId.substring(0, 8)}...? This cannot be undone.`)) return;
+            try {
+                const response = await fetch(`/api/batch/${jobId}`, { method: 'DELETE' });
+                const data = await response.json();
+                showToast('Job deleted', 'success');
+                await refreshJobs();
+            } catch (error) {
+                showToast('Failed to delete job', 'error');
+            }
+        }
+        
+        async function cleanupStuckJobs() {
+            if (!confirm('Find and restart all jobs with stuck segments?')) return;
+            try {
+                const response = await fetch('/api/batch/cleanup', { method: 'POST' });
+                const data = await response.json();
+                showToast(`Cleaned up ${data.jobs_cleaned} stuck job(s)`, 'success');
+                await refreshJobs();
+            } catch (error) {
+                showToast('Failed to clean up stuck jobs', 'error');
+            }
+        }
+        
+        // ==============================================================================
+        // Utilities
+        // ==============================================================================
+        
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            toast.textContent = message;
+            toast.style.cssText = `
+                position: fixed;
+                top: 80px;
+                right: 20px;
+                padding: 12px 20px;
+                background: ${type === 'error' ? '#fee2e2' : type === 'success' ? '#dcfce7' : '#e0e7ff'};
+                color: ${type === 'error' ? '#991b1b' : type === 'success' ? '#166534' : '#3730a3'};
+                border-radius: 8px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                z-index: 1001;
+                animation: slideIn 0.3s ease;
+            `;
+            
+            if (!document.getElementById('toast-styles')) {
+                const style = document.createElement('style');
+                style.id = 'toast-styles';
+                style.textContent = `
+                    @keyframes slideIn {
+                        from { transform: translateX(100%); opacity: 0; }
+                        to { transform: translateX(0); opacity: 1; }
+                    }
+                `;
+                document.head.appendChild(style);
+            }
+            
+            document.body.appendChild(toast);
+            setTimeout(() => {
+                toast.style.animation = 'slideIn 0.3s ease reverse';
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+        
+        // ==============================================================================
+        // Initialization
+        // ==============================================================================
+        
+        // Search & filter event listeners
+        document.getElementById('search-input').addEventListener('input', (e) => {
+            searchQuery = e.target.value;
+            currentPage = 1;
+            applyFiltersAndRender();
+        });
+        
+        document.getElementById('status-filter').addEventListener('change', (e) => {
+            statusFilter = e.target.value;
+            currentPage = 1;
+            applyFiltersAndRender();
+        });
+        
+        document.getElementById('page-size').addEventListener('change', (e) => {
+            pageSize = parseInt(e.target.value);
+            currentPage = 1;
+            applyFiltersAndRender();
+        });
+        
+        // ==============================================================================
+        // Saved Transcripts (PVC-backed, survives Redis eviction)
+        // ==============================================================================
+        
+        async function refreshSavedTranscripts() {
+            try {
+                const response = await fetch('/api/batch/transcripts/files');
+                if (!response.ok) return;
+                const data = await response.json();
+                const container = document.getElementById('saved-transcripts-list');
+                if (!data.files || data.files.length === 0) {
+                    container.innerHTML = '<p style="color: var(--text-muted);">No saved transcripts yet.</p>';
+                    return;
+                }
+                container.innerHTML = data.files.map(f => `
+                    <div style="display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px;">
+                        <span style="flex: 1; font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${f.filename}</span>
+                        <span style="font-size: 0.8rem; color: var(--text-muted); white-space: nowrap;">${f.size_kb} KB &middot; ${f.modified}</span>
+                        <a href="/api/batch/transcripts/files/${encodeURIComponent(f.filename)}" download="${f.filename}"
+                           style="padding: 4px 12px; border: 1px solid var(--border); border-radius: 6px; text-decoration: none; font-size: 0.85rem; color: var(--text); white-space: nowrap;">💾 Download</a>
+                        <button onclick="deleteSavedTranscript('${f.filename}')" style="padding: 4px 10px; border: 1px solid var(--danger); border-radius: 6px; font-size: 0.85rem; color: var(--danger); cursor: pointer; white-space: nowrap;">🗑️</button>
+                    </div>
+                `).join('');
+            } catch (e) {
+                console.error('Failed to load saved transcripts:', e);
+            }
+        }
+        
+        async function deleteSavedTranscript(filename) {
+            if (!confirm(`Delete "${filename}"?`)) return;
+            try {
+                const resp = await fetch(`/api/batch/transcripts/files/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+                if (resp.ok) {
+                    showToast(`Deleted ${filename}`, 'success');
+                    await refreshSavedTranscripts();
+                } else {
+                    showToast('Delete failed', 'error');
+                }
+            } catch (e) {
+                showToast('Delete failed', 'error');
+            }
+        }
+        
+        async function deleteAllSavedTranscripts() {
+            if (!confirm('Delete ALL saved transcripts? This cannot be undone.')) return;
+            try {
+                const resp = await fetch('/api/batch/transcripts/files', { method: 'DELETE' });
+                if (resp.ok) {
+                    const data = await resp.json();
+                    showToast(`Deleted ${data.count} transcript(s)`, 'success');
+                    await refreshSavedTranscripts();
+                } else {
+                    showToast('Delete all failed', 'error');
+                }
+            } catch (e) {
+                showToast('Delete all failed', 'error');
+            }
+        }
+        
+        // Initial load
+        refreshJobs();
+        refreshSavedTranscripts();
+        
+        // Connect to SSE for real-time updates
+        connectEventSource();
+        
+        // Safety-net polling: SSE through istio/envoy can be silently
+        // buffered (onopen fires, but status_update events never arrive,
+        // no onerror either). This 5s poll guarantees at most 5s of
+        // staleness regardless of proxy behavior. Redundant with SSE when
+        // SSE works — harmless.
+        safetyPollInterval = setInterval(refreshJobs, 5000);
+        
+        // Refresh saved transcripts every 30s (less frequent than jobs —
+        // files don't change as often).
+        setInterval(refreshSavedTranscripts, 30000);
+        
+        // Manual refresh button
+        document.getElementById('refresh-saved').addEventListener('click', refreshSavedTranscripts);
+        document.getElementById('delete-all-saved').addEventListener('click', deleteAllSavedTranscripts);
+        
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (eventSource) {
+                eventSource.close();
+            }
+            if (fullRefreshInterval) {
+                clearInterval(fullRefreshInterval);
+            }
+            if (safetyPollInterval) {
+                clearInterval(safetyPollInterval);
+            }
+        });
+    </script>
+    <script>
+        (function() {
+            var toggle = document.getElementById('dark-mode-toggle');
+            if (toggle) {
+                toggle.textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️' : '🌙';
+                toggle.addEventListener('click', function() {
+                    var nowDark = document.documentElement.getAttribute('data-theme') === 'dark';
+                    if (nowDark) {
+                        document.documentElement.removeAttribute('data-theme');
+                        localStorage.setItem('dark-mode', 'false');
+                        toggle.textContent = '🌙';
+                    } else {
+                        document.documentElement.setAttribute('data-theme', 'dark');
+                        localStorage.setItem('dark-mode', 'true');
+                        toggle.textContent = '☀️';
+                    }
+                });
+            }
+        })();
+    </script>
+</body>
+</html>

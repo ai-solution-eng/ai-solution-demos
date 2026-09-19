@@ -53,8 +53,15 @@ class NotebookProcessor:
         raw = Path(nb_path).read_text(encoding="utf-8")
         try:
             nb = json.loads(raw)
-        except json.JSONDecodeError as e:
+        except (json.JSONDecodeError, RecursionError) as e:
+            # RecursionError: pathologically deep nesting trips the C scanner
+            # before JSONDecodeError ever fires.
             logger.warning("Invalid notebook %s: %s", nb_path, e)
+            return []
+        if not isinstance(nb, dict):
+            # Valid JSON but not a notebook object (e.g. a bare array) —
+            # .get() below would raise AttributeError; skip cleanly instead.
+            logger.warning("Notebook %s is not a JSON object — skipped", nb_path)
             return []
         return self._process_notebook(nb, source)
 

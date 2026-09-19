@@ -32,6 +32,7 @@ RUN groupadd -g 1000 app && \
 COPY --from=builder /usr/local/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --from=builder /app /app
+RUN chmod -R a+rX /app
 
 # Ensure tokenizer.json (downloaded as root in builder) is world-readable
 RUN chmod 644 /app/tokenizer.json
