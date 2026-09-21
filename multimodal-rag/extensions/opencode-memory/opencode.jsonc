@@ -32,7 +32,7 @@
   "mcp": {
     "rag-memory": {
       "type": "remote",
-      "url": "http://rag-mcp-server-mcp.<DEPLOYMENT_NAMESPACE>.svc.cluster.local:9090/mcp",
+      "url": "https://rag-mcp-server.YOUR-DOMAIN/mcp",
       "headers": {
         // Keep while going through the oauth2-proxy ingress; drop for port-forward.
         "Authorization": "Bearer {env:RAG_INGRESS_TOKEN}",
@@ -44,7 +44,7 @@
     },
     "rag-knowledge": {
       "type": "remote",
-      "url": "http://rag-mcp-server-mcp.<DEPLOYMENT_NAMESPACE>.svc.cluster.local:9090/mcp",
+      "url": "https://rag-mcp-server.YOUR-DOMAIN/mcp",
       "headers": {
         "Authorization": "Bearer {env:RAG_INGRESS_TOKEN}"
       }
@@ -62,6 +62,10 @@
     "rag-memory_unlock_dataset": false,
     "rag-memory_describe_media": false,
     "rag-memory_transcribe_audio": false,
+"rag-memory_search_datasets": false,
+"rag-memory_dataset_add_documents": false,
+"rag-memory_dataset_delete_documents": false,
+"rag-memory_dataset_replace_document": false,
 
     "rag-knowledge_add_memory": false,
     "rag-knowledge_search_memory": false
