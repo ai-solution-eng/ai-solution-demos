@@ -1,0 +1,3 @@
+# Local deployment values (contain live secrets) — never package them.
+local/
+.values*.yaml

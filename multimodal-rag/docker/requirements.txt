@@ -19,10 +19,9 @@ openai-agents>=0.20.0
 
 # MCP server
 mcp>=2.0.0
-httpx2>=2.0.0
+httpx2>=2.12.0
 
 # Async HTTP
-httpx>=0.27.0
 
 # Tokenization for token-count chunking (standalone, CPU-only)
 tokenizers>=0.15,<1

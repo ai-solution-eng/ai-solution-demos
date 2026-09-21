@@ -1,16 +1,14 @@
-# Support Ticket Assistant Demo
+# Maintenance Ticket Assistant Demo
 
-NOTE: Repurpose to "Support Ticket Assistant" use case demo - Work in progress
+NOTE: Repurpose to "Maintenance Ticket Assistant" use case demo - Work in progress
 
-A gen-AI powered support ticket assistant application built with Streamlit, featuring three core capabilities:
+A gen-AI powered maintenance ticket assistant application built with Streamlit, featuring three core capabilities:
 
 1. **Resolution Prediction**: Leverages LLaMA models to predict maintenance resolutions based on historical ticket data and embeddings
 2. **Ticket Classification**: Uses BERT-based models to automatically classify maintenance tickets into appropriate categories
 3. **Network Inspection OCR**: Employs Qwen VL models to extract and analyze text from network equipment photos for diagnostic purposes
 
 ![Maintenance use case workflow](./assets/overview.png)
-
-[Demo](To be updated)
 
 ## Project Structure
 

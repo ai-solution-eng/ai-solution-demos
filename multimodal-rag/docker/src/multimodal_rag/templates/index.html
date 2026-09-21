@@ -422,6 +422,12 @@
       <h2>Datasets</h2>
       <button class="btn btn-outline btn-sm" onclick="listDatasets()">Refresh</button>
     </div>
+    <div class="tabs" id="ds-tabs" style="margin-bottom:8px">
+      <div class="tab active" data-dstab="all" onclick="setDatasetTab('all')">All <span id="ds-count-all" style="color:var(--text-muted)"></span></div>
+      <div class="tab" data-dstab="public" onclick="setDatasetTab('public')">Public <span id="ds-count-public" style="color:var(--text-muted)"></span></div>
+      <div class="tab" data-dstab="private" onclick="setDatasetTab('private')">Private <span id="ds-count-private" style="color:var(--text-muted)"></span></div>
+    </div>
+    <input type="text" id="ds-filter" placeholder="Filter datasets by name…" style="width:100%;font-size:.8rem;padding:6px 10px;margin-bottom:8px" oninput="datasetFilter=this.value;renderDatasetList()">
     <div id="dataset-list"><div class="empty-state">No datasets yet.</div></div>
   </div>
 
@@ -635,7 +641,7 @@ function toast(msg, type = 'success') {
 
 async function createDataset() {
   const input = document.getElementById('ds-name');
-  const name = input.value.trim();
+  const name = input.value.trim().replace(/\s+/g, '_');
   if (!name) { toast('Enter a dataset name', 'error'); return; }
   const desc = document.getElementById('ds-desc').value.trim();
   const captionWithAsr = document.getElementById('ds-caption-asr').checked;
@@ -662,17 +668,48 @@ async function createDataset() {
   input.disabled = false;
 }
 
-async function listDatasets() {
-  const { datasets: ds } = await api('GET', '/api/datasets');
-  datasets = ds;
+// Dataset names only allow [A-Za-z0-9._-]; convert whitespace to '_' as the
+// user types so the field always shows the name that will actually be
+// created (a space used to surface as an opaque 500 from the server).
+document.getElementById('ds-name').addEventListener('input', (e) => {
+  const sanitized = e.target.value.replace(/\s+/g, '_');
+  if (sanitized !== e.target.value) e.target.value = sanitized;
+});
+
+// Dataset list visibility tabs + name filter (client-side over the loaded
+// list): Public = no password set, Private = password-protected (the lock
+// emoji already distinguishes locked from unlocked within Private).
+let datasetTab = 'all';
+let datasetFilter = '';
+
+function setDatasetTab(tab) {
+  datasetTab = tab;
+  document.querySelectorAll('#ds-tabs .tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.dstab === tab));
+  renderDatasetList();
+}
+
+function renderDatasetList() {
   const container = document.getElementById('dataset-list');
-  if (ds.length === 0) {
-    container.innerHTML = '<div class="empty-state">No datasets yet.</div>';
+  const q = datasetFilter.trim().toLowerCase();
+  const counts = {
+    all: datasets.length,
+    public: datasets.filter(d => !d.has_password).length,
+    private: datasets.filter(d => !!d.has_password).length,
+  };
+  document.getElementById('ds-count-all').textContent = counts.all;
+  document.getElementById('ds-count-public').textContent = counts.public;
+  document.getElementById('ds-count-private').textContent = counts.private;
+  const rows = datasets.filter(d =>
+    (datasetTab === 'all' || (datasetTab === 'private') === !!d.has_password) &&
+    (!q || d.name.toLowerCase().includes(q)));
+  if (!rows.length) {
+    container.innerHTML = `<div class="empty-state">${datasets.length === 0 ? 'No datasets yet.' : 'No datasets match the current filter.'}</div>`;
     return;
   }
-  container.innerHTML = ds.map(d => `
+  container.innerHTML = rows.map(d => `
     <div class="dataset-item ${selectedDataset === d.name ? 'selected' : ''}"
-         onclick="selectDataset('${d.name}')" style="cursor:pointer">
+         data-name="${escHtml(d.name)}" onclick="selectDataset(this.dataset.name)" style="cursor:pointer">
       <div class="dataset-info">
         <div class="dataset-name">${d.has_password ? (datasetPasswords[d.name] ? '🔓 ' : '🔒 ') : ''}${escHtml(d.name)}</div>
         <div class="dataset-meta">${d.document_count || 0} docs · ${d.created ? new Date(d.created).toLocaleDateString() : ''}</div>
@@ -681,10 +718,16 @@ async function listDatasets() {
   `).join('');
 }
 
+async function listDatasets() {
+  const { datasets: ds } = await api('GET', '/api/datasets');
+  datasets = ds;
+  renderDatasetList();
+}
+
 async function selectDataset(name) {
   selectedDataset = name;
   document.querySelectorAll('.dataset-item').forEach(el => {
-    el.style.borderLeft = el.querySelector('.dataset-name')?.textContent === name ? '3px solid var(--accent)' : '';
+    el.style.borderLeft = el.dataset.name === name ? '3px solid var(--accent)' : '';
   });
   const d = datasets.find(x => x.name === name);
   if (!d) return;

@@ -1,0 +1,2 @@
+# Local deployment values (contain live credentials) — never package them.
+local/

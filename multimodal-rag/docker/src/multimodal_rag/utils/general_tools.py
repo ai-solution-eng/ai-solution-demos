@@ -175,7 +175,7 @@ def cosine_sim_int8(
 
 # -- Persistent background event loop for sync→async bridging ---------------
 # Keeps a dedicated thread with a long-lived event loop so that async
-# clients (httpx connection pools, OpenAI clients) survive across calls
+# clients (httpx2 connection pools, OpenAI clients) survive across calls
 # instead of being recreated on every sync_wrapper_safe invocation.
 
 _BG_LOOP: asyncio.AbstractEventLoop | None = None

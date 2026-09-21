@@ -24,7 +24,11 @@ spec:
           image: busybox:latest
           securityContext:
             runAsUser: 0
-          command: ["sh", "-c", "chown -R 1000:1000 /data"]
+          # Skip the walk when ownership is already correct: the data PVC
+          # can hold hundreds of thousands of files (NFS), and chown -R
+          # over NFS on every pod start stalls the rollout in Init for
+          # many minutes per replica.
+          command: ["sh", "-c", "if [ -n \"$(find /data ! -user 1000 -print 2>/dev/null | head -n 1)\" ]; then echo 'Fixing /data ownership...'; chown -R 1000:1000 /data; else echo 'Ownership already correct; skipping chown'; fi"]
           volumeMounts:
             - name: data
               mountPath: /data
@@ -75,6 +79,42 @@ spec:
               value: "30"
             - name: CONFIG_DIR
               value: "/etc/rag/config:/etc/rag/secrets"
+            {{- if .Values.security.metricsAuth }}
+            # Gate the /metrics exposition behind an API key (scrapers must
+            # present X-RAG-Api-Key / X-API-Key / Bearer from the MCP key
+            # set). Off (default) = public in-cluster exposition, unchanged.
+            - name: RAG_METRICS_AUTH
+              value: "true"
+            {{- end }}
+            {{- if .Values.security.existingSecret }}
+            # REST API key + media-token secret: provided by a Secret YOU own
+            # (security.existingSecret) — overrides the chart-managed Secret.
+            - name: RAG_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.security.existingSecret }}
+                  key: {{ .Values.security.existingSecretApiKey }}
+            - name: MEDIA_TOKEN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.security.existingSecret }}
+                  key: {{ .Values.security.existingSecretMediaTokenKey }}
+            {{- end }}
+            {{- if or .Values.mcp.apiKeyClients .Values.mcp.datasetAcls }}
+            # D15 (opt-in) multi-user API keys + dataset ACLs — rendered ONLY
+            # when set (default render byte-identical). The registry serves
+            # BOTH containers (REST + MCP must resolve the same identities).
+            # Values are key material: provide them from a Secret pipeline
+            # (--set-string), never commit real keys to values files.
+            {{- if .Values.mcp.apiKeyClients }}
+            - name: RAG_API_KEY_CLIENTS
+              value: {{ .Values.mcp.apiKeyClients | quote }}
+            {{- end }}
+            {{- if .Values.mcp.datasetAcls }}
+            - name: RAG_DATASET_ACLS
+              value: {{ .Values.mcp.datasetAcls | quote }}
+            {{- end }}
+            {{- end }}
             {{- range $key, $val := .Values.extraEnv }}
             - name: {{ $key }}
               value: {{ $val | quote }}
@@ -163,6 +203,45 @@ spec:
               value: {{ .Values.rag.remote | quote }}
             - name: CONFIG_DIR
               value: "/etc/rag/config:/etc/rag/secrets"
+            {{- if .Values.mcp.apiKey.existingSecret }}
+            # OPTIONAL MCP API-key auth (fleet decision 2026-09): wired ONLY
+            # when the values point at a Secret; unset → the MCP server runs
+            # open with a loud startup warning (gateway-fronted deployments).
+            - name: RAG_API_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mcp.apiKey.existingSecret }}
+                  key: {{ .Values.mcp.apiKey.existingSecretKey }}
+            {{- end }}
+            {{- if .Values.security.existingSecret }}
+            # REST API key + media-token secret: provided by a Secret YOU own
+            # (security.existingSecret) — overrides the chart-managed Secret.
+            - name: RAG_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.security.existingSecret }}
+                  key: {{ .Values.security.existingSecretApiKey }}
+            - name: MEDIA_TOKEN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.security.existingSecret }}
+                  key: {{ .Values.security.existingSecretMediaTokenKey }}
+            {{- end }}
+            {{- if or .Values.mcp.apiKeyClients .Values.mcp.datasetAcls }}
+            # D15 (opt-in) multi-user API keys + dataset ACLs — rendered ONLY
+            # when set (default render byte-identical). The registry serves
+            # BOTH containers (REST + MCP must resolve the same identities).
+            # Values are key material: provide them from a Secret pipeline
+            # (--set-string), never commit real keys to values files.
+            {{- if .Values.mcp.apiKeyClients }}
+            - name: RAG_API_KEY_CLIENTS
+              value: {{ .Values.mcp.apiKeyClients | quote }}
+            {{- end }}
+            {{- if .Values.mcp.datasetAcls }}
+            - name: RAG_DATASET_ACLS
+              value: {{ .Values.mcp.datasetAcls | quote }}
+            {{- end }}
+            {{- end }}
             {{- range $key, $val := .Values.extraEnv }}
             - name: {{ $key }}
               value: {{ $val | quote }}

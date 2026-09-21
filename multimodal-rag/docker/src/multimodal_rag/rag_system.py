@@ -22,6 +22,11 @@ from multimodal_rag.utils.general_tools import (
     sync_wrapper_safe,
 )
 from multimodal_rag.utils.logging_utils import logging
+from multimodal_rag.utils.media_paths import (
+    MediaRefError,
+    _media_path_allowed,
+    _validate_document_media_refs,
+)
 from multimodal_rag.utils.model_adapters import (
     MultiModalEmbeddings,
     MultiModalReranker,
@@ -110,8 +115,9 @@ def federated_identity_key(dataset: str, doc: Any) -> tuple | None:
 
 def resolve_federated_targets(
     dm: Any,
-    datasets: "list[str] | str",
+    datasets: "str | list[Any] | tuple[Any, ...]",
     is_unlocked: "Callable[[str], bool] | None" = None,
+    allowed: "Callable[[str], bool] | None" = None,
 ) -> tuple[list[str], list[dict[str, str]], list[dict[str, str]]]:
     """Resolve a federated-search ``datasets`` argument to concrete names.
 
@@ -134,6 +140,12 @@ def resolve_federated_targets(
     are listed under ``skipped`` so the caller knows why results are
     missing).
 
+    ``allowed`` (Wave-5 D15, optional): an ACL predicate over dataset names
+    for the caller's API-key identity.  A dataset failing it is treated
+    exactly like a locked one — excluded from ``targets`` and reported under
+    ``skipped`` with a reason — so federated search never widens a key's
+    dataset access.  ``None`` (the default) enforces nothing.
+
     ``dm`` needs only ``get_dataset(name)``, ``list_datasets()`` and
     ``has_password(name)`` — the ``DatasetManager`` API.  Raises
     ``ValueError`` when *datasets* is none of the accepted shapes.
@@ -141,6 +153,7 @@ def resolve_federated_targets(
     Blocking I/O (NFS meta reads) — callers offload this to a thread pool.
     """
     check_unlocked = is_unlocked or (lambda name: False)
+    check_allowed = allowed or (lambda name: True)
 
     targets: list[str] = []
     skipped: list[dict[str, str]] = []
@@ -155,6 +168,14 @@ def resolve_federated_targets(
         except FileNotFoundError:
             if not from_all:
                 errors.append({"dataset": name, "error": f"Dataset '{name}' not found."})
+            return
+        if not check_allowed(name):
+            skipped.append(
+                {
+                    "dataset": name,
+                    "reason": ("Not permitted for this API key (dataset ACLs are configured — D15)."),
+                }
+            )
             return
         if dm.has_password(name) and not check_unlocked(name):
             skipped.append(
@@ -202,8 +223,10 @@ def dedup_federated_results(entries: list[tuple[str, Any, float]]) -> list[tuple
     if not entries:
         return []
     items = [_DedupItem(doc=doc, score=score, dataset=ds) for ds, doc, score in entries]
-    out = MultimodalRAG._dedup_by_identity(items, lambda item: federated_identity_key(item.dataset, item.doc))
-    return [(item.dataset, item.doc, item.score) for item in out]
+    out = MultimodalRAG._dedup_by_identity(items, lambda item: federated_identity_key(item.dataset or "", item.doc))
+    # Entries above always carry a str dataset label; the coalesce only
+    # satisfies _DedupItem.dataset's wider "str | None" annotation.
+    return [((item.dataset or ""), item.doc, item.score) for item in out]
 
 
 def merge_federated_results(
@@ -244,8 +267,11 @@ async def _arerank_with(
     # reranked[0] is a list of result dicts, e.g.
     # [{"index": 2, "relevance_score": 0.95, ...},
     #  {"index": 0, "relevance_score": 0.87, ...}]
-    # Map each index back to its reranker score, then attach
-    # both the embedding score and the reranker score to each doc.
+    # Map each index back to its reranker score, then attach the reranker
+    # score plus the score each doc arrived with — labelled honestly: on
+    # dense-only lanes the incoming score IS the embedder cosine
+    # (``_embedding_score``), but on hybrid RRF lanes it is rank-fusion
+    # arithmetic (``_retrieval_score``), never a cosine.
     score_by_idx: dict[int, float] = {}
     for r in reranked[0] if reranked else []:
         score_by_idx[r.get("index", -1)] = r.get("relevance_score", r.get("score", 0.0))
@@ -257,11 +283,43 @@ async def _arerank_with(
             # caller's dicts (e.g. the `documents=` path passes the
             # caller's own objects through here).
             d = dict(d)
-            d["_embedding_score"] = round(emb_score, 4)
+            if d.get("_score_kind") == "rrf":
+                d["_retrieval_score"] = round(emb_score, 4)
+            else:
+                d["_embedding_score"] = round(emb_score, 4)
             d["_reranker_score"] = round(rerank_score, 4)
         paired.append((d, rerank_score))
     paired.sort(key=lambda x: x[1], reverse=True)
     return paired[:reranker_top_k]
+
+
+def _store_write_guard(vs: Any) -> Any:
+    """Serialize Qdrant calls for the in-process LOCAL backend; null elsewhere.
+
+    Thin null-safe wrapper over ``QdrantVectorStore._local_write_guard``:
+    the InMemoryVectorStore has nothing to serialize and no such method.
+    """
+    import contextlib
+
+    fn = getattr(vs, "_local_write_guard", None)
+    if fn is None:
+        return contextlib.nullcontext()
+    return fn()
+
+
+def _rerank_media_lite() -> bool:
+    """Whether rerank scoring runs on text/caption representations instead of
+    full base64 media (default true, Wave-4).
+
+    Media-lite rerank fetches the candidate pool WITHOUT the heavy tier-3
+    ``metadata.image``/``metadata.video`` base64 payloads and scores on
+    captions; the full payloads are back-filled onto the surviving top_k docs
+    only, after scoring.  Set ``RAG_RERANK_MEDIA_LITE=false`` to restore
+    full-media scoring (every fetched candidate carries its base64 payloads
+    to the reranker — the pre-Wave-4 behaviour, noticeably heavier on the
+    Qdrant → server transfer for media-heavy datasets).
+    """
+    return os.environ.get("RAG_RERANK_MEDIA_LITE", "true").lower() in ("true", "1", "yes")
 
 
 def _qdrant_prefer_grpc() -> bool:
@@ -592,26 +650,95 @@ def _media_caption_twin_needed(doc: dict, supported: set[str]) -> bool:
     return _has_caption(doc.get("text") or "")
 
 
+# Cap for one server-side media fetch (embed / query time).  Most refs are
+# ``data:`` URLs or PVC files; an http(s) ref is fetched by the server and
+# must not be able to stream an unbounded response into RAM.  ``0`` disables.
+_MAX_MEDIA_FETCH_BYTES = max(0, int(os.environ.get("MAX_MEDIA_FETCH_BYTES", str(512 * 1024 * 1024))))
+
+# Redirect hops a server-side media fetch may follow.  Every hop is
+# re-validated (and pinned) — a redirect is just another remote fetch.
+_MEDIA_MAX_REDIRECTS = max(1, int(os.environ.get("MAX_MEDIA_REDIRECTS", "5")))
+
+
+async def _avalidate_fetch_url(url: str, *, allow_loopback: bool = True):
+    """Offloaded :func:`url_policy.validate_fetch_url` — DNS resolution (the
+    only blocking part) must stay off the event loop."""
+    import functools
+
+    from multimodal_rag.utils.url_policy import validate_fetch_url
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return validate_fetch_url(url, allow_loopback=allow_loopback)
+    return await loop.run_in_executor(None, functools.partial(validate_fetch_url, url, allow_loopback=allow_loopback))
+
+
 async def _afetch_media_bytes(url: str, async_client=None) -> bytes:
     if url.startswith(("http://", "https://")):
-        if async_client is not None:
-            resp = await async_client.get(url, follow_redirects=True)
-            resp.raise_for_status()
-            return resp.content
-        import httpx
+        cap = _MAX_MEDIA_FETCH_BYTES
+        # SSRF policy on EVERY server-side media fetch (embed + query time) —
+        # media refs can be user-supplied (POST /documents, MCP add_memory),
+        # so an internal/cloud-metadata URL must never be fetched.  Each hop
+        # (the original URL AND every redirect target) is validated against
+        # the policy and connected to the IP that policy just validated — the
+        # DNS-rebinding pin (check-time DNS = fetch-time DNS).  Redirects are
+        # followed manually: blind ``follow_redirects`` never re-checked a
+        # hop's target, so a public media URL could bounce the fetch into
+        # private space — the same hole the searxng port closed with per-hop
+        # re-validation.  The media policy allows loopback: clients
+        # legitimately hand back the server's own media URLs.
+        current = url
+        owned_client: Any = None
+        try:
+            for _hop in range(_MEDIA_MAX_REDIRECTS + 1):
+                pinned = await _avalidate_fetch_url(current)
+                if owned_client is None and async_client is None:
+                    import httpx2
 
-        # Bounded timeout: this per-call client previously had none, so a
-        # hung media server would hang the enclosing asyncio.gather forever.
-        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0)) as c:
-            resp = await c.get(url, follow_redirects=True)
-            resp.raise_for_status()
-            return resp.content
+                    owned_client = httpx2.AsyncClient(
+                        timeout=httpx2.Timeout(60.0, connect=15.0),
+                        follow_redirects=False,
+                        trust_env=not pinned.pin_active,
+                    )
+                client = async_client if async_client is not None else owned_client
+                request = client.build_request(
+                    "GET",
+                    pinned.pinned_url,
+                    headers={"Host": pinned.host_header} if pinned.host_header else None,
+                    extensions=({"sni_hostname": pinned.sni_hostname} if pinned.sni_hostname else None),
+                )
+                resp = await client.send(request, stream=True, follow_redirects=False)
+                try:
+                    if resp.is_redirect:
+                        location = resp.headers.get("location")
+                        if not location:
+                            raise MediaRefError(f"Redirect from {current} has no Location header")
+                        from urllib.parse import urljoin
+
+                        current = urljoin(current, location)
+                        continue
+                    resp.raise_for_status()
+                    buf = bytearray()
+                    async for chunk in resp.aiter_bytes():
+                        buf += chunk
+                        if cap and len(buf) > cap:
+                            raise ValueError(f"Media fetch of {url} exceeds MAX_MEDIA_FETCH_BYTES ({cap} bytes)")
+                    return bytes(buf)
+                finally:
+                    await resp.aclose()
+            raise MediaRefError(f"Media fetch of {url} exceeded {_MEDIA_MAX_REDIRECTS} redirects")
+        finally:
+            if owned_client is not None:
+                await owned_client.aclose()
     if url.startswith("data:"):
         import re
 
         m = re.match(r"data:[^;]+;base64,(.+)", url)
         return base64.b64decode(m.group(1)) if m else base64.b64decode(url.split(",", 1)[1])
     path = url.removeprefix("file://")
+    if not _media_path_allowed(path):
+        raise MediaRefError(f"Local media path '{path}' is outside the allowed prefixes (MEDIA_ALLOW_PATH_PREFIXES)")
     with open(path, "rb") as f:
         return f.read()
 
@@ -631,6 +758,11 @@ def _file_url_to_data_url(url: str) -> str:
     import os
 
     path = url.removeprefix("file://")
+    # Fail closed BEFORE touching the filesystem: this runs on refs stored in
+    # Qdrant payloads (user-suppliable via POST /documents / MCP add_memory)
+    # and its output is fed to the base LLM / VLM at query time.
+    if not _media_path_allowed(path):
+        raise MediaRefError(f"Local media path '{path}' is outside the allowed prefixes (MEDIA_ALLOW_PATH_PREFIXES)")
     if not os.path.exists(path):
         logger.warning("File not found, returning URL as-is: %s", path)
         return url
@@ -1470,7 +1602,7 @@ class MultimodalRAG:
         client: Any = None,
         bm25_stats_path: str | None = None,
         **kwargs,
-    ) -> VectorStore:
+    ) -> QdrantVectorStore:
         """Create (or adopt) the collection and return its store wrapper.
 
         New collections get the hybrid schema (roadmap feature 2): a named
@@ -1790,6 +1922,54 @@ class MultimodalRAG:
         except Exception as e:
             return [(f"error: {e}", {})]
 
+    async def alist_documents_page(self, limit: int = 50, cursor: str | None = None) -> dict[str, Any]:
+        """Cursor-paginated counterpart to :meth:`alist_documents` (Wave-4).
+
+        Returns ``{"documents": [(id, payload), ...], "next_cursor": str|None}``
+        where *next_cursor* is the opaque continuation token for the next
+        page (``None`` when the collection is exhausted).  Qdrant's native
+        scroll offset is the cursor, so deep pagination never re-reads the
+        collection from the top the way repeated ``list_documents(limit)``
+        calls would.  Passing ``cursor=None`` starts a fresh listing.
+        """
+        vs = self.vector_store
+        assert vs is not None and not isinstance(vs, dict)
+        if hasattr(vs, "store"):
+            # InMemoryVectorStore — index-slice pagination.
+            start = int(cursor) if cursor else 0
+            items = list(vs.store.items())
+            page = items[start : start + limit]
+            out = []
+            for doc_id, entry in page:
+                doc: Document = entry["document"]
+                meta = dict(doc.metadata)
+                meta["text"] = doc.page_content
+                out.append((doc_id, meta))
+            nxt = start + limit
+            return {"documents": out, "next_cursor": str(nxt) if nxt < len(items) else None}
+        try:
+            client = vs._client  # type: ignore[attr-defined]
+            coll = vs.collection_name  # type: ignore[attr-defined]
+            offset: Any = cursor if cursor else None
+
+            def _scroll() -> tuple[list[Any], Any]:
+                return client.scroll(coll, limit=limit, offset=offset, with_payload=True, with_vectors=False)
+
+            records, next_offset = await asyncio.get_running_loop().run_in_executor(_QDRANT_IO_POOL, _scroll)
+        except Exception as e:
+            return {"documents": [(f"error: {e}", {})], "next_cursor": None}
+        out = []
+        for rec in records:
+            payload = rec.payload or {}
+            meta = dict(payload.get("metadata", {}))
+            meta["text"] = payload.get("page_content", "")
+            out.append((str(rec.id), meta))
+        return {"documents": out, "next_cursor": str(next_offset) if next_offset is not None else None}
+
+    def list_documents_page(self, limit: int = 50, cursor: str | None = None) -> dict[str, Any]:
+        """Sync wrapper around :meth:`alist_documents_page`."""
+        return sync_wrapper_safe(self.alist_documents_page, {"limit": limit, "cursor": cursor})
+
     def add_to_vector_store(
         self,
         documents: Sequence[str | dict[str, Any]],
@@ -1863,6 +2043,14 @@ class MultimodalRAG:
                         resized.append(url)
                         continue
                     path = url  # bare path, no scheme
+                    # A bare path here is opened read and embedded server-side —
+                    # only dataset/staging-local paths may reach this branch
+                    # (refs are validated at aadd_to_vector_store entry; this is
+                    # the defence-in-depth check at the read site itself).
+                    if not _media_path_allowed(path):
+                        raise MediaRefError(
+                            f"Local media path '{path}' is outside the allowed prefixes (MEDIA_ALLOW_PATH_PREFIXES)"
+                        )
                     if key == "image":
                         with open(path, "rb") as f:
                             raw = f.read()
@@ -2138,6 +2326,21 @@ class MultimodalRAG:
             dedup_threshold = self.dedup_threshold
         t0 = time.monotonic()
 
+        # ── 0a. Validate media refs in user-supplied documents ─────────────
+        # Documents may arrive from REST POST /documents or MCP add_memory
+        # with arbitrary image/video/audio values.  The server READS those
+        # refs (resize, embed fetch, VLM/ASR captioning, query-time LLM
+        # content), so a bare path or file:// URL pointing anywhere on the
+        # filesystem — or an http(s) URL pointing at internal services —
+        # must never reach the pipeline.  Runs off the event loop: the URL
+        # policy resolves DNS (blocking getaddrinfo).
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            _validate_document_media_refs(list(documents))
+        else:
+            await loop.run_in_executor(None, _validate_document_media_refs, list(documents))
+
         # ── 0. Preprocess ───────────────────────────────────────────────────
         processed = await self._preprocess_docs(documents)
         if not processed:
@@ -2171,8 +2374,16 @@ class MultimodalRAG:
         # None unless the collection carries the named ``bm25`` sparse
         # vector, RAG_HYBRID_SEARCH is on, and a stats sidecar is wired.
         # The capability probe (get_collection round trip) runs on the
-        # Qdrant I/O pool — never on the event loop.
-        bm25_ctx = await asyncio.get_running_loop().run_in_executor(_QDRANT_IO_POOL, _bm25_ingest_context, vs)
+        # Qdrant I/O pool — never on the event loop.  Guarded like the
+        # writes below: the probe is a real client call on the in-process
+        # local backend, where parallel ingest workers would race it.
+        _ctx_guard = _store_write_guard(vs)
+
+        def _bm25_ctx() -> dict[str, Any] | None:
+            with _ctx_guard:
+                return _bm25_ingest_context(vs)
+
+        bm25_ctx = await asyncio.get_running_loop().run_in_executor(_QDRANT_IO_POOL, _bm25_ctx)
 
         embed_batch_size = getattr(self.embed, "chunk_size", 64) or 64
         all_ids: list[str] = []
@@ -2315,13 +2526,13 @@ class MultimodalRAG:
 
             # ── 2b. Deduplicate ─────────────────────────────────────────────
             if deduplicate and sub_embs:
-                results = await loop.run_in_executor(
-                    _QDRANT_IO_POOL,
-                    self._batch_find_duplicates,
-                    vs,
-                    sub_embs,
-                    dedup_threshold,
-                )
+                _probe_guard = _store_write_guard(vs)
+
+                def _find_dups() -> list[bool]:
+                    with _probe_guard:
+                        return self._batch_find_duplicates(vs, sub_embs, dedup_threshold)
+
+                results = await loop.run_in_executor(_QDRANT_IO_POOL, _find_dups)
                 skipped = sum(results)
                 total_skipped += skipped
                 sub_docs = [d for d, dup in zip(sub_docs, results) if not dup]
@@ -2382,11 +2593,16 @@ class MultimodalRAG:
                 # Offloaded: a media-heavy sub-batch can carry tens to
                 # hundreds of MB of tier-3 base64 payloads — the sync upsert
                 # (network + JSON serialization) must not block the event
-                # loop while it POSTs.
-                await loop.run_in_executor(
-                    _QDRANT_IO_POOL,
-                    lambda: client.upsert(collection_name=coll, points=points, **kwargs),
-                )
+                # loop while it POSTs.  The lock is taken inside the executor
+                # thread (never across the await) and only bites for the
+                # in-process local backend; remote clients run unserialized.
+                _upsert_guard = _store_write_guard(vs)
+
+                def _upsert() -> None:
+                    with _upsert_guard:
+                        client.upsert(collection_name=coll, points=points, **kwargs)
+
+                await loop.run_in_executor(_QDRANT_IO_POOL, _upsert)
 
             t_store_total += time.monotonic() - t2
             # sub_embs / sub_docs fall out of scope here — released before the
@@ -2413,7 +2629,7 @@ class MultimodalRAG:
         self,
         query_emb: list[float],
         doc_embs: list[list[float]],
-        documents: list,
+        documents: Sequence[Any],
         k: int,
     ) -> list[tuple[Any, float]]:
         scores = cosine_sim(
@@ -2516,7 +2732,8 @@ class MultimodalRAG:
         # (it has images).  Otherwise keep the higher-scoring entry.
         import hashlib as _hashlib
 
-        best_by_text: dict[str, _DedupItem] = {}
+        # Key is the (dataset, md5(text)) pair built below — not a bare str.
+        best_by_text: dict[tuple[str | None, str], _DedupItem] = {}
         for item in pass1:
             doc = item.doc
             score = item.score
@@ -2541,7 +2758,7 @@ class MultimodalRAG:
                     best_by_text[text_hash] = item
 
         # Preserve original order (first occurrence wins ties)
-        seen_hashes: set[str] = set()
+        seen_hashes: set[tuple[str | None, str]] = set()
         deduped: list[_DedupItem] = []
         for item in pass1:
             doc = item.doc
@@ -2604,7 +2821,7 @@ class MultimodalRAG:
     async def aretrieve(
         self,
         query: str | dict[str, Any],
-        documents: list[str | dict[str, Any]] | None = None,
+        documents: Sequence[str | dict[str, Any]] | None = None,
         top_k: int = 10,
         use_reranker: bool = False,
         reranker_top_k: int = 3,
@@ -2612,12 +2829,36 @@ class MultimodalRAG:
         need_media: bool | None = None,
         filters: dict[str, Any] | None = None,
     ) -> list[tuple[Any, float]]:
+        rerank_active = use_reranker and self.reranker is not None
+
+        # Over-fetch width (Wave-4): when the reranker will run, fetch a
+        # wider candidate pool than the caller asked for — max(top_k,
+        # 4 × reranker_top_k) — so candidates the embedder ranked below top_k
+        # can still surface after cross-encoder scoring.  The pool is cut
+        # back to *top_k* after rerank, so the caller-facing result count is
+        # unchanged (min(top_k, reranker_top_k), exactly as before).
+        fetch_k = top_k
+        if rerank_active:
+            fetch_k = max(top_k, 4 * max(reranker_top_k, 1))
+
+        # Media-lite rerank (Wave-4, default on; RAG_RERANK_MEDIA_LITE=false
+        # restores full-media scoring): the reranker scores candidates on
+        # their text/caption representation, so the heavy tier-3 base64
+        # payloads are NOT transferred for the whole pool — the store fetch
+        # runs with need_media=False and the payloads are back-filled onto
+        # the surviving top_k docs only, after scoring (one point-retrieve).
+        # Applies to the vector-store path only: caller-provided documents
+        # carry their media in memory already, so there is no transfer to save.
+        media_lite = rerank_active and _rerank_media_lite() and documents is None
 
         # Auto-compute need_media: base64 media payloads are needed when the
-        # reranker will consume them.  (VLM / base-LLM-vision cases are
-        # handled by the caller — they pass need_media=True explicitly.)
+        # reranker will consume them — except under media-lite rerank, where
+        # scoring runs on captions and the payloads are back-filled later.
+        # (VLM / base-LLM-vision cases are handled by the caller — they pass
+        # need_media=True explicitly.)
         if need_media is None:
             need_media = use_reranker and self.reranker is not None
+        fetch_need_media = need_media and not media_lite
 
         if documents is not None:
             if filters:
@@ -2638,7 +2879,7 @@ class MultimodalRAG:
             else:
                 query_emb = await self.aembed_query(query)
             doc_embs = await self.aembed_documents(documents)
-            results = self._similarity_retrieve(query_emb, doc_embs, documents, top_k)
+            results = self._similarity_retrieve(query_emb, doc_embs, documents, fetch_k)
         else:
             vs = self.vector_store
             assert vs is not None and not isinstance(vs, dict)
@@ -2652,15 +2893,15 @@ class MultimodalRAG:
                     query_emb = await self.aembed_query(query)
                 docs_and_scores = await vs.asimilarity_search_with_score_by_vector(  # type: ignore[attr-defined]
                     query_emb,
-                    top_k,
-                    need_media=need_media,
+                    fetch_k,
+                    need_media=fetch_need_media,
                     filters=filters,
                 )
             else:
                 docs_and_scores = await vs.asimilarity_search_with_relevance_scores(
                     query,
-                    k=top_k,
-                    need_media=need_media,
+                    k=fetch_k,
+                    need_media=fetch_need_media,
                     filters=filters,
                 )
             results = [(self._extract_doc(doc), score) for doc, score in docs_and_scores]
@@ -2680,14 +2921,78 @@ class MultimodalRAG:
                 "Reranker requested (use_reranker=True) but no reranker model is "
                 "configured — returning top embedding results."
             )
-        elif self.reranker is not None and use_reranker and results:
+        elif rerank_active and results:
             results = await self._arerank_results(query, results, reranker_top_k)
         elif use_reranker and results and len(results) > reranker_top_k:
             # Reranker unavailable — trim to reranker_top_k for consistency
             # with what the caller expected.
             results = results[:reranker_top_k]
 
+        if rerank_active:
+            # Cut the (wider) pool back to the caller's requested size —
+            # mirrors the pre-Wave-4 ceiling where the pool itself was top_k.
+            results = results[:top_k]
+            if media_lite and need_media:
+                results = await self._abackfill_rerank_media(vs, results)
+
+        # Strip the private point-id transport key — plumbing for the media
+        # back-fill, never part of API/MCP responses.
+        if any(isinstance(d, dict) and "_point_id" in d for d, _ in results):
+            results = [
+                ({k: v for k, v in d.items() if k != "_point_id"} if isinstance(d, dict) else d, score)
+                for d, score in results
+            ]
+
         return results
+
+    async def _abackfill_rerank_media(self, vs: Any, results: list[tuple[Any, float]]) -> list[tuple[Any, float]]:
+        """Re-attach tier-3 base64 media to the final post-rerank docs.
+
+        Media-lite rerank fetches the candidate pool without the heavy
+        ``metadata.image``/``metadata.video`` payloads; this merges them back
+        for the surviving top_k docs in ONE ``retrieve`` call (full payloads
+        only for the docs that actually made the cut).  Best-effort: on any
+        failure the caption-only docs are returned as-is — their tier-2
+        ``preprocessed_*`` file refs still point at the media.
+        """
+        ids: list[str] = []
+        for doc, _ in results:
+            if isinstance(doc, dict):
+                pid = doc.get("_point_id")
+                if pid:
+                    ids.append(pid)
+        if not ids or getattr(vs, "_client", None) is None:
+            return results
+        client = vs._client
+        coll = vs.collection_name
+        try:
+            points = await asyncio.to_thread(
+                lambda: client.retrieve(coll, ids=ids, with_payload=True, with_vectors=False)
+            )
+        except Exception as exc:
+            logger.warning(
+                "Rerank media back-fill failed for %d point(s) — returning caption-only docs: %s",
+                len(ids),
+                exc,
+            )
+            return results
+        meta_by_id: dict[str, dict[str, Any]] = {}
+        for p in points:
+            meta = (p.payload or {}).get("metadata")
+            if isinstance(meta, dict):
+                meta_by_id[str(p.id)] = meta
+        out: list[tuple[Any, float]] = []
+        for doc, score in results:
+            if isinstance(doc, dict):
+                meta = meta_by_id.get(doc.get("_point_id") or "")
+                if meta:
+                    d = dict(doc)
+                    for key in ("image", "video"):
+                        if key in meta and key not in d:
+                            d[key] = meta[key]
+                    doc = d
+            out.append((doc, score))
+        return out
 
     # -- context formatting ----------------------------------------------------
 
@@ -3054,6 +3359,12 @@ class MultiModalRAGSystem:
 
     async def alist_documents(self, limit=50):
         return await self._rag.alist_documents(limit)
+
+    def list_documents_page(self, limit=50, cursor=None):
+        return self._rag.list_documents_page(limit=limit, cursor=cursor)
+
+    async def alist_documents_page(self, limit=50, cursor=None):
+        return await self._rag.alist_documents_page(limit=limit, cursor=cursor)
 
     # -- query routing (LLM decides if RAG is needed) -------------------------
 

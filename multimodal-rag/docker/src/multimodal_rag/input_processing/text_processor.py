@@ -207,6 +207,10 @@ class TextProcessor:
             return []
         chunks: list[str] = []
         start = 0
+        # The overlap may never consume the chunk: start must always advance.
+        # An overlap ≥ chunk_size would rewind past the previous start and
+        # loop forever — same 80 % cap as pdf_processor._split_oversized.
+        overlap = min(max(0, self.chunk_overlap), int(self.chunk_size * 0.8))
         while start < len(text):
             end = min(start + self.chunk_size, len(text))
             if end < len(text):
@@ -214,7 +218,7 @@ class TextProcessor:
                 if next_space != -1 and next_space - end < self.chunk_size // 2:
                     end = next_space
             chunks.append(text[start:end].strip())
-            start = end - self.chunk_overlap if end < len(text) else len(text)
+            start = end - overlap if end < len(text) else len(text)
             start = max(start, 0)
         return [c for c in chunks if c]
 
