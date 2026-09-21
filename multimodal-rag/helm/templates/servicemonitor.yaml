@@ -1,7 +1,5 @@
 {{- if .Values.metrics.serviceMonitor }}
 # Prometheus Operator ServiceMonitor scraping the API container's /metrics.
-# With security.metricsAuth on, set metrics.serviceMonitorBearerSecret (+
-# …SecretKey) so the scraper presents the API key as its bearer token.
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -17,9 +15,4 @@ spec:
     - port: http
       path: /metrics
       interval: {{ .Values.metrics.interval | quote }}
-      {{- if .Values.metrics.serviceMonitorBearerSecret }}
-      bearerTokenSecret:
-        name: {{ .Values.metrics.serviceMonitorBearerSecret }}
-        key: {{ .Values.metrics.serviceMonitorBearerSecretKey }}
-      {{- end }}
 {{- end }}

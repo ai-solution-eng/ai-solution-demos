@@ -27,10 +27,6 @@
  *   - De-duplication: the plugin remembers the last persisted message ID per
  *     session and skips if nothing new arrived. The server additionally
  *     drops near-duplicate text (cosine >= RAG_DEDUP_THRESHOLD).
- *   - Tool actions: a rendered action line carries the call (name plus
- *     argument/title excerpt) and, for completed tools, a short
- *     whitespace-collapsed preview of the tool's output (MAX_OUTPUT_PREVIEW
- *     characters). Read-only NOISE_TOOLS stay excluded from Actions.
  *   - Transport: the memory MCP server is called directly over its
  *     streamable-HTTP JSON-RPC endpoint (``tools/call add_memory``) using
  *     the same ``X-Memory-Dataset`` / ``X-Dataset-Password`` headers the MCP
@@ -83,7 +79,6 @@ async function flushLogs($: Shell): Promise<void> {
 
 const DEBOUNCE_MS = 45_000 // how long a session must be quiet before we write
 const MAX_TOOL_OUTPUT = 400 // per-tool output/title excerpt
-const MAX_OUTPUT_PREVIEW = 200 // first chars of a completed tool's output, appended to its Actions line
 const MAX_COMMAND = 240 // bash command excerpt
 const MAX_TEXT = 8_000 // per assistant/user message body cap
 const MAX_HISTORY = 150_000 // total history cap (oldest messages trimmed first)
@@ -137,7 +132,6 @@ type Part = {
     status?: string
     title?: string
     error?: string
-    output?: string
     input?: Record<string, unknown>
   }
   files?: Array<string>
@@ -251,9 +245,6 @@ function summarizeTools(parts: Array<Part>): Array<string> {
       line = `\`task\` ${truncate(String(input.description ?? st.title ?? ""), MAX_TOOL_OUTPUT)}`
     } else {
       line = `\`${name}\` ${truncate(String(st.title ?? ""), MAX_TOOL_OUTPUT)}`
-    }
-    if (st.status === "completed" && st.output && st.output.trim()) {
-      line += ` \u2014 ${truncate(st.output.replace(/\s+/g, " "), MAX_OUTPUT_PREVIEW)}`
     }
     if (st.status === "error") {
       line += ` (FAILED: ${truncate(String(st.error ?? ""), 200)})`

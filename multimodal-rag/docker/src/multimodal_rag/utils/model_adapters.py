@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from math import ceil
 from typing import Any, overload
 
-import httpx2
+import httpx
 from openai.types.create_embedding_response import CreateEmbeddingResponse
 
 from .general_tools import list_chunker, sync_wrapper_safe
@@ -271,16 +271,23 @@ class InputConversion:
         return buf.getvalue()
 
     @staticmethod
-    def _pick_frames_from_container(container: Any, num_frames: int) -> list[bytes] | None:
-        """Evenly-spaced JPEG frames from an open PyAV container (shared core).
+    def _extract_video_frames(video_bytes: bytes, num_frames: int, max_pixels: int = 0) -> list[bytes]:
+        """Extract *num_frames* evenly-spaced frames from *video_bytes*.
 
-        Returns ``None`` when the decode fails so the caller can fall back to
-        ffmpeg.  Wave-4: extracted from :meth:`_extract_video_frames` so the
-        in-memory form and the streaming file form share one implementation.
+        Returns a list of JPEG-encoded frame bytes, each optionally downscaled
+        so width × height ≤ *max_pixels*.  Uses the same pixel-budget scaling
+        as :meth:`_resize_image` (aspect-ratio-aware).  Tries PyAV first,
+        falls back to ffmpeg subprocess.
         """
         import io as _io
 
+        frames: list[bytes] | None = None
+
+        # -- PyAV backend ----------------------------------------------------
         try:
+            import av
+
+            container = av.open(_io.BytesIO(video_bytes))
             stream = container.streams.video[0]
             # Estimate total frame count
             try:
@@ -305,139 +312,8 @@ class InputConversion:
                     extracted.append(buf.getvalue())
                     if len(extracted) >= num_frames:
                         break
-            return extracted
-        except Exception:
-            logger.debug("PyAV frame selection failed", exc_info=True)
-            return None
+            container.close()
 
-    @staticmethod
-    def _ffmpeg_video_frames(
-        probe_cmd: list[str],
-        probe_input: bytes | None,
-        input_args: list[str],
-        ffmpeg_input: bytes | None,
-        num_frames: int,
-    ) -> list[bytes] | None:
-        """ffprobe duration + ffmpeg fps-filter frame dump (shared core).
-
-        ``input_args``/``ffmpeg_input`` select the source: ``(["-i", "-"],
-        video_bytes)`` reads a piped in-memory video, ``(["-i", path],
-        None)`` reads a local file directly (Wave-4 streaming — the bytes
-        never pass through this process's memory).  Returns the parsed
-        JPEG frame list, or ``None`` when nothing usable was produced.
-        """
-        import json
-        import subprocess
-
-        try:
-            # Probe duration
-            probe = subprocess.run(probe_cmd, input=probe_input, capture_output=True, timeout=30, check=False)
-            info = json.loads(probe.stdout)
-            duration = float(info.get("format", {}).get("duration", 10))
-            fps = max(0.1, num_frames / duration) if duration > 0 else 1.0
-
-            proc = subprocess.run(
-                [
-                    "ffmpeg",
-                    "-v",
-                    "error",
-                    *input_args,
-                    "-vf",
-                    f"fps={fps}",
-                    "-f",
-                    "image2pipe",
-                    "-vcodec",
-                    "mjpeg",
-                    "-q:v",
-                    "3",
-                    "-",
-                ],
-                input=ffmpeg_input,
-                capture_output=True,
-                timeout=120,
-                check=False,
-            )
-
-            # Parse concatenated JPEG stream
-            raw = proc.stdout
-            parsed: list[bytes] = []
-            start = 0
-            while start < len(raw) - 1:
-                if raw[start] != 0xFF or raw[start + 1] != 0xD8:
-                    start += 1
-                    continue
-                end = raw.find(b"\xff\xd9", start + 2)
-                if end == -1:
-                    break
-                end += 2
-                parsed.append(raw[start:end])
-                start = end
-
-            return parsed[:num_frames] if parsed else None
-        except Exception:
-            logger.debug("ffmpeg frame extraction also failed", exc_info=True)
-            return None
-
-    @staticmethod
-    def _resize_video_frames(frames: list[bytes], max_pixels: int) -> list[bytes]:
-        """Downscale JPEG frames so width × height ≤ *max_pixels* (shared core).
-
-        Same pixel-budget scaling as :meth:`_resize_image`
-        (aspect-ratio-aware); *max_pixels* ≤ 0 returns the frames unchanged.
-        """
-        import io as _io
-
-        if max_pixels <= 0:
-            return frames
-        try:
-            from PIL import Image
-        except ImportError:
-            return frames
-
-        resized: list[bytes] = []
-        for raw_frame in frames:
-            pil = Image.open(_io.BytesIO(raw_frame))
-            w, h = pil.size
-            if w * h > max_pixels:
-                scale = (max_pixels / (w * h)) ** 0.5
-                nw = max(1, int(w * scale))
-                nh = max(1, int(h * scale))
-                out = pil.resize((nw, nh), Image.Resampling.LANCZOS)
-            else:
-                out = pil
-            buf = _io.BytesIO()
-            out.save(buf, format="JPEG", quality=85)
-            resized.append(buf.getvalue())
-        return resized
-
-    @staticmethod
-    def _extract_video_frames(video_bytes: bytes, num_frames: int, max_pixels: int = 0) -> list[bytes]:
-        """Extract *num_frames* evenly-spaced frames from *video_bytes*.
-
-        Returns a list of JPEG-encoded frame bytes, each optionally downscaled
-        so width × height ≤ *max_pixels*.  Uses the same pixel-budget scaling
-        as :meth:`_resize_image` (aspect-ratio-aware).  Tries PyAV first,
-        falls back to ffmpeg subprocess.
-
-        In-memory form — use this when the bytes are already held (HTTP
-        fetch).  For local files prefer :meth:`_extract_video_frames_from_source`,
-        which streams from the path instead of loading the whole file
-        (Wave-4).  Both share the same decode/resize cores, so caps and
-        output are identical.
-        """
-        import io as _io
-
-        frames: list[bytes] | None = None
-
-        # -- PyAV backend ----------------------------------------------------
-        try:
-            import av
-
-            container = av.open(_io.BytesIO(video_bytes))
-            try:
-                extracted = InputConversion._pick_frames_from_container(container, num_frames)
-            finally:
-                container.close()
             if extracted:
                 frames = extracted
         except Exception:
@@ -445,63 +321,102 @@ class InputConversion:
 
         # -- ffmpeg pipe backend ---------------------------------------------
         if frames is None:
-            frames = InputConversion._ffmpeg_video_frames(
-                probe_cmd=["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", "-"],
-                probe_input=video_bytes,
-                input_args=["-i", "-"],
-                ffmpeg_input=video_bytes,
-                num_frames=num_frames,
-            )
-
-        if not frames:
-            logger.warning("Could not extract video frames; sending raw video")
-            return []
-
-        return InputConversion._resize_video_frames(frames, max_pixels)
-
-    @staticmethod
-    def _extract_video_frames_from_source(path: str, num_frames: int, max_pixels: int = 0) -> list[bytes]:
-        """Extract *num_frames* evenly-spaced frames from a LOCAL video file.
-
-        Wave-4 streaming form of :meth:`_extract_video_frames`: the file is
-        opened where it lies — the PyAV demuxer reads and seeks on demand
-        and the ffmpeg fallback reads the path directly — instead of reading
-        the whole file into memory first, so a multi-gigabyte video no
-        longer costs multi-gigabyte of RSS.  Frame selection, the
-        *num_frames* / *max_pixels* caps and the JPEG encoding are identical
-        to the in-memory form (same shared cores).
-        """
-        frames: list[bytes] | None = None
-
-        # -- PyAV backend (streams from the path — no whole-file read) --------
-        try:
-            import av
-
-            container = av.open(path)
             try:
-                extracted = InputConversion._pick_frames_from_container(container, num_frames)
-            finally:
-                container.close()
-            if extracted:
-                frames = extracted
-        except Exception:
-            logger.debug("PyAV frame extraction failed, trying ffmpeg fallback", exc_info=True)
+                import json
+                import subprocess
 
-        # -- ffmpeg backend (reads the path directly) --------------------------
-        if frames is None:
-            frames = InputConversion._ffmpeg_video_frames(
-                probe_cmd=["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", "-i", path],
-                probe_input=None,
-                input_args=["-i", path],
-                ffmpeg_input=None,
-                num_frames=num_frames,
-            )
+                # Probe duration
+                probe = subprocess.run(
+                    [
+                        "ffprobe",
+                        "-v",
+                        "error",
+                        "-show_entries",
+                        "format=duration",
+                        "-of",
+                        "json",
+                        "-",
+                    ],
+                    input=video_bytes,
+                    capture_output=True,
+                    timeout=30,
+                    check=False,
+                )
+                info = json.loads(probe.stdout)
+                duration = float(info.get("format", {}).get("duration", 10))
+                fps = max(0.1, num_frames / duration) if duration > 0 else 1.0
+
+                proc = subprocess.run(
+                    [
+                        "ffmpeg",
+                        "-v",
+                        "error",
+                        "-i",
+                        "-",
+                        "-vf",
+                        f"fps={fps}",
+                        "-f",
+                        "image2pipe",
+                        "-vcodec",
+                        "mjpeg",
+                        "-q:v",
+                        "3",
+                        "-",
+                    ],
+                    input=video_bytes,
+                    capture_output=True,
+                    timeout=120,
+                    check=False,
+                )
+
+                # Parse concatenated JPEG stream
+                raw = proc.stdout
+                parsed: list[bytes] = []
+                start = 0
+                while start < len(raw) - 1:
+                    if raw[start] != 0xFF or raw[start + 1] != 0xD8:
+                        start += 1
+                        continue
+                    end = raw.find(b"\xff\xd9", start + 2)
+                    if end == -1:
+                        break
+                    end += 2
+                    parsed.append(raw[start:end])
+                    start = end
+
+                if parsed:
+                    frames = parsed[:num_frames]
+            except Exception:
+                logger.debug("ffmpeg frame extraction also failed", exc_info=True)
 
         if not frames:
             logger.warning("Could not extract video frames; sending raw video")
             return []
 
-        return InputConversion._resize_video_frames(frames, max_pixels)
+        # -- Resize each frame if needed ------------------------------------
+        if max_pixels > 0:
+            try:
+                from PIL import Image
+            except ImportError:
+                return frames
+
+            resized: list[bytes] = []
+            for raw_frame in frames:
+                pil = Image.open(_io.BytesIO(raw_frame))
+                w, h = pil.size
+                if w * h > max_pixels:
+                    scale = (max_pixels / (w * h)) ** 0.5
+                    nw = max(1, int(w * scale))
+                    nh = max(1, int(h * scale))
+                    out = pil.resize((nw, nh), Image.Resampling.LANCZOS)
+                else:
+                    out = pil
+                buf = _io.BytesIO()
+                out.save(buf, format="JPEG", quality=85)
+                resized.append(buf.getvalue())
+            return resized
+
+        return frames
 
     async def _fetch_video_frames(self, url: str, num_frames: int | None = None) -> list[tuple[str, str]]:
         """Download video, extract frames, return list of (base64_data, mime_type).
@@ -509,31 +424,25 @@ class InputConversion:
         Blocking work (local file reads, PyAV/ffmpeg decoding, PIL resizing,
         base64 encoding) is offloaded to the default thread pool so it never
         stalls the event loop shared by concurrent requests.
-
-        Wave-4: local ``file://`` videos are decoded STREAMING from the
-        path (PyAV reads/seeks on demand; ffmpeg reads the file directly) —
-        the whole file is no longer loaded into memory first.  HTTP(S)
-        bodies keep the in-memory path (the response is already buffered).
-        Caller caps (*num_frames*, *max_pixels*) are respected identically
-        on both paths.
         """
-        max_px = self.emb.mm_processor_kwargs.get("max_pixels", 0) if hasattr(self.emb, "mm_processor_kwargs") else 0
-        nf = num_frames if num_frames is not None else self.max_video_frames
-
         if url.startswith(("http://", "https://")):
             response = await self.emb.http_async_client.get(url, follow_redirects=True)
             response.raise_for_status()
             video_bytes = response.content
-            # CPU-bound: PyAV decode, or ffprobe+ffmpeg subprocesses (30s/120s
-            # timeouts), plus PIL resize — must run off the event loop.
-            frames = await asyncio.to_thread(self._extract_video_frames, video_bytes, nf, max_px)
         else:
             path = url.removeprefix("file://")
-            # CPU-bound: PyAV decode, or ffprobe+ffmpeg subprocesses (30s/120s
-            # timeouts), plus PIL resize — must run off the event loop.
-            # Wave-4: streams from disk instead of reading the whole file.
-            frames = await asyncio.to_thread(InputConversion._extract_video_frames_from_source, path, nf, max_px)
 
+            def _read_video() -> bytes:
+                with open(path, "rb") as f:
+                    return f.read()
+
+            video_bytes = await asyncio.to_thread(_read_video)
+
+        max_px = self.emb.mm_processor_kwargs.get("max_pixels", 0) if hasattr(self.emb, "mm_processor_kwargs") else 0
+        nf = num_frames if num_frames is not None else self.max_video_frames
+        # CPU-bound: PyAV decode, or ffprobe+ffmpeg subprocesses (30s/120s
+        # timeouts), plus PIL resize — must run off the event loop.
+        frames = await asyncio.to_thread(self._extract_video_frames, video_bytes, nf, max_px)
         if not frames:
             return []
 
@@ -905,6 +814,8 @@ class InputConversion:
         return requests
 
 
+
+
 # Idle early-flush for the query batchers (local _QueryBatcher and the
 # shared embed-batcher singleton, which reuses this class).  DEFAULT 0 =
 # DISABLED (the exact original always-wait-the-window behavior).
@@ -1006,7 +917,10 @@ class _QueryBatcher:
                     size_before = len(self._queue)
                     await asyncio.sleep(min(slice_s, remaining))
                     waited += min(slice_s, remaining)
-                    if len(self._queue) <= size_before and 0 < len(self._queue) <= _IDLE_FLUSH_MAX_BATCH:
+                    if (
+                        len(self._queue) <= size_before
+                        and 0 < len(self._queue) <= _IDLE_FLUSH_MAX_BATCH
+                    ):
                         break
         except asyncio.CancelledError:
             return
@@ -1094,17 +1008,17 @@ class MultiModalEmbeddings:
         # queries from every worker/pod into one /v1/embeddings call, so
         # batch size is independent of the number of app processes.
         self._batch_url = os.environ.get("RAG_EMBED_BATCH_URL", "").rstrip("/")
-        # Per-loop httpx2 clients for the shared batcher.  httpx2.AsyncClient
+        # Per-loop httpx clients for the shared batcher.  httpx.AsyncClient
         # binds its connection pool to one event loop, so a single client
         # shared across loops (e.g. main loop + sync_wrapper_safe's
         # background loop in one process) is unsafe — mirror self._batchers.
-        self._batch_clients: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, httpx2.AsyncClient] = (
+        self._batch_clients: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, httpx.AsyncClient] = (
             weakref.WeakKeyDictionary()
         )
         # Per-loop semaphores bounding concurrent multimodal embedding POSTs:
         # aembed_documents gathers one POST per converted doc (up to
         # chunk_size = 64 per sub-batch) and concurrent ingests multiply
-        # that — the httpx2 pool caps sockets, not request pressure on the
+        # that — the httpx pool caps sockets, not request pressure on the
         # endpoint.  MODEL_EMBED_MAX_CONCURRENCY (default 32, 0 disables).
         self._embed_sems: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore] = (
             weakref.WeakKeyDictionary()
@@ -1226,14 +1140,14 @@ class MultiModalEmbeddings:
 
     # -- remote (shared) query batcher -----------------------------------------
 
-    def _batch_http_client(self) -> httpx2.AsyncClient:
+    def _batch_http_client(self) -> httpx.AsyncClient:
         loop = asyncio.get_running_loop()
         client = self._batch_clients.get(loop)
         if client is None:
             from .pcai_model_classes import _pool_limits_from_env
 
-            client = httpx2.AsyncClient(
-                timeout=httpx2.Timeout(300.0, connect=30.0),
+            client = httpx.AsyncClient(
+                timeout=httpx.Timeout(300.0, connect=30.0),
                 limits=_pool_limits_from_env(),
             )
             self._batch_clients[loop] = client

@@ -24,13 +24,6 @@ _OCR_LANG = os.environ.get("OCR_LANG", "eng")
 _OCR_DPI = int(os.environ.get("OCR_DPI", "150"))
 _OCR_TIMEOUT_S = float(os.environ.get("OCR_TIMEOUT_S", "120"))
 
-# Raster-size guard.  Pages with pathological geometry (a huge MediaBox) or
-# oversized image clips can allocate enormous pixmaps — pixels scale as
-# width×height×(dpi/72)².  Rendering past this pixel budget is skipped (the
-# OCR fallback then yields no text for that page; the page-render image
-# fallback falls back to raw image bytes).  ``0`` disables the guard.
-_PDF_MAX_RASTER_PIXELS = max(0, int(os.environ.get("PDF_MAX_RASTER_PIXELS", str(64_000_000))))
-
 
 def _tesseract_available() -> bool:
     """True when the tesseract CLI is on PATH."""
@@ -84,11 +77,6 @@ def _strip_chart_noise(text: str) -> str:
 
     Tokens with **alphabetic** suffixes (``100ms``, ``16K``, ``2025a``) are
     preserved — they carry semantic meaning that aids retrieval.
-
-    Newlines are preserved: markdown tables emitted by the table detector
-    keep their row structure (pipe-wrapped cells are immune to the numeric
-    rule), while chart axis ticks — which extract as runs of consecutive
-    bare-numeric *lines* — are still dropped as a group.
     """
     tokens = text.split()
     if len(tokens) < 8:
@@ -98,48 +86,21 @@ def _strip_chart_noise(text: str) -> str:
     # optional decimal part, optional exponent, optional percent sign.
     _NUM_RE = re.compile(r"-?\d{1,3}(?:,\d{3})*(?:\.\d+)?(?:[eE][+-]?\d+)?%?$")
 
-    def _clean_tokens(line_tokens: list[str]) -> list[str]:
-        """Drop numeric runs of 3+ within one line's token stream."""
-        result: list[str] = []
-        num_run: list[str] = []
-        for token in line_tokens:
-            if _NUM_RE.match(token):
-                num_run.append(token)
-            else:
-                if len(num_run) <= 2:
-                    result.extend(num_run)
-                num_run.clear()
-                result.append(token)
-        if len(num_run) <= 2:
-            result.extend(num_run)
-        return result
+    result: list[str] = []
+    num_run: list[str] = []
 
-    # Process line-by-line so multi-line content (markdown tables, prose
-    # paragraphs) keeps its structure.  The one case that must still be
-    # caught across lines: chart axis ticks, which extract as *consecutive
-    # bare-numeric lines* ("0\n100\n200\n300") — group those into a run and
-    # drop it when it reaches 3+ lines, exactly like the in-line rule.
-    out_lines: list[str] = []
-    bare_num_lines: list[str] = []
-    for line in text.split("\n"):
-        line_tokens = line.split()
-        if line_tokens and len(line_tokens) <= 3 and all(_NUM_RE.match(t) for t in line_tokens):
-            bare_num_lines.append(line)
-            continue
-        if bare_num_lines:
-            if len(bare_num_lines) > 2:
-                pass  # axis-tick run — drop it
-            else:
-                out_lines.extend(bare_num_lines)
-            bare_num_lines = []
-        out_lines.append(" ".join(_clean_tokens(line_tokens)))
-    if bare_num_lines:
-        if len(bare_num_lines) > 2:
-            pass
+    for token in tokens:
+        if _NUM_RE.match(token):
+            num_run.append(token)
         else:
-            out_lines.extend(bare_num_lines)
+            if len(num_run) <= 2:
+                result.extend(num_run)
+            num_run.clear()
+            result.append(token)
+    if len(num_run) <= 2:
+        result.extend(num_run)
 
-    return "\n".join(out_lines)
+    return " ".join(result)
 
 
 def _strip_pdf_artifacts(text: str) -> str:
@@ -188,19 +149,6 @@ _BBOX_TOLERANCE = 1.0
 def _bbox_close(a: Any, b: Any, tol: float = _BBOX_TOLERANCE) -> bool:
     """Return True if two 4-tuple bboxes are within *tol* on every component."""
     return len(a) == 4 and len(b) == 4 and all(abs(a[i] - b[i]) < tol for i in range(4))
-
-
-# ---------------------------------------------------------------------------
-# Browser-safe image normalisation
-# ---------------------------------------------------------------------------
-# PDFs may embed images in codecs that browsers and Open WebUI cannot render —
-# most commonly JPEG 2000 (the JPXDecode filter, extracted by PyMuPDF as raw
-# ``.jpx`` / ``.jp2`` streams), but also TIFF and other exotic codecs.  Such
-# images are re-encoded at extraction time into a format every downstream
-# consumer can display: JPEG for opaque images, PNG when transparency must be
-# preserved.
-_BROWSER_SAFE_EXTS = frozenset({"png", "jpg", "jpeg", "gif", "webp", "bmp"})
-_JPEG_REENCODE_QUALITY = 90
 
 
 # ---------------------------------------------------------------------------
@@ -498,11 +446,6 @@ class PDFProcessor:
     _MIN_IMG_WIDTH = 10
     _MIN_IMG_HEIGHT = 10
     _MIN_IMG_PIXELS = 1000  # ~32×32
-    # Decorative grid/catalog imagery (background tiles, gradient slivers,
-    # icon fragments) lives almost entirely below 100px on the smaller side,
-    # while real figures and product photos are larger.  Env-overridable for
-    # corpora that legitimately carry small figures.
-    _MIN_IMG_SIDE = int(os.environ.get("PDF_MIN_IMG_SIDE", "100"))
 
     # Maximum number of images attached to a single chunk.  Prevents
     # embedding API 400 errors when a page has many small figures.
@@ -517,8 +460,6 @@ class PDFProcessor:
     def _is_meaningful_image(width: int, height: int) -> bool:
         """Return True if an image is large enough to be a real figure/chart."""
         if width < PDFProcessor._MIN_IMG_WIDTH or height < PDFProcessor._MIN_IMG_HEIGHT:
-            return False
-        if min(width, height) < PDFProcessor._MIN_IMG_SIDE:
             return False
         return not width * height < PDFProcessor._MIN_IMG_PIXELS
 
@@ -535,43 +476,6 @@ class PDFProcessor:
         }.get(ext, f"image/{ext}")
         b64 = base64.b64encode(img_bytes).decode("ascii")
         return f"data:{mime};base64,{b64}"
-
-    @staticmethod
-    def _normalize_to_browser_safe(img_bytes: bytes, ext: str) -> tuple[bytes, str]:
-        """Re-encode *img_bytes* into a browser-renderable format when needed.
-
-        Already-safe formats (PNG, JPEG, GIF, WebP, BMP) pass through
-        untouched.  JPEG 2000 (``jpx`` / ``jp2`` / ``j2k``), TIFF and other
-        non-web codecs are re-encoded via PIL — PNG when the image carries
-        transparency, JPEG otherwise — so that the data URLs produced
-        downstream (and the files persisted from them) render in browsers
-        and Open WebUI.  Returns ``(bytes, ext)`` unchanged when the bytes
-        cannot be decoded by PIL (the Pixmap fallbacks in
-        :meth:`_ensure_valid_image` produce PNG in that case).
-        """
-        if ext.lower() in _BROWSER_SAFE_EXTS:
-            return img_bytes, ext
-
-        import io as _io
-
-        from PIL import Image as _PIL
-
-        try:
-            pil: _PIL.Image = _PIL.open(_io.BytesIO(img_bytes))
-            pil.load()
-        except Exception:
-            logger.debug("Cannot re-encode %s image to a web-safe format", ext, exc_info=True)
-            return img_bytes, ext
-
-        buf = _io.BytesIO()
-        has_alpha = pil.mode in ("RGBA", "LA") or (pil.mode == "P" and "transparency" in pil.info)
-        if has_alpha:
-            pil.save(buf, format="PNG")
-            return buf.getvalue(), "png"
-        if pil.mode not in ("RGB", "L"):
-            pil = pil.convert("RGB")
-        pil.save(buf, format="JPEG", quality=_JPEG_REENCODE_QUALITY)
-        return buf.getvalue(), "jpg"
 
     @staticmethod
     def _ensure_valid_image(
@@ -619,9 +523,7 @@ class PDFProcessor:
         try:
             _PIL.open(_io.BytesIO(img_bytes))  # PIL-readable?
             if not _is_degenerate(img_bytes):
-                # Re-encode non-web codecs (JPEG 2000, TIFF, …) so the data
-                # URLs produced downstream render in browsers / Open WebUI.
-                return PDFProcessor._normalize_to_browser_safe(img_bytes, ext)
+                return img_bytes, ext
             logger.debug("Image xref %d is degenerate (all-black/white), trying fallbacks", xref)
         except Exception:
             logger.debug("Suppressed exception", exc_info=True)
@@ -652,28 +554,18 @@ class PDFProcessor:
 
                 bbox = page.get_image_bbox(img_ref)
                 if bbox:
-                    # Matrix(2, 2) → 2× scale in each axis; guard against a
-                    # crafted clip whose rendered pixel count would be huge.
-                    estimated = (bbox.width * 2.0) * (bbox.height * 2.0)
-                    if _PDF_MAX_RASTER_PIXELS and estimated > _PDF_MAX_RASTER_PIXELS:
-                        logger.warning(
-                            "Page render for xref %d skipped — clip too large (%.0f estimated pixels)",
-                            xref,
-                            estimated,
-                        )
-                    else:
-                        pix = page.get_pixmap(matrix=pymupdf.Matrix(2, 2), clip=bbox)
-                        png_bytes = pix.tobytes("png")
-                        if not _is_degenerate(png_bytes):
-                            return png_bytes, "png"
-                        logger.warning(
-                            "Page render for xref %d also degenerate — using raw bytes",
-                            xref,
-                        )
+                    pix = page.get_pixmap(matrix=pymupdf.Matrix(2, 2), clip=bbox)
+                    png_bytes = pix.tobytes("png")
+                    if not _is_degenerate(png_bytes):
+                        return png_bytes, "png"
+                    logger.warning(
+                        "Page render for xref %d also degenerate — using raw bytes",
+                        xref,
+                    )
             except Exception as render_exc:
                 logger.warning("Page render failed for xref %d: %s", xref, render_exc)
 
-        return PDFProcessor._normalize_to_browser_safe(img_bytes, ext)
+        return img_bytes, ext
 
     @staticmethod
     def _overlap_text(text: str, num_chars: int, text_splitter=None) -> str:
@@ -817,42 +709,10 @@ class PDFProcessor:
         """
         page_blocks = page.get_text("dict")["blocks"]
 
-        # -- Tables → markdown (PyMuPDF native detection) -----------------
-        # Flattened table text is unreadable and the chart-noise filter eats
-        # its numeric rows; detecting ruled tables and re-emitting them as
-        # markdown preserves the structure for embeddings, the LLM and the
-        # frontend.  Junk detections (single-row/col fragments) are skipped.
-        table_regions: list[tuple[tuple[float, float, float, float], str]] = []
-        try:
-            for tab in page.find_tables().tables:
-                if tab.row_count < 2 or tab.col_count < 2:
-                    continue
-                md = (tab.to_markdown() or "").strip()
-                if md:
-                    table_regions.append((tuple(tab.bbox), md))
-        except Exception:
-            logger.debug("find_tables failed on page %s", page_num, exc_info=True)
-
-        def _inside_table(bbox: Any) -> bool:
-            """True when a block's centre falls inside a detected table."""
-            if not table_regions or not bbox:
-                return False
-            cx, cy = (bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2
-            return any(tx0 <= cx <= tx1 and ty0 <= cy <= ty1 for (tx0, ty0, tx1, ty1), _ in table_regions)
-
         # Extract all images on this page first
-        image_regions: list[dict[str, Any]] = []
-        seen_xrefs: set[int] = set()
+        image_regions = []
         for img_idx, img_ref in enumerate(page.get_images(full=True)):
             xref = img_ref[0]
-            # ``get_images(full=True)`` lists an XObject once per *usage* in
-            # the page's content stream — a decorative tile referenced
-            # hundreds of times (grid/catalog layouts do this) would
-            # otherwise be extracted — and emitted as standalone image docs —
-            # once per reference.  Dedup by xref, mirroring extract_pages().
-            if xref in seen_xrefs:
-                continue
-            seen_xrefs.add(xref)
             try:
                 extracted = doc.extract_image(xref)
                 if not self._is_meaningful_image(extracted.get("width", 0), extracted.get("height", 0)):
@@ -876,16 +736,10 @@ class PDFProcessor:
                 )
 
         blocks = []
-        matched_urls: set[str] = set()
         for b_idx, b in enumerate(page_blocks):
             bbox = b.get("bbox", (0, 0, 0, 0))
 
             if b.get("type") == 0:  # text block
-                if _inside_table(bbox):
-                    # Represented by the markdown table block instead —
-                    # the flattened original would double-count the cells
-                    # and feed the chart-noise filter.
-                    continue
                 block_text = ""
                 for line in b.get("lines", []):
                     for span in line.get("spans", []):
@@ -925,13 +779,8 @@ class PDFProcessor:
                 )
 
             elif b.get("type") == 1:  # image block
-                # Grid/catalog pages repeat the same XObject via many dict
-                # blocks; without the per-URL guard below, every
-                # (dict-block x region) bbox match would append its own doc
-                # and fan out combinatorially.  One doc per distinct image.
                 for ir in image_regions:
-                    if ir["bbox"] and _bbox_close(ir["bbox"], bbox) and ir["data_url"] not in matched_urls:
-                        matched_urls.add(ir["data_url"])
+                    if ir["bbox"] and _bbox_close(ir["bbox"], bbox):
                         blocks.append(
                             {
                                 "page_num": page_num,
@@ -943,37 +792,14 @@ class PDFProcessor:
                             }
                         )
 
-        # Emit the detected tables as markdown text blocks (after the raw
-        # text loop; consumers sort blocks top-to-bottom by bbox anyway).
-        # ``is_table`` tells the chunk builder to bypass the chart-noise
-        # filter, which would otherwise eat the markdown's numeric rows.
-        for t_idx, (tbbox, md) in enumerate(table_regions):
-            blocks.append(
-                {
-                    "page_num": page_num,
-                    "block_num": -(1000 + t_idx),
-                    "text": md,
-                    "block_type": "text",
-                    "bbox": list(tbbox),
-                    "nearby_images": [],
-                    "is_table": True,
-                }
-            )
-
         # Emit standalone image entries for image_regions that didn't match
         # any dict-block (page.get_images() can report more images than
         # page.get_text("dict")["blocks"] — e.g. inline images, form XObjects).
         # Without this, such images are silently dropped if no text block is
         # nearby.
-        # Emit each distinct image at most once per page — identical bytes can
-        # arrive via several regions (same XObject re-listed, or equal content
-        # under different xrefs), and the standalone path bypasses the
-        # chunk-level URL dedup, so without this guard a repeated tile would
-        # fan out into unbounded duplicate docs.
-        emitted_standalone: set[str] = set()
+        matched_urls = {b["image_data_url"] for b in blocks if b["block_type"] == "image"}
         for ir in image_regions:
-            if ir["data_url"] not in matched_urls and ir["data_url"] not in emitted_standalone:
-                emitted_standalone.add(ir["data_url"])
+            if ir["data_url"] not in matched_urls:
                 blocks.append(
                     {
                         "page_num": page_num,
@@ -1058,16 +884,6 @@ class PDFProcessor:
     def _ocr_page_raster(self, page: Any) -> str | None:
         """Rasterize one PDF page and OCR it; ``None`` on any failure."""
         try:
-            rect = page.rect
-            estimated = (rect.width * _OCR_DPI / 72.0) * (rect.height * _OCR_DPI / 72.0)
-            if _PDF_MAX_RASTER_PIXELS and estimated > _PDF_MAX_RASTER_PIXELS:
-                logger.debug(
-                    "page %s too large to raster for OCR (%.0f estimated pixels > %d) — skipping",
-                    getattr(page, "number", "?"),
-                    estimated,
-                    _PDF_MAX_RASTER_PIXELS,
-                )
-                return None
             pix = page.get_pixmap(dpi=_OCR_DPI)
             png = pix.tobytes("png")
         except Exception:
@@ -1340,10 +1156,6 @@ class PDFProcessor:
             # -- Standalone images not already emitted in a chunk -------------
             for ib in image_blocks:
                 if ib["image_data_url"] not in emitted_images:
-                    # Mark BEFORE yielding: the same image can arrive via
-                    # several duplicate blocks, and without this every
-                    # duplicate becomes its own yielded doc.
-                    emitted_images.add(ib["image_data_url"])
                     yield {
                         "text": f"[Image on page {pn}]",
                         "image": ib["image_data_url"],

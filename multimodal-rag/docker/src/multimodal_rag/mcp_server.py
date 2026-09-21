@@ -25,11 +25,11 @@ import time
 from array import array
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urlencode, urljoin
+from urllib.parse import urlencode
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from multimodal_rag.dataset_manager import DatasetManager, _record_upload_history
+from multimodal_rag.dataset_manager import DatasetManager
 from multimodal_rag.rag_system import (
     MultimodalRAG,
     _arerank_with,
@@ -37,28 +37,9 @@ from multimodal_rag.rag_system import (
     merge_federated_results,
     resolve_federated_targets,
 )
-from multimodal_rag.utils import clients_registry as _clients
 from multimodal_rag.utils.logging_utils import logging, setup_logger
-from multimodal_rag.utils.mcp_auth import UNIVERSAL_API_KEYS_ENV, ApiKeyAuthMiddleware
 
 logger = logging.getLogger(__name__)
-
-# API-key auth for the MCP HTTP endpoints (fleet pattern, shared module
-# pcai_utils/mcp_auth.py — hardlinked into utils/). OPTIONAL per fleet
-# decision 2026-09 (read/search surface fronted by the gateway): unset →
-# open exactly as before, with a loud startup warning. The UNIVERSAL
-# MCP_API_KEYS is honored alongside RAG_API_KEYS (key sets unioned,
-# constant-time compares); comma-separated keys = the rotation story.
-RAG_API_KEYS_ENV = "RAG_API_KEYS"
-AUTH_ENV_NAMES = (UNIVERSAL_API_KEYS_ENV, RAG_API_KEYS_ENV)
-
-
-def mcp_auth_warn_if_open() -> bool:
-    """Loud one-time startup warning when no API keys are configured."""
-    from multimodal_rag.utils.mcp_auth import warn_if_open
-
-    return warn_if_open("multimodal-rag-mcp", AUTH_ENV_NAMES)
-
 
 # ---------------------------------------------------------------------------
 # Configuration (same env vars as the API server)
@@ -139,20 +120,44 @@ def _media_url_suffix(dataset_name: str, rel_path: str, legacy_password: str | N
 
 
 # Allowlist of prefixes for ``file://`` / local-path media read by the MCP
-# tools (describe_media, transcribe_audio, audio queries).  The canonical
-# implementation lives in utils/media_paths.py — shared with rag_system,
-# which enforces the same policy on media refs inside user-supplied
-# documents (REST POST /documents, MCP add_memory).  Paths outside the
+# tools (describe_media, transcribe_audio, audio queries).  Paths outside the
 # allowed prefixes are refused (fail-closed).  Prefixes are colon-separated
 # (os.pathsep), e.g.
 #   MEDIA_ALLOW_PATH_PREFIXES=/data/datasets:/data/staging
 # When unset, the default is ``DATA_PATH/datasets`` + ``DATA_PATH/staging``
 # (matching the chart's default layout).  An explicitly empty value allows
-# nothing; the special value ``*`` allows any local path (dev/test only).
-from multimodal_rag.utils.media_paths import (  # noqa: E402 — re-exported
-    MediaRefError,
-    _media_path_allowed,
+# nothing.
+_DEFAULT_DATA_PATH = os.environ.get("DATA_PATH", "/data")
+_MEDIA_ALLOW_DEFAULT = os.pathsep.join(
+    (
+        os.path.join(_DEFAULT_DATA_PATH, "datasets"),
+        os.path.join(_DEFAULT_DATA_PATH, "staging"),
+    )
 )
+_MEDIA_ALLOW_PATH_PREFIXES: tuple[str, ...] = tuple(
+    os.path.normpath(p).rstrip(os.sep)
+    for p in os.environ.get("MEDIA_ALLOW_PATH_PREFIXES", _MEDIA_ALLOW_DEFAULT).split(os.pathsep)
+    if p.strip()
+)
+
+
+def _media_path_allowed(raw: str) -> bool:
+    """True if *raw* (a file:// or local path) is inside an allowed prefix.
+
+    With no configured prefixes nothing is allowed (fail-closed).  The env
+    default is ``DATA_PATH``/datasets + ``DATA_PATH``/staging.
+    """
+    if not _MEDIA_ALLOW_PATH_PREFIXES:
+        return False
+    p = raw.removeprefix("file://")
+    try:
+        resolved = os.path.realpath(p)
+    except Exception:
+        return False
+    for prefix in _MEDIA_ALLOW_PATH_PREFIXES:
+        if resolved == prefix or resolved.startswith(prefix + os.sep):
+            return True
+    return False
 
 
 def _classify_by_url_extension(url: str) -> str | None:
@@ -200,49 +205,15 @@ def _probe_remote_media_type(url: str, timeout: float = 25.0) -> str | None:
     is closed immediately), so this never downloads the full resource.  Used
     as a fallback when the URL has no recognisable extension, e.g. a CDN or
     unversioned endpoint.
-
-    This is a real server-side fetch, so it gets the same treatment as the
-    other fetch points: the fetch policy runs here (not only at tool entry)
-    and each hop — the URL and every redirect target — connects to the IP
-    the policy just validated (DNS-rebinding pin; blind ``follow_redirects``
-    never re-checked a hop's target).  Failures degrade to ``None``
-    (classification falls back to the caller's next heuristic).
     """
-    import httpx2
+    import httpx
 
-    from multimodal_rag.dataset_manager import _MAX_URL_REDIRECTS
-    from multimodal_rag.utils.url_policy import validate_fetch_url
-
-    current = url
     try:
-        for _hop in range(_MAX_URL_REDIRECTS + 1):
-            pinned = validate_fetch_url(current)
-            with httpx2.Client(
-                timeout=timeout,
-                follow_redirects=False,
-                trust_env=not pinned.pin_active,
-            ) as client:
-                request = client.build_request(
-                    "GET",
-                    pinned.pinned_url,
-                    headers={"Host": pinned.host_header} if pinned.host_header else None,
-                    extensions=({"sni_hostname": pinned.sni_hostname} if pinned.sni_hostname else None),
-                )
-                resp = client.send(request, stream=True, follow_redirects=False)
-                try:
-                    if resp.is_redirect:
-                        location = resp.headers.get("location")
-                        if not location:
-                            return None
-                        current = urljoin(current, location)
-                        continue
-                    resp.raise_for_status()
-                    content_type = resp.headers.get("content-type", "")
-                    first = next(resp.iter_bytes(), b"")
-                    return _classify_media_bytes(first, content_type)
-                finally:
-                    resp.close()
-        return None
+        with httpx.Client(timeout=timeout, follow_redirects=True) as client, client.stream("GET", url) as resp:
+            resp.raise_for_status()
+            content_type = resp.headers.get("content-type", "")
+            first = next(resp.iter_bytes(), b"")
+            return _classify_media_bytes(first, content_type)
     except Exception:
         logger.debug("remote media probe failed for %s", url[:120], exc_info=True)
         return None
@@ -528,77 +499,21 @@ _AUTH_IDENTITY_HEADERS = (
 # a caller impersonate another user's unlock-cache entry (and its cached
 # plaintext password) or rotate identities to bypass the password-failure
 # throttle.  They are therefore only honoured when RAG_TRUST_PROXY_IDENTITY
-# is set (helm: security.trustProxyIdentity, default true) — i.e. when the
-# operator confirms an enforcing proxy sits in front of this server.
+# is set (helm: security.trustProxyIdentity) — i.e. when the operator
+# confirms an enforcing proxy sits in front of this server.
 _TRUST_PROXY_IDENTITY = os.environ.get("RAG_TRUST_PROXY_IDENTITY", "").lower() in ("1", "true", "yes")
 
 
-def _shared_unlock_enabled() -> bool:
-    """True when RAG_MCP_SHARED_UNLOCK opts OUT of per-caller unlock scoping
-    (decision D10 escape hatch for gateway-fronted single-user deployments):
-    every caller shares one unlock cache and one throttle bucket — the
-    pre-D10 shared behaviour.  Read per call so a config change needs no
-    restart."""
-    return os.environ.get("RAG_MCP_SHARED_UNLOCK", "").strip().lower() in ("1", "true", "yes")
-
-
-def _request_identity(identity_header_value: str | None, forwarded_for: str | None, peer: str | None) -> str | None:
-    """Resolve the per-caller identity (decision D10), most precise source first.
-
-    Order of availability:
-
-    1. **Provided identity** — the auth proxy's identity headers, honoured
-       only under ``RAG_TRUST_PROXY_IDENTITY`` (per-USER; survives the user
-       roaming across IPs).
-    2. **Forwarded-for chain** — ``X-Forwarded-For``, honoured only under
-       ``RAG_TRUST_PROXY_IDENTITY`` (per client IP behind a proxy that sets
-       it; the FULL normalized chain is the identity value, so a caller
-       cannot reconstruct another user's chain value to read their cached
-       unlock — an XFF-appending proxy does leave client-sent prefixes in
-       the chain, which lets a caller rotate identities for FRESH throttle
-       buckets; that residual vanishes when the proxy overwrites the header
-       and is one reason the identity headers take precedence).
-    3. **Socket peer** — direct connections (single-user direct deployments:
-       unchanged — the peer is stable across requests and sessions).
-
-    The opencode session id (``X-Opencode-Session-ID``) is deliberately NOT
-    an unlock identity: it is client-supplied (spoofable) and a direct
-    single user runs several sessions per day — session-scoping would force
-    a re-unlock per conversation, changing the ratified "single-user direct:
-    unchanged" UX.
-    """
-    if _TRUST_PROXY_IDENTITY and identity_header_value:
-        return identity_header_value
-    if _TRUST_PROXY_IDENTITY and forwarded_for:
-        chain = ",".join(p.strip() for p in forwarded_for.split(",") if p.strip())
-        if chain:
-            return f"xff:{chain}"
-    return peer or "default"
-
-
 def _unlock_client_id() -> str:
-    """Return the per-request client identity used to scope the unlock cache
-    and the password-failure throttle (decision D10: per-caller).
+    """Return the per-request client identity used to scope the unlock cache.
 
-    Resolution order:
-
-    1. **Registry key identity** (decision D15, opt-in) — when the request
-       authenticated with a ``RAG_API_KEY_CLIENTS`` key, the stable
-       ``key:<name>`` identity is used: per-key unlock caches and per-key
-       throttle buckets ride the D10 machinery (an authenticated registry key
-       outranks the proxy-header/peer sources and the shared-unlock escape,
-       which is a single-user convenience).
-    2. ``RAG_MCP_SHARED_UNLOCK=1`` → the shared ``"default"`` identity — the
-       pre-D10 shared behaviour, restored explicitly for gateway-fronted
-       single-user deployments.
-    3. Otherwise the D10 identity resolved by ``_MemoryHeaderMiddleware``
-       (provided identity → forwarded-for chain → socket peer).
+    Prefers an auth-proxy identity header captured by ``_MemoryHeaderMiddleware``
+    (only when ``RAG_TRUST_PROXY_IDENTITY`` is set — the headers are
+    client-spoofable otherwise), then falls back to the socket peer, and
+    finally to a shared ``"default"`` identity for non-authenticated
+    deployments.  ``X-Forwarded-For`` is deliberately not used: it is
+    client-supplied and spoofable.
     """
-    ident = _current_key_identity()
-    if ident is not None and not ident.is_admin:
-        return ident.client_id
-    if _shared_unlock_enabled():
-        return "default"
     cid = _client_id_ctx.get()
     if cid:
         return cid
@@ -624,8 +539,7 @@ class _MemoryHeaderMiddleware:
         ds: str | None = None
         pw: str | None = None
         sid: str | None = None
-        identity: str | None = None
-        forwarded_for: str | None = None
+        cid: str | None = None
         for name, value in scope.get("headers") or []:
             if name == b"x-memory-dataset":
                 ds = value.decode("latin-1").strip() or None
@@ -633,24 +547,23 @@ class _MemoryHeaderMiddleware:
                 pw = value.decode("latin-1").strip() or None
             elif name == b"x-opencode-session-id":
                 sid = value.decode("latin-1").strip() or None
-            elif name == b"x-forwarded-for":
-                forwarded_for = value.decode("latin-1").strip() or None
         if _TRUST_PROXY_IDENTITY:
-            # Only honour proxy-injected headers when the operator confirmed
-            # an enforcing auth proxy overwrites them (RAG_TRUST_PROXY_IDENTITY);
+            # Only honour identity headers when the operator confirmed an
+            # enforcing auth proxy overwrites them (RAG_TRUST_PROXY_IDENTITY);
             # otherwise they are client-supplied and spoofable.
             for name, value in scope.get("headers") or []:
                 if name in _AUTH_IDENTITY_HEADERS:
-                    identity = value.decode("latin-1").strip() or None
-                    if identity:
+                    cid = value.decode("latin-1").strip() or None
+                    if cid:
                         break
-        # Per-caller identity (decision D10): provided identity → forwarded-for
-        # chain (both proxy-trust gated) → socket peer.  The peer keeps direct
-        # single-user deployments exactly as they were; behind a proxy the
-        # chain distinguishes callers, so ONE caller's unlock no longer opens
-        # the dataset for everyone on the pod.
-        peer = (scope.get("client") or (None, None))[0]
-        cid = _request_identity(identity, forwarded_for, peer)
+        # No auth-proxy header — fall back to the socket peer.  X-Forwarded-For
+        # is deliberately ignored: it is client-supplied and spoofable, so
+        # trusting it would let a caller read another identity's cached
+        # unlock password.
+        if not cid:
+            peer = (scope.get("client") or (None, None))[0]
+            if peer:
+                cid = peer
         ds_tok = _memory_dataset_ctx.set(ds)
         pw_tok = _memory_password_ctx.set(pw)
         sid_tok = _opencode_session_id_ctx.set(sid)
@@ -662,81 +575,6 @@ class _MemoryHeaderMiddleware:
             _memory_password_ctx.reset(pw_tok)
             _opencode_session_id_ctx.reset(sid_tok)
             _client_id_ctx.reset(cid_tok)
-
-
-# ---------------------------------------------------------------------------
-# Multi-user API keys → dataset ACLs (decision D15 — OPT-IN, Wave-5 F6)
-# ---------------------------------------------------------------------------
-# RAG_API_KEY_CLIENTS = "name:key;name:key" mints per-user keys (the
-# K8S-MCP clients-registry pattern); RAG_DATASET_ACLS = "name:ds1,ds2;name2:*"
-# binds each name to its datasets.  A registry key resolves to a per-key
-# identity whose dataset access (list/read/search/unlock/manage) is enforced
-# against its ACL — a key with no ACL entry gets NO datasets (fail-closed).
-# The plain deployment keys (RAG_API_KEY + MCP_API_KEYS/RAG_API_KEYS) keep
-# FULL access (admin semantics).  DEFAULT (registry unset): nothing here
-# runs — today's single-key behaviour, byte-identical.  The parsing/resolution
-# core lives in utils/clients_registry.py (RAG-local, stdlib-only).
-
-
-def _current_key_identity():
-    """The request's D15 registry identity (None = D15 inactive for it)."""
-    return _clients.current_identity()
-
-
-def _identity_dataset_allowed(dataset_name: str) -> bool:
-    """ACL predicate over dataset names for the current request identity."""
-    return _clients.dataset_allowed(_clients.current_identity(), dataset_name)
-
-
-def _require_dataset_acl(dataset_name: str) -> None:
-    """Raise ToolError when the caller's key identity may not touch
-    *dataset_name* (D15).  Denies without confirming existence, so the error
-    is not a dataset-existence oracle."""
-    ident = _clients.current_identity()
-    if ident is None:
-        return
-    try:
-        _clients.require_dataset_access(ident, dataset_name)
-    except _clients.DatasetAccessDenied as exc:
-        raise ToolError(str(exc))
-
-
-class _RagClientAuthMiddleware(ApiKeyAuthMiddleware):
-    """Fleet API-key auth + the D15 per-key registry (opt-in).
-
-    Without ``RAG_API_KEY_CLIENTS`` this is EXACTLY the shared
-    :class:`ApiKeyAuthMiddleware` behaviour (delegation — default UX
-    byte-identical).  With the registry configured, a protected-path request
-    authenticates against the union of the deployment (admin) keys and the
-    registry keys, and the resolved per-key identity (name + dataset ACL) is
-    bound to a ContextVar that the tool bodies read via
-    :func:`_require_dataset_acl` / ``_identity_dataset_allowed``.
-    """
-
-    async def __call__(self, scope, receive, send):
-        if scope.get("type") != "http" or not self._needs_auth(scope.get("path", "")):
-            return await super().__call__(scope, receive, send)
-        if not _clients.registry_configured():
-            return await super().__call__(scope, receive, send)
-        from multimodal_rag.utils.mcp_auth import presented_keys
-
-        identity = _clients.resolve_presented(presented_keys(scope))
-        if identity is None:
-            from multimodal_rag.utils.mcp_auth import UNAUTHORIZED_BODY
-
-            headers = [
-                (b"content-type", b"application/json"),
-                (b"content-length", str(len(UNAUTHORIZED_BODY)).encode("ascii")),
-                (b"www-authenticate", b"Bearer"),
-            ]
-            await send({"type": "http.response.start", "status": 401, "headers": headers})
-            await send({"type": "http.response.body", "body": UNAUTHORIZED_BODY})
-            return
-        token = _clients.set_current_identity(identity)
-        try:
-            await self.app(scope, receive, send)
-        finally:
-            _clients.reset_current_identity(token)
 
 
 def _resolve_memory_dataset(dataset_name: str | None) -> str:
@@ -813,128 +651,29 @@ def _memory_splitter(chunk_size: int):
 def _split_memory_header(text: str) -> tuple[str, str]:
     """Return ``(header, body)`` for a memory document.
 
-    The header is the document prologue: everything before the first
-    markdown section heading.  For session histories this is the
-    provenance block (title, session id, git info, file list) — the
-    ``## ``-level heading for the opencode format, or the leading
-    ``### ``-level section for the dsh format, whose body carries no
-    ``## `` headings.  The header is prepended to **every** chunk, so a
-    split document keeps its identifying block in each chunk's text.
-    For free-form notes with no section headings there is no header and
-    the whole text is the body.
+    The header is everything up to (but excluding) the first markdown section
+    heading (``## ...``).  For session histories this is the provenance block
+    (title, session id, git info, file list); for free-form notes there is no
+    header and the whole text is the body.
     """
     lines = text.split("\n")
     for i, line in enumerate(lines):
-        if line.startswith(("## ", "### ")):
+        if line.startswith("## "):
             header = "\n".join(lines[:i]).strip()
             body = "\n".join(lines[i:])
             return (header + "\n") if header else "", body
     return "", text
 
 
-_MEMORY_SECTION_HEADING_RE = re.compile(
-    r"(?m)^(?:"
-    r"### (?:User|Assistant)(?: .*)?"
-    r"|### Tool — .+"
-    r"|## (?:Transcript|Files changed)(?: .*)?"
-    r")$"
-)
-
-
-def _split_memory_sections(body: str) -> list[str]:
-    """Split a memory body into sections at the document's own headings.
-
-    The memory-text analogue of the code processor's definition-boundary
-    splitting: each section keeps its heading (the analogue of a top-level
-    definition), so packed chunks never break mid-section.  Only the two
-    session-history formats' own signatures match — ``### User`` /
-    ``### Assistant`` / ``### Tool`` for the dsh format, ``## Transcript``
-    / ``## Files changed`` for the opencode format — because a session
-    that reads markdown files embeds *their* headings inside tool output,
-    and those content headings must never split a section.  A bare
-    heading with no content of its own (e.g. ``## Transcript``) is
-    attached to the section that follows it.
-    """
-    matches = list(_MEMORY_SECTION_HEADING_RE.finditer(body))
-    if not matches:
-        return [body]
-    sections: list[str] = []
-    if matches[0].start() > 0:
-        sections.append(body[: matches[0].start()])
-    for i, match in enumerate(matches):
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(body)
-        sections.append(body[match.start() : end])
-    attached: list[str] = []
-    for section in sections:
-        stripped = section.strip()
-        if attached and "\n" not in stripped and stripped.startswith("#"):
-            attached[-1] += section
-            continue
-        attached.append(section)
-    return attached
-
-
-def _pack_memory_sections(
-    sections: list[str],
-    measure: Any,
-    budget: int,
-    split_oversized: Any,
-) -> list[str]:
-    """Greedy whole-section packing within a token budget.
-
-    Mirrors the code splitting pattern: pack semantic sections so chunks
-    never break mid-section unless one section alone exceeds the budget —
-    that outsized section is positionally split inside itself, the only
-    place boundary context is lost.  A final chunk holding fewer than a
-    quarter of the budget folds into the previous chunk when the two fit,
-    so no tiny trailing chunk is emitted.
-
-    ``measure`` counts tokens for one section (real tokenizer or the
-    ~4 chars/token estimate); ``split_oversized`` splits one oversized
-    section's body within the budget.
-    """
-    groups: list[list[str]] = []
-    current: list[str] = []
-    current_tokens = 0
-    for section in sections:
-        tokens = measure(section)
-        if tokens > budget:
-            if current:
-                groups.append(current)
-                current, current_tokens = [], 0
-            groups.extend([c] for c in split_oversized(section) if c.strip())
-            continue
-        if current and current_tokens + tokens > budget:
-            groups.append(current)
-            current, current_tokens = [], 0
-        current.append(section)
-        current_tokens += tokens
-    if current:
-        groups.append(current)
-    if len(groups) > 1:
-        tail_tokens = sum(measure(s) for s in groups[-1])
-        prev_tokens = sum(measure(s) for s in groups[-2])
-        if tail_tokens < budget // 4 and tail_tokens + prev_tokens <= budget:
-            groups = groups[:-2] + [groups[-2] + groups[-1]]
-    return ["".join(group) for group in groups]
-
-
 def _split_memory_text(text: str, max_tokens: int) -> tuple[list[str], bool]:
     """Split *text* into memory chunks of at most *max_tokens* tokens each.
-
-    Splitting is **context-aware** (the session-history analogue of the
-    code processor's definition-boundary splitting): the body is packed
-    from whole sections at markdown heading boundaries, so a chunk never
-    breaks a ``### User`` / ``### Assistant`` / ``### Tool`` section
-    mid-body unless that one section alone exceeds the budget.  Only a
-    single oversized section is positionally split inside itself.
 
     The document header (e.g. the session-history provenance block) is
     prepended to **every** chunk so each split stays identifiable — the
     ``session_id`` etc. travels with each chunk.  Uses the same tokenizer
     logic as dataset-side text splitting; falls back to ~4 chars/token.
 
-    Returns ``(chunks, was_split)`` where each chunk is header + sections.
+    Returns ``(chunks, was_split)`` where each chunk is header + body-slice.
     """
     if not text or max_tokens <= 0:
         return ([text] if text else []), False
@@ -952,39 +691,20 @@ def _split_memory_text(text: str, max_tokens: int) -> tuple[list[str], bool]:
         header_tokens = max(0, len(header) // 4)
 
     content_budget = max(1, max_tokens - header_tokens)
-    sections = _split_memory_sections(body)
-    # Skip splitting only when the body measurably fits one chunk; without a
-    # tokenizer the character fallback below does its own measuring, so an
-    # oversized single section still splits.
-    if len(sections) <= 1 and splitter is not None and splitter.count_tokens(body) <= content_budget:
-        return [text], False
-
-    if splitter is not None:
+    body_splitter = _memory_splitter(content_budget)
+    if body_splitter is not None:
         try:
-            body_splitter = _memory_splitter(content_budget)
-            chunks = _pack_memory_sections(
-                sections,
-                body_splitter.count_tokens,
-                content_budget,
-                body_splitter.split_text,
-            )
-            chunks = [c for c in chunks if c.strip()]
+            chunks = [c for c in body_splitter.split_text(body) if c]
             if header:
                 chunks = [header + c for c in chunks]
             return chunks, len(chunks) > 1
         except Exception:
             pass  # fall through to the character-based estimate
 
-    # Character-based fallback: ~4 chars per token, same section packing.
-    # The packing budget is the token budget with a ~4 chars/token measure;
-    # the oversized slice width is the same budget expressed in characters.
-    chunks = _pack_memory_sections(
-        sections,
-        lambda section: len(section) // 4,
-        content_budget,
-        lambda section: [section[i : i + content_budget * 4] for i in range(0, len(section), content_budget * 4)],
-    )
-    chunks = [c for c in chunks if c.strip()]
+    # Character-based fallback: ~4 chars per token.
+    budget_chars = content_budget * 4
+    chunks = [body[i : i + budget_chars] for i in range(0, len(body), budget_chars)]
+    chunks = [c for c in chunks if c]
     if header:
         chunks = [header + c for c in chunks]
     return chunks, len(chunks) > 1
@@ -1789,24 +1509,6 @@ def _format_retrieval_result(
     Returns a plain string instead in the degenerate case where no result
     carried any textual content (the historical behaviour).
     """
-    # -- Score-kind labels --
-    # ``scores[i]`` is the reranker relevance when a rerank ran, else the
-    # retrieval score — a true cosine on dense-only lanes, but RRF
-    # rank-fusion arithmetic (Σ 1/(rank+2) over the dense+BM25 lanes) on
-    # hybrid ones.  Label every result so consumers never read a rank
-    # score as a similarity.
-    kinds: list[str] = []
-    for doc in retrieved_docs:
-        if isinstance(doc, dict):
-            if "_reranker_score" in doc:
-                kinds.append("reranker")
-            elif doc.get("_score_kind") == "rrf":
-                kinds.append("rrf")
-            else:
-                kinds.append("cosine")
-        else:
-            kinds.append("cosine")
-
     # -- Format context for the LLM --
     context_parts: list[str] = []
     for i, doc in enumerate(postprocessed):
@@ -1830,35 +1532,22 @@ def _format_retrieval_result(
             text = str(doc)
 
         if text:
-            context_parts.append(f"[Result {i + 1}] ({kinds[i]} score: {scores[i]:.4f})\n{text}")
+            context_parts.append(f"[Result {i + 1}] (score: {scores[i]:.4f})\n{text}")
 
     if not context_parts:
         return "No textual content found in results."
 
     context = "\n\n".join(context_parts)
-    if "rrf" in kinds:
-        context = (
-            "(rrf scores are reciprocal-rank-fusion values over the dense + BM25 "
-            "lanes — rank-based, not similarity; trust the order, not the magnitude)\n\n" + context
-        )
 
     # -- Also include raw results as JSON for clients that want structured data --
     raw_results: list[dict[str, Any]] = []
     for i, doc in enumerate(retrieved_docs):
-        entry: dict[str, Any] = {"score": scores[i], "score_kind": kinds[i]}
+        entry: dict[str, Any] = {"score": scores[i]}
         if isinstance(doc, str):
             entry["text"] = doc
         elif isinstance(doc, dict):
-            # True embedder cosine only when the retrieval lane carried one;
-            # under hybrid RRF the pre-rerank score is rank arithmetic, so it
-            # travels as ``retrieval_score`` instead of posing as a cosine,
-            # and ``embedding_score`` is null rather than aliased to it.
-            entry["embedding_score"] = doc.pop("_embedding_score", None)
-            retrieval_score = doc.pop("_retrieval_score", None)
-            if retrieval_score is not None:
-                entry["retrieval_score"] = retrieval_score
+            entry["embedding_score"] = doc.pop("_embedding_score", entry["score"])
             entry["reranker_score"] = doc.pop("_reranker_score", None)
-            doc.pop("_score_kind", None)
             # Surface tier-2 preprocessed_* media (PVC files) as the
             # primary image/video/audio keys so the LLM cites a
             # user-viewable version, not the tier-3 data URL stored
@@ -2078,7 +1767,6 @@ def _resolve_federated_targets(
     dm: "DatasetManager",
     datasets: "list[str] | str",
     is_unlocked: Any = None,
-    allowed: Any = None,
 ) -> "tuple[list[str], list[dict[str, str]], list[dict[str, str]]]":
     """MCP adapter over :func:`multimodal_rag.rag_system.resolve_federated_targets`.
 
@@ -2086,25 +1774,9 @@ def _resolve_federated_targets(
     to every dataset readable WITHOUT a password), with the module's
     per-client unlock cache as the unlock predicate and a malformed
     *datasets* argument surfaced as a ``ToolError``.
-
-    ``allowed`` (D15): when omitted, derived from the request's registry-key
-    identity — a client identity's ACL restricts the fan-out exactly like a
-    password lock (skipped with a note, never a hard failure).
     """
-    if allowed is None:
-        ident = _clients.current_identity()
-        if ident is not None and not ident.is_admin:
-            allowed = lambda name: _clients.dataset_allowed(ident, name)
     try:
-        # _is_unlocked returns the cached password (truthy = unlocked); the
-        # adapter contract wants a bool predicate, so normalize explicitly.
-        unlock_fn = is_unlocked if is_unlocked is not None else _is_unlocked
-        return resolve_federated_targets(
-            dm,
-            datasets,
-            lambda name: bool(unlock_fn(name)),
-            allowed=allowed,
-        )
+        return resolve_federated_targets(dm, datasets, is_unlocked if is_unlocked is not None else _is_unlocked)
     except (TypeError, ValueError) as exc:
         raise ToolError(str(exc))
 
@@ -2225,9 +1897,8 @@ def _merge_federated_sections(
 
     # The context is grouped per dataset (stable, readable); the structured
     # results array is the ranking — score-ordered across datasets (score is
-    # the reranker score when the merged rerank ran, else the retrieval
-    # score: cosine on dense-only lanes, RRF fusion on hybrid ones).  Stable
-    # sort: ties keep the dataset order.
+    # the reranker score when the merged rerank ran, else the embedding
+    # score).  Stable sort: ties keep the dataset order.
     merged_results.sort(key=lambda r: float(r.get("score", 0.0)), reverse=True)
 
     if not formatted:
@@ -2350,20 +2021,20 @@ async def _afederated_search(
         *[_post_one(name) for name in names],
         return_exceptions=True,
     )
-    for name, pp_outcome in zip(names, pp_outcomes):
+    for name, outcome in zip(names, pp_outcomes):
         group = groups[name]
-        if isinstance(pp_outcome, BaseException):
+        if isinstance(outcome, BaseException):
             errors.append(
                 {
                     "dataset": name,
-                    "error": f"post-processing failed: {type(pp_outcome).__name__}: {pp_outcome}",
+                    "error": f"post-processing failed: {type(outcome).__name__}: {outcome}",
                 }
             )
-            pp_outcome = group["docs"]  # best effort: surface the raw docs
+            outcome = group["docs"]  # best effort: surface the raw docs
         payload = _format_retrieval_result(
             name,
             group["docs"],
-            pp_outcome,
+            outcome,
             group["scores"],
             media_base_url,
         )
@@ -2404,40 +2075,12 @@ try:
     _mcp_transport_security = TransportSecuritySettings(enable_dns_rebinding_protection=False)
 
     @mcp.tool()
-    async def list_datasets(
-        cursor: str | None = None,
-        limit: int | None = None,
-    ) -> str:
-        """List all available datasets with their metadata.
-
-        Optional cursor pagination (additive): pass ``limit`` for a page
-        size and feed the returned ``next_cursor`` back as ``cursor`` to
-        walk long listings.  Without them, all datasets are listed.
-        """
+    async def list_datasets() -> str:
+        """List all available datasets with their metadata."""
 
         def _impl() -> str:
-            dm = get_manager()
-            next_cursor = None
-            if cursor is None and limit is None:
-                datasets = dm.list_datasets()
-            else:
-                if limit is not None and limit < 1:
-                    raise ToolError("limit must be >= 1.")
-                try:
-                    page = dm.list_datasets(cursor=cursor, limit=limit)
-                except ValueError as exc:
-                    raise ToolError(str(exc))
-                datasets = page["datasets"]
-                next_cursor = page["next_cursor"]
-            # D15: a registry-key identity only sees its ACL'd datasets.
-            hidden = 0
-            if _clients.registry_configured():
-                total = len(datasets)
-                datasets = [d for d in datasets if _identity_dataset_allowed(str(d.get("name", "")))]
-                hidden = total - len(datasets)
+            datasets = get_manager().list_datasets()
             if not datasets:
-                if hidden:
-                    return "No datasets found (all listing entries hidden by API-key dataset ACLs)."
                 return "No datasets found."
             lines = ["Available datasets:"]
             for ds in datasets:
@@ -2453,12 +2096,6 @@ try:
                     f"  • {ds['name']}{caption}{lock}{unlocked} — {ds.get('document_count', 0)} documents"
                     f"{' — ' + desc if desc else ''}"
                 )
-            if cursor is not None or limit is not None:
-                lines.append("")
-                lines.append(f"next_cursor: {next_cursor}" if next_cursor else "next_cursor: none — end of listing.")
-            if hidden:
-                lines.append("")
-                lines.append(f"note: {hidden} dataset(s) hidden by API-key dataset ACLs (D15).")
             return "\n".join(lines)
 
         return await _offload(_impl)
@@ -2490,7 +2127,6 @@ try:
                 raise ToolError("TTL must be between 60 seconds and 86400 seconds (24 hours).")
             cid = _unlock_client_id()
             _mcp_pw_check_throttle(cid)
-            _require_dataset_acl(dataset_name)
             dm = get_manager()
             try:
                 dm.get_dataset(dataset_name)
@@ -2589,7 +2225,6 @@ try:
         # Offloaded so it never blocks the MCP event loop.
         def _setup() -> tuple:
             dm = get_manager()
-            _require_dataset_acl(dataset_name)
             try:
                 dm.get_dataset(dataset_name)
             except FileNotFoundError:
@@ -2806,14 +2441,10 @@ try:
 
         The stored text is split into documents of at most ``MEMORY_MAX_TOKENS``
         tokens each (default 8192), mirroring dataset-side text splitting.
-        Splitting is context-aware: the body is packed from whole sections at
-        the session-history formats' own heading boundaries (``### User`` /
-        ``### Assistant`` / ``### Tool`` and ``## Transcript``), so a chunk
-        never breaks a section mid-body unless that one section alone exceeds
-        the budget.  The header (session/provenance block) is prepended to
-        **every** chunk, and the payload records ``chunk_index`` /
-        ``chunk_total`` / ``memory_chunks`` / ``memory_truncated`` so split
-        memories are identifiable and each chunk carries the session id.
+        The header (session/provenance block) is prepended to **every** chunk,
+        and the payload records ``chunk_index`` / ``chunk_total`` /
+        ``memory_chunks`` / ``memory_truncated`` so split memories are
+        identifiable and each chunk carries the session id.
 
         Parameters
         ----------
@@ -2861,7 +2492,6 @@ try:
         def _impl() -> str:
             ds_name = _resolve_memory_dataset(dataset_name)
             pw = _resolve_memory_password(password)
-            _require_dataset_acl(ds_name)
 
             # Auto-tag the opencode session ID if one is available (from a
             # request header, env var, or the caller's metadata).  An explicit
@@ -3008,7 +2638,6 @@ try:
             pw = _resolve_memory_password(password)
 
             dm = get_manager()
-            _require_dataset_acl(ds_name)
             try:
                 dm.get_dataset(ds_name)
             except FileNotFoundError:
@@ -3072,12 +2701,10 @@ try:
         Returns ``(dm, ds_name)`` after verifying the dataset exists and the
         caller may access it — the same header-based identity resolution the
         other memory tools use, so memory headers can never unlock another
-        dataset.  D15: the resolved dataset is also ACL-checked against the
-        caller's registry-key identity.
+        dataset.
         """
         ds_name = _resolve_memory_dataset(dataset_name)
         pw = _resolve_memory_password(password)
-        _require_dataset_acl(ds_name)
         dm = get_manager()
         try:
             dm.get_dataset(ds_name)
@@ -3321,7 +2948,6 @@ try:
 
         def _impl() -> str:
             dm = get_manager()
-            _require_dataset_acl(dataset_name)
             try:
                 dm.get_dataset(dataset_name)
             except FileNotFoundError:
@@ -3454,7 +3080,6 @@ try:
 
         def _impl() -> str:
             dm = get_manager()
-            _require_dataset_acl(dataset_name)
             try:
                 dm.get_dataset(dataset_name)
             except FileNotFoundError:
@@ -3462,349 +3087,6 @@ try:
             _check_unlocked_or_password(dm, dataset_name, password)
             meta = dm.get_dataset(dataset_name)
             return json.dumps(meta, indent=2, default=str)
-
-        return await _offload(_impl)
-
-    # ------------------------------------------------------------------
-    # Document-management tools (Wave-5 F2 — previously REST-only)
-    # ------------------------------------------------------------------
-    # Thin wrappers over the SAME DatasetManager calls the REST endpoints
-    # use (add_files_batch / add_urls_batch / add_documents / delete_*), with
-    # the same guards: dataset existence (404 parity), the password gate via
-    # _check_unlocked_or_password, the D15 dataset ACL, and the same events
-    # (upload history) — one source of truth, no re-implementation.
-
-    def _mcp_ingest_local_path(raw: str) -> str:
-        """Validate one local ingest path against the media-path allowlist.
-
-        The MCP media tools read files only inside
-        ``MEDIA_ALLOW_PATH_PREFIXES`` (default ``DATA_PATH/datasets`` +
-        ``DATA_PATH/staging``); ingestion gets the identical policy so an MCP
-        caller cannot ingest (and later search back) arbitrary server files.
-        ``*`` (dev/test) allows any path.  Returns the resolved path.
-        """
-        from multimodal_rag.utils.media_paths import _media_path_allowed
-
-        cleaned = (raw or "").strip().removeprefix("file://")
-        if not cleaned:
-            raise ToolError("Empty path.")
-        resolved = os.path.realpath(cleaned)
-        if not _media_path_allowed(resolved):
-            prefixes = os.environ.get("MEDIA_ALLOW_PATH_PREFIXES") or (
-                os.path.join(os.environ.get("DATA_PATH", "/data"), "datasets")
-                + os.pathsep
-                + os.path.join(os.environ.get("DATA_PATH", "/data"), "staging")
-            )
-            raise ToolError(
-                f"Local path '{cleaned}' is outside the allowed ingest prefixes (MEDIA_ALLOW_PATH_PREFIXES={prefixes})."
-            )
-        if not os.path.isfile(resolved):
-            raise ToolError(f"Local path '{cleaned}' does not exist (or is not a file).")
-        return resolved
-
-    def _mcp_add_file(dm: "DatasetManager", dataset_name: str, path: str) -> dict[str, Any]:
-        """``dm.add_file`` with the REST twins' error mapping (ToolError).
-
-        FileNotFoundError → not-found (the REST 404), MediaRefError/ValueError
-        → 400-class message, anything else → a generic ingest failure. The
-        MCP layer surfaces ToolError as the tool's error result.
-        """
-        try:
-            return dm.add_file(dataset_name, path)
-        except FileNotFoundError as exc:
-            raise ToolError(f"Dataset '{dataset_name}' not found: {exc}")
-        except MediaRefError as exc:
-            raise ToolError(str(exc))
-        except ValueError as exc:
-            raise ToolError(str(exc))
-        except Exception as exc:
-            raise ToolError(f"Failed to ingest '{os.path.basename(path)}': {exc}")
-
-    @mcp.tool()
-    async def dataset_add_documents(
-        dataset_name: str,
-        paths: list[str] | None = None,
-        texts: list[str] | None = None,
-        password: str | None = None,
-    ) -> str:
-        """Add documents to a dataset: local file paths, http(s)/s3 URLs, or raw text.
-
-        The MCP twin of the REST ingest endpoints — files are processed by
-        the same pipeline (chunking, dedup, twins) and URLs go through the
-        same download policy as ``POST /api/datasets/{name}/batch-urls``.
-
-        Parameters
-        ----------
-        dataset_name:
-            Name of the target dataset (must already exist).
-        paths:
-            Local file paths or http(s):// / s3:// URLs.  Local paths must be
-            inside ``MEDIA_ALLOW_PATH_PREFIXES`` (default
-            ``DATA_PATH/datasets`` + ``DATA_PATH/staging`` — e.g. a
-            SQL-export staged to ``/data/staging``).  S3 prefix URLs are
-            expanded per object, exactly like the REST batch-urls endpoint.
-        texts:
-            Raw documents (plain strings) — the ``POST /documents`` twin.
-        password:
-            Optional if the dataset was previously unlocked with
-            ``unlock_dataset``; required otherwise (implicit unlock on
-            success).
-
-        Returns the REST twins' result shape: the batch result
-        ``{"status", "file_count", "files": [{file, chunks, …}]}`` for
-        paths/URLs and/or ``{"status", "stored_ids", "count"}`` for texts.
-        """
-
-        def _impl() -> str:
-            dm = get_manager()
-            _require_dataset_acl(dataset_name)
-            try:
-                dm.get_dataset(dataset_name)
-            except FileNotFoundError:
-                raise ToolError(f"Dataset '{dataset_name}' not found.")
-            _check_unlocked_or_password(dm, dataset_name, password)
-
-            clean_paths = [str(p).strip() for p in (paths or []) if str(p).strip()]
-            clean_texts = [t for t in (texts or []) if isinstance(t, str) and t.strip()]
-            if not clean_paths and not clean_texts:
-                raise ToolError("Provide at least one of 'paths' (file paths/URLs) or 'texts'.")
-
-            from multimodal_rag.rag_system import _ingest_warnings
-
-            result: dict[str, Any] = {"dataset": dataset_name}
-            warnings: list[str] = []
-            token = _ingest_warnings.set(warnings)
-            try:
-                if clean_paths:
-                    urls = [p for p in clean_paths if p.startswith(("http://", "https://", "s3://"))]
-                    locals_ = [p for p in clean_paths if not p.startswith(("http://", "https://", "s3://"))]
-                    if locals_:
-                        validated = [_mcp_ingest_local_path(p) for p in locals_]
-                        entries = [(p, os.path.basename(p)) for p in validated]
-                        batch = dm.add_files_batch(dataset_name, entries)
-                        _record_upload_history(dataset_name, batch.get("files") or [], "files")
-                        result["files"] = batch
-                    if urls:
-                        batch = dm.add_urls_batch(dataset_name, urls)
-                        _record_upload_history(dataset_name, batch.get("files") or [], "urls")
-                        if "files" in result:
-                            merged = dict(result["files"])
-                            merged["file_count"] = result["files"].get("file_count", 0) + batch.get("file_count", 0)
-                            merged["files"] = (result["files"].get("files") or []) + (batch.get("files") or [])
-                            result["files"] = merged
-                        else:
-                            result["files"] = batch
-                if clean_texts:
-                    ids = dm.add_documents(dataset_name, clean_texts)
-                    result["documents"] = {"status": "ok", "stored_ids": ids, "count": len(ids)}
-            except MediaRefError as exc:
-                raise ToolError(str(exc))
-            except FileNotFoundError as exc:
-                raise ToolError(f"Dataset '{dataset_name}' not found: {exc}")
-            except ValueError as exc:
-                raise ToolError(str(exc))
-            finally:
-                _ingest_warnings.reset(token)
-
-            result["status"] = "ok"
-            if warnings:
-                result["warnings"] = warnings
-            return json.dumps(result, indent=2, default=str)
-
-        return await _offload(_impl)
-
-    @mcp.tool()
-    async def dataset_delete_documents(
-        dataset_name: str,
-        doc_ids: list[str] | None = None,
-        filter: dict[str, Any] | None = None,
-        limit: int = 10000,
-        password: str | None = None,
-    ) -> str:
-        """Delete documents from a dataset by point ID(s) or by source-prefix filter.
-
-        The MCP twin of ``DELETE /api/datasets/{name}/documents/{doc_id}``,
-        extended with batch IDs and a source-prefix filter (the S3-sync prune
-        semantic).  Exactly one of *doc_ids* / *filter* must be given.
-
-        Parameters
-        ----------
-        dataset_name:
-            Name of the dataset.
-        doc_ids:
-            Non-empty list of Qdrant point IDs (as reported by
-            ``dataset_add_documents`` / ``search_dataset`` results).
-        filter:
-            ``{"source_prefix": "s3://bucket/prefix/"}`` — deletes stored
-            documents whose ``metadata.source`` starts with the prefix.
-        limit:
-            Safety cap on filter-deletes (points deleted per call).
-        password:
-            Optional if the dataset was previously unlocked with
-            ``unlock_dataset``; required otherwise.
-
-        Returns ``{"status": "ok", "deleted": [ids…], "count": N}`` — the
-        REST twin's ``{"status", "deleted"}`` shape extended to the batch.
-        """
-
-        def _impl() -> str:
-            dm = get_manager()
-            _require_dataset_acl(dataset_name)
-            try:
-                dm.get_dataset(dataset_name)
-            except FileNotFoundError:
-                raise ToolError(f"Dataset '{dataset_name}' not found.")
-            _check_unlocked_or_password(dm, dataset_name, password)
-
-            clean_ids = [str(d).strip() for d in (doc_ids or []) if str(d).strip()]
-            if bool(clean_ids) == bool(filter):
-                raise ToolError("Provide exactly one of 'doc_ids' (list) or 'filter' (object).")
-
-            deleted: list[str] = []
-            truncated = False
-            if clean_ids:
-                count = dm.delete_documents(dataset_name, clean_ids)
-                deleted = clean_ids[:count]
-            else:
-                if (
-                    not isinstance(filter, dict)
-                    or set(filter) - {"source_prefix"}
-                    or not str(filter.get("source_prefix") or "").strip()
-                ):
-                    raise ToolError('filter must be {"source_prefix": "<prefix>"} (non-empty string).')
-                from qdrant_client.models import FieldCondition, Filter, MatchPrefix
-
-                prefix = str(filter["source_prefix"]).strip()
-                lim = _clamp_tool_limit(limit, "limit", maximum=50000)
-                scroll_filter = Filter(should=[FieldCondition(key="metadata.source", match=MatchPrefix(prefix=prefix))])
-                targets: list[str] = []
-                for doc_id, payload in dm.scroll_documents(
-                    dataset_name, scroll_filter, limit=lim, payload_keys=["metadata"]
-                ):
-                    src = str((payload.get("metadata") or {}).get("source") or "")
-                    if src.startswith(prefix):
-                        targets.append(str(doc_id))
-                truncated = len(targets) >= lim
-                if targets:
-                    dm.delete_documents(dataset_name, targets)
-                deleted = targets
-
-            return json.dumps(
-                {
-                    "status": "ok",
-                    "dataset": dataset_name,
-                    "deleted": deleted,
-                    "count": len(deleted),
-                    **({"truncated": truncated} if filter else {}),
-                },
-                indent=2,
-                default=str,
-            )
-
-        return await _offload(_impl)
-
-    @mcp.tool()
-    async def dataset_replace_document(
-        dataset_name: str,
-        doc_id: str,
-        path: str,
-        password: str | None = None,
-    ) -> str:
-        """Replace one document in a dataset: ingest *path*, then delete the old point.
-
-        Composes the REST twins (``POST …/files`` + ``DELETE …/documents/{id}``)
-        into one atomic-shaped call.  The NEW content is ingested FIRST — if
-        the ingest fails the old document is untouched (no data loss); if the
-        final delete fails both versions remain and the response says
-        ``"status": "partial"`` with the error.
-
-        Parameters
-        ----------
-        dataset_name:
-            Name of the dataset.
-        doc_id:
-            Qdrant point ID of the document to replace (must exist).
-        path:
-            Local file path (inside ``MEDIA_ALLOW_PATH_PREFIXES``) or an
-            http(s):// / s3:// URL — same rules as ``dataset_add_documents``.
-        password:
-            Optional if the dataset was previously unlocked with
-            ``unlock_dataset``; required otherwise.
-
-        Returns ``{"status", "dataset", "replaced", "added": {type, chunks,
-        stored_ids}, "deleted"}``.
-        """
-
-        def _impl() -> str:
-            dm = get_manager()
-            _require_dataset_acl(dataset_name)
-            try:
-                dm.get_dataset(dataset_name)
-            except FileNotFoundError:
-                raise ToolError(f"Dataset '{dataset_name}' not found.")
-            _check_unlocked_or_password(dm, dataset_name, password)
-
-            cleaned = (path or "").strip().removeprefix("file://")
-            if not cleaned:
-                raise ToolError("Provide the replacement 'path' (file path or URL).")
-
-            # The document must exist — a replace against a stale ID must not
-            # silently degrade into a plain add.
-            rag = dm._get_rag(dataset_name)
-            vs = rag.vector_store
-            if vs is None or isinstance(vs, dict):
-                raise ToolError(f"Dataset '{dataset_name}' has no vector store.")
-            try:
-                found = vs._client.retrieve(  # type: ignore[attr-defined]
-                    collection_name=vs.collection_name,  # type: ignore[attr-defined]
-                    ids=[str(doc_id)],
-                    with_payload=False,
-                    with_vectors=False,
-                )
-            except Exception as exc:
-                raise ToolError(f"Failed to look up document '{doc_id}': {exc}")
-            if not found:
-                raise ToolError(f"Document '{doc_id}' not found in dataset '{dataset_name}'.")
-
-            if cleaned.startswith(("http://", "https://", "s3://")):
-                source = cleaned
-                added = _mcp_add_file(dm, dataset_name, cleaned)
-            else:
-                source = _mcp_ingest_local_path(cleaned)
-                added = _mcp_add_file(dm, dataset_name, source)
-            _record_upload_history(
-                dataset_name,
-                [{"file": os.path.basename(str(source)), "chunks": added.get("chunks", 0)}],
-                "files",
-            )
-
-            try:
-                dm.delete_document(dataset_name, str(doc_id))
-            except Exception as exc:
-                return json.dumps(
-                    {
-                        "status": "partial",
-                        "dataset": dataset_name,
-                        "replaced": str(doc_id),
-                        "added": added,
-                        "deleted": None,
-                        "error": (f"New document stored but the old point delete failed: {exc}"),
-                    },
-                    indent=2,
-                    default=str,
-                )
-
-            return json.dumps(
-                {
-                    "status": "ok",
-                    "dataset": dataset_name,
-                    "replaced": str(doc_id),
-                    "added": added,
-                    "deleted": str(doc_id),
-                },
-                indent=2,
-                default=str,
-            )
 
         return await _offload(_impl)
 
@@ -4140,15 +3422,6 @@ def main() -> None:
 
     setup_logger(level=args.log_level)
 
-    # Live autopsy hook: `kill -USR1 <pid>` dumps every thread's stack to the
-    # container log — the definitive way to see where a hung request is
-    # actually parked (pool exhaustion, blocked model call, deadlocked lock).
-    import faulthandler
-    import signal
-
-    faulthandler.register(signal.SIGUSR1)
-    logger.info("Stack-dump hook installed: kill -USR1 <pid> dumps all thread stacks")
-
     # Media URLs are secured with an HMAC token that requires a shared secret.
     # Refuse to start without it rather than falling back to leaking the
     # dataset password inside ?password= URLs.
@@ -4163,21 +3436,17 @@ def main() -> None:
     import uvicorn
 
     if args.transport == "stdio":
-        # stdio never needed HTTP auth (same-process local client).
         logger.info("Starting MCP stdio server")
         _start_config_watcher()
         mcp.run(transport="stdio")
     elif args.transport == "sse":
-        mcp_auth_warn_if_open()
         logger.info("Starting MCP SSE server on %s:%s", args.host, args.port)
         app = mcp.sse_app(transport_security=_mcp_transport_security)
         app.add_middleware(_MemoryHeaderMiddleware)
-        app.add_middleware(_RagClientAuthMiddleware, env_names=AUTH_ENV_NAMES, protected=lambda p: p.startswith("/mcp"))
         _start_config_watcher()
         _start_model_health_thread()
         uvicorn.run(_with_mcp_health(app), host=args.host, port=args.port)
     elif args.transport == "streamable-http":
-        mcp_auth_warn_if_open()
         logger.info("Starting MCP streamable-http server on %s:%s", args.host, args.port)
         # Stateless + JSON-response mode: each HTTP request is self-contained
         # (no in-memory session tracking), so any pod in a multi-replica
@@ -4192,7 +3461,6 @@ def main() -> None:
             transport_security=_mcp_transport_security,
         )
         app.add_middleware(_MemoryHeaderMiddleware)
-        app.add_middleware(_RagClientAuthMiddleware, env_names=AUTH_ENV_NAMES, protected=lambda p: p.startswith("/mcp"))
         _start_config_watcher()
         _start_model_health_thread()
         uvicorn.run(_with_mcp_health(app), host=args.host, port=args.port)

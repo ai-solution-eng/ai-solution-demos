@@ -177,30 +177,32 @@ class TableProcessor:
                     }
                 )
         else:
-            # Character-budget row grouping.  The budget is checked against
-            # the text ACTUALLY emitted (rows serialised exactly the way
-            # _make_doc serialises them).  An earlier version measured
-            # ``r.get("text")`` on the raw row dicts — always empty for a
-            # normal CSV — so the flush condition never fired and an entire
-            # CSV collapsed into ONE document.
+            # Character-budget row grouping
             current_row_dicts: list[dict[str, Any]] = []
+            current_size = 0
 
             for i, row in enumerate(rows):
                 row_text = _rows_to_json_text(rows, i)
+                row_size = len(row_text) + 1
 
                 if not current_row_dicts:
                     current_row_dicts.append(row)
-                elif self._exceeds_budget(self._rows_text(current_row_dicts) + "\n\n" + row_text):
+                    current_size = row_size
+                elif self._exceeds_budget("\n".join(r.get("text", "") for r in current_row_dicts) + "\n" + row_text):
                     docs.append(self._make_doc(current_row_dicts, source))
                     # Overlap: carry last N rows
                     if self.chunk_overlap > 0 and current_row_dicts:
                         overlap_count = min(self.chunk_overlap, len(current_row_dicts))
                         current_row_dicts = current_row_dicts[-overlap_count:]
+                        current_size = self._json_rows_size(current_row_dicts)
                     else:
                         current_row_dicts = []
+                        current_size = 0
                     current_row_dicts.append(row)
+                    current_size += row_size
                 else:
                     current_row_dicts.append(row)
+                    current_size += row_size
 
             if current_row_dicts:
                 docs.append(self._make_doc(current_row_dicts, source))
@@ -209,13 +211,13 @@ class TableProcessor:
         return docs
 
     @staticmethod
-    def _rows_text(rows: list[dict[str, Any]]) -> str:
-        """Serialise row dicts exactly the way documents are emitted."""
-        return "\n\n".join(json.dumps(r, ensure_ascii=False, default=str) for r in rows)
+    def _json_rows_size(rows: list[dict[str, Any]]) -> int:
+        return sum(len(json.dumps(r, ensure_ascii=False, default=str)) + 1 for r in rows)
 
     @staticmethod
     def _make_doc(rows: list[dict[str, Any]], source: str) -> dict[str, Any]:
-        return {"text": TableProcessor._rows_text(rows), "source": source}
+        text = "\n\n".join(json.dumps(r, ensure_ascii=False, default=str) for r in rows)
+        return {"text": text, "source": source}
 
     @staticmethod
     def supported_extensions() -> frozenset[str]:

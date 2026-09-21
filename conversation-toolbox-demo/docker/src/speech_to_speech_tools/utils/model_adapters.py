@@ -9,6 +9,7 @@ from math import ceil
 from typing import Any, overload
 
 import httpx
+
 from openai.types.create_embedding_response import CreateEmbeddingResponse
 
 from .general_tools import list_chunker, sync_wrapper_safe
@@ -419,37 +420,27 @@ class InputConversion:
         return frames
 
     async def _fetch_video_frames(self, url: str, num_frames: int | None = None) -> list[tuple[str, str]]:
-        """Download video, extract frames, return list of (base64_data, mime_type).
-
-        Blocking work (local file reads, PyAV/ffmpeg decoding, PIL resizing,
-        base64 encoding) is offloaded to the default thread pool so it never
-        stalls the event loop shared by concurrent requests.
-        """
+        """Download video, extract frames, return list of (base64_data, mime_type)."""
         if url.startswith(("http://", "https://")):
             response = await self.emb.http_async_client.get(url, follow_redirects=True)
             response.raise_for_status()
             video_bytes = response.content
         else:
             path = url.removeprefix("file://")
-
-            def _read_video() -> bytes:
-                with open(path, "rb") as f:
-                    return f.read()
-
-            video_bytes = await asyncio.to_thread(_read_video)
+            with open(path, "rb") as f:
+                video_bytes = f.read()
 
         max_px = self.emb.mm_processor_kwargs.get("max_pixels", 0) if hasattr(self.emb, "mm_processor_kwargs") else 0
         nf = num_frames if num_frames is not None else self.max_video_frames
-        # CPU-bound: PyAV decode, or ffprobe+ffmpeg subprocesses (30s/120s
-        # timeouts), plus PIL resize — must run off the event loop.
-        frames = await asyncio.to_thread(self._extract_video_frames, video_bytes, nf, max_px)
+        frames = self._extract_video_frames(video_bytes, nf, max_px)
         if not frames:
             return []
 
-        def _encode() -> list[tuple[str, str]]:
-            return [(base64.b64encode(fb).decode("utf-8"), "image/jpeg") for fb in frames]
-
-        return await asyncio.to_thread(_encode)
+        results: list[tuple[str, str]] = []
+        for frame_bytes in frames:
+            b64 = base64.b64encode(frame_bytes).decode("utf-8")
+            results.append((b64, "image/jpeg"))
+        return results
 
     async def _fetch_obj_async(self, url: str) -> tuple[str, str]:
         """
@@ -457,10 +448,6 @@ class InputConversion:
 
         If ``self.max_image_size > 0`` and the fetched resource is an image,
         it is downscaled so the longer edge does not exceed that value.
-
-        Blocking work (local file reads, PIL resizing, base64 encoding of
-        potentially large blobs) is offloaded to the default thread pool so
-        it never stalls the event loop shared by concurrent requests.
         """
         if url.startswith(("http://", "https://")):
             response = await self.emb.http_async_client.get(url, follow_redirects=True)
@@ -470,21 +457,15 @@ class InputConversion:
             mime_type = content_type.split(";")[0].strip()
         else:
             url = url.removeprefix("file://")
-
-            def _read_media() -> tuple[bytes, str]:
-                # Single thread hop for the read *and* the header sniff
-                # (_detect_media_type re-opens the file).
-                with open(url, "rb") as f:
-                    data = f.read()
-                return data, _detect_media_type(url)
-
-            raw_bytes, mime_type = await asyncio.to_thread(_read_media)
+            with open(url, "rb") as f:
+                raw_bytes = f.read()
+            mime_type = _detect_media_type(url)
 
         raw_len = len(raw_bytes)
         max_px = self.emb.mm_processor_kwargs.get("max_pixels", 0) if hasattr(self.emb, "mm_processor_kwargs") else 0
         if max_px > 0 and mime_type.startswith("image/"):
             before = len(raw_bytes)
-            raw_bytes = await asyncio.to_thread(self._resize_image, raw_bytes, mime_type, max_px)
+            raw_bytes = self._resize_image(raw_bytes, mime_type, max_px)
             logger.info(
                 "embedder resize: %s mime=%s max_px=%d → %d → %d bytes",
                 url[:80],
@@ -503,9 +484,7 @@ class InputConversion:
                 raw_len,
             )
 
-        # Base64 of a potentially multi-MB blob is CPU-bound — keep it off
-        # the event loop like the reads above.
-        obj_data = await asyncio.to_thread(lambda: base64.b64encode(raw_bytes).decode("utf-8"))
+        obj_data = base64.b64encode(raw_bytes).decode("utf-8")
         return obj_data, mime_type
 
     async def _pull_data_async(self, requests: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -801,39 +780,13 @@ class InputConversion:
 
         # Parallel fetch all media
         requests = (
-            (await self._pull_data_async(new_request))
-            if self.convert_to_base64
-            # _add_raw_url does blocking file reads + PIL resize + base64
-            # encoding — never run it on the event loop.
-            else await asyncio.to_thread(self._add_raw_url, new_request)
+            (await self._pull_data_async(new_request)) if self.convert_to_base64 else self._add_raw_url(new_request)
         )
 
         if add_conversational_elements:
             return self._add_extra_inputs(requests)
 
         return requests
-
-
-# Idle early-flush for the query batchers (local _QueryBatcher and the
-# shared embed-batcher singleton, which reuses this class).  DEFAULT 0 =
-# DISABLED (the exact original always-wait-the-window behavior).
-#
-# v1 of this idea (10ms, no guard) was benchmark-convicted: with the idle
-# threshold below the aggregate inter-arrival spacing at load (~8-13ms),
-# ~25-50% of observation slices saw "no arrival" even mid-burst and the
-# flush fired stochastically, shattering batches — and on this serving
-# stack (KServe queue-proxy + shared-GPU scheduling) per-REQUEST cost
-# dominates, so the small-flush storm collapsed throughput (34->15 r/s,
-# 400+ queue-proxy sockets, canceled contexts).
-#
-# v2 adds the guard that makes it safe: the idle check may only flush when
-# the queue is stalled SMALL (len <= EMBEDDING_QUERY_IDLE_MAX_BATCH,
-# default 2).  A queue that is accumulating — any burst, however jittery —
-# never idle-flushes; the window/cap govern it.  The idle path serves
-# exactly one purpose: an isolated interactive query flushes after
-# EMBEDDING_QUERY_IDLE_WAIT_MS instead of the full window.
-_IDLE_FLUSH_WAIT_MS = max(0.0, float(os.environ.get("EMBEDDING_QUERY_IDLE_WAIT_MS", "0")))
-_IDLE_FLUSH_MAX_BATCH = max(1, int(os.environ.get("EMBEDDING_QUERY_IDLE_MAX_BATCH", "2")))
 
 
 class _QueryBatcher:
@@ -894,29 +847,9 @@ class _QueryBatcher:
         return await fut
 
     async def _timed_flush(self) -> None:
-        """Wait for the batch window; flush early only for a stalled small queue.
-
-        With EMBEDDING_QUERY_IDLE_WAIT_MS > 0: sleep in short slices; flush
-        early only when the queue is non-empty, stalled (no new arrival this
-        slice) AND small (<= EMBEDDING_QUERY_IDLE_MAX_BATCH).  A growing
-        queue — any burst — always waits for the full window / batch cap,
-        so burst batching is untouched.  0 = disabled (original behavior).
-        """
+        """Wait for the max wait window, then flush whatever has accumulated."""
         try:
-            if _IDLE_FLUSH_WAIT_MS <= 0:
-                await asyncio.sleep(self._max_wait)
-            else:
-                slice_s = _IDLE_FLUSH_WAIT_MS / 1000.0
-                waited = 0.0
-                while True:
-                    remaining = self._max_wait - waited
-                    if remaining <= 0:
-                        break
-                    size_before = len(self._queue)
-                    await asyncio.sleep(min(slice_s, remaining))
-                    waited += min(slice_s, remaining)
-                    if len(self._queue) <= size_before and 0 < len(self._queue) <= _IDLE_FLUSH_MAX_BATCH:
-                        break
+            await asyncio.sleep(self._max_wait)
         except asyncio.CancelledError:
             return
         # Pass our own task so _flush() knows not to cancel us mid-flight.
@@ -1003,57 +936,10 @@ class MultiModalEmbeddings:
         # queries from every worker/pod into one /v1/embeddings call, so
         # batch size is independent of the number of app processes.
         self._batch_url = os.environ.get("RAG_EMBED_BATCH_URL", "").rstrip("/")
-        # Per-loop httpx clients for the shared batcher.  httpx.AsyncClient
-        # binds its connection pool to one event loop, so a single client
-        # shared across loops (e.g. main loop + sync_wrapper_safe's
-        # background loop in one process) is unsafe — mirror self._batchers.
-        self._batch_clients: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, httpx.AsyncClient] = (
-            weakref.WeakKeyDictionary()
-        )
-        # Per-loop semaphores bounding concurrent multimodal embedding POSTs:
-        # aembed_documents gathers one POST per converted doc (up to
-        # chunk_size = 64 per sub-batch) and concurrent ingests multiply
-        # that — the httpx pool caps sockets, not request pressure on the
-        # endpoint.  MODEL_EMBED_MAX_CONCURRENCY (default 32, 0 disables).
-        self._embed_sems: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore] = (
-            weakref.WeakKeyDictionary()
-        )
-
-    def _embed_semaphore(self) -> asyncio.Semaphore | None:
-        """Per-loop semaphore bounding concurrent multimodal embedding POSTs.
-
-        asyncio primitives bind to their loop on first use, so — like
-        ``self._batchers`` — one semaphore per event loop, created lazily.
-        ``MODEL_EMBED_MAX_CONCURRENCY <= 0`` disables bounding entirely.
-        """
-        try:
-            max_conc = max(0, int(os.environ.get("MODEL_EMBED_MAX_CONCURRENCY", "32")))
-        except (TypeError, ValueError):
-            max_conc = 32
-        if max_conc <= 0:
-            return None
-        loop = asyncio.get_running_loop()
-        sem = self._embed_sems.get(loop)
-        if sem is None:
-            sem = asyncio.Semaphore(max_conc)
-            self._embed_sems[loop] = sem
-        return sem
+        self._batch_client: httpx.AsyncClient | None = None
 
     async def _embed_single_message_async(self, input_dict: list[dict[str, Any]]) -> list[float]:
-        """Helper to hit your endpoint for a single input_dict fragment.
-
-        Bounded by the per-loop embedding semaphore (MODEL_EMBED_MAX_CONCURRENCY,
-        default 32): aembed_documents gathers one POST per converted doc — up to
-        chunk_size (64) per sub-batch — and concurrent ingests multiply that, so
-        unbounded gathering can stampede the embedding endpoint.
-        """
-        sem = self._embed_semaphore()
-        if sem is not None:
-            async with sem:
-                return await self._embed_single_message_unbounded(input_dict)
-        return await self._embed_single_message_unbounded(input_dict)
-
-    async def _embed_single_message_unbounded(self, input_dict: list[dict[str, Any]]) -> list[float]:
+        """Helper to hit your endpoint for a single input_dict fragment."""
         response = await self.emb.async_client.post(
             "/embeddings",
             cast_to=CreateEmbeddingResponse,  # Ensure this type is imported in your script
@@ -1136,17 +1022,9 @@ class MultiModalEmbeddings:
     # -- remote (shared) query batcher -----------------------------------------
 
     def _batch_http_client(self) -> httpx.AsyncClient:
-        loop = asyncio.get_running_loop()
-        client = self._batch_clients.get(loop)
-        if client is None:
-            from .pcai_model_classes import _pool_limits_from_env
-
-            client = httpx.AsyncClient(
-                timeout=httpx.Timeout(300.0, connect=30.0),
-                limits=_pool_limits_from_env(),
-            )
-            self._batch_clients[loop] = client
-        return client
+        if self._batch_client is None:
+            self._batch_client = httpx.AsyncClient(timeout=300.0)
+        return self._batch_client
 
     async def _aembed_query_remote(self, text: str) -> list[float]:
         """Embed a single query via the shared cross-process batcher.

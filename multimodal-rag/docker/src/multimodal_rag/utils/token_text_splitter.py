@@ -104,16 +104,6 @@ class TokenTextSplitter:
             if len(current) + len(next) > chunk_size:   # old
             if splitter.count_tokens(current) + splitter.count_tokens(next) > chunk_size:  # new
 
-        Wave-4 (encode-once, work on token ids): each fragment is encoded
-        exactly once and the budget is tracked from those cached token ids;
-        the overlap carry is sliced from the previous group's tail ids and
-        decoded at the boundary instead of re-encoding the full tail
-        fragment there.  The old pattern re-encoded the previous tail at
-        every group boundary — redundant full-text encodes that scale with
-        fragment size × boundary count.  Decision arithmetic is unchanged
-        (same ``n``, same carry slicing, same ``count_tokens(carry)``
-        round-trip), so grouping output is byte-identical.
-
         Returns a list of groups (each group is a list of text fragments)
         so that callers can attach per-fragment metadata (images, sources,
         page numbers) to the merged result.
@@ -121,15 +111,9 @@ class TokenTextSplitter:
         groups: list[list[str]] = []
         current_group: list[str] = []
         current_tokens = 0
-        # Token ids of the most recently seen fragment.  Because a carry is
-        # never a group's LAST element (the boundary branch always appends a
-        # real fragment right after it), the previous group's tail fragment
-        # is exactly this one — its ids are already in hand, no re-encode.
-        last_ids: list[int] = []
 
         for text in texts:
-            ids = self._tok.encode(text).ids
-            n = len(ids)
+            n = self.count_tokens(text)
 
             if current_tokens + n > self.chunk_size and current_group:
                 groups.append(current_group)
@@ -137,9 +121,9 @@ class TokenTextSplitter:
                 current_tokens = 0
 
                 # Carry overlap from the last fragment of the previous group
-                # — sliced from the cached ids (encoded once above).
                 if self.chunk_overlap > 0 and groups:
-                    carry_ids = last_ids[-self.chunk_overlap :]
+                    prev_text = groups[-1][-1]
+                    carry_ids = self._tok.encode(prev_text).ids[-self.chunk_overlap :]
                     carry = self._tok.decode(carry_ids)
                     if carry.strip():
                         current_group.append(carry)
@@ -147,7 +131,6 @@ class TokenTextSplitter:
 
             current_group.append(text)
             current_tokens += n
-            last_ids = ids
 
         if current_group:
             groups.append(current_group)
