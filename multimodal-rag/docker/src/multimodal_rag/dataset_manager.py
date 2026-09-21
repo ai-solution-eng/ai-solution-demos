@@ -7,6 +7,7 @@ uploaded files stored on a PVC at ``/data/datasets/<name>/files/``.
 """
 
 import base64
+import bisect
 import contextlib
 import contextvars
 import hashlib
@@ -19,12 +20,12 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
-from collections.abc import Callable
-from datetime import datetime
+from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, overload
 
-import httpx
+import httpx2
 
 try:
     import fcntl  # Unix-only; k8s pods are Linux.
@@ -52,7 +53,7 @@ from multimodal_rag.input_processing import (
     XMLProcessor,
     YAMLProcessor,
 )
-from multimodal_rag.rag_system import MultimodalRAG, _record_ingest_warning
+from multimodal_rag.rag_system import MultimodalRAG, _record_ingest_warning, _store_write_guard
 from multimodal_rag.utils.general_tools import retry_call
 from multimodal_rag.utils.logging_utils import logging
 
@@ -79,15 +80,74 @@ class EmbedderMismatchError(ValueError):
     """
 
 
-# When True, get_dataset()/list_datasets() skip the per-call Qdrant count
-# sync (which writes meta.json on every read). Counts are still maintained
-# incrementally via _increment_count/_decrement_count. The scale chart sets
-# this to avoid cross-replica meta.json write races and cut Qdrant load.
-_DEFER_COUNT_SYNC = os.environ.get("RAG_DEFER_COUNT_SYNC", "false").lower() in (
+# When True (the default since Wave-4 / D12), get_dataset()/list_datasets()
+# skip the per-call Qdrant count sync (which cost N sequential round-trips on
+# the hottest endpoint and wrote meta.json on every read). Counts are still
+# maintained incrementally via _increment_count/_decrement_count, so listed
+# counts are exact for anything ingested through this process — they may lag
+# by the defer window after out-of-band changes (points added/removed directly
+# in Qdrant, or by another replica without a count increment).  The scale
+# chart already pinned this on; it is now the fleet default to cut Qdrant
+# load and cross-replica meta.json write races everywhere.
+# Escape hatch: RAG_DEFER_COUNT_SYNC=false restores live per-request counting
+# (exact counts, N sequential Qdrant round-trips per list call).
+_DEFER_COUNT_SYNC = os.environ.get("RAG_DEFER_COUNT_SYNC", "true").lower() in (
     "true",
     "1",
     "yes",
 )
+
+
+# ---------------------------------------------------------------------------
+# Additive cursor pagination (Wave-4) — opaque continuation tokens for the
+# list surfaces.  A versioned URL-safe base64 JSON blob, deliberately not a
+# bare offset/index, so a token survives ordering-representation changes.
+# ---------------------------------------------------------------------------
+
+_LIST_CURSOR_VERSION = 1
+
+
+def _encode_list_cursor(after: Any) -> str:
+    """Build the continuation token resuming *after* the given key."""
+    blob = json.dumps({"v": _LIST_CURSOR_VERSION, "o": after}).encode("utf-8")
+    return base64.urlsafe_b64encode(blob).decode("ascii")
+
+
+def _decode_list_cursor(cursor: str) -> Any:
+    """Decode a continuation token; raises ``ValueError`` on garbage."""
+    try:
+        blob = json.loads(base64.urlsafe_b64decode(cursor.encode("ascii")))
+        if not isinstance(blob, dict) or blob.get("v") != _LIST_CURSOR_VERSION or "o" not in blob:
+            raise ValueError("unsupported cursor version or shape")
+        return blob["o"]
+    except Exception as exc:
+        raise ValueError(f"Invalid cursor: {str(cursor)[:64]!r}") from exc
+
+
+def _dataset_order_key(name: str) -> tuple[str, str]:
+    """Listing order key: alphabetical regardless of case.
+
+    The primary component is the lowercased name, so ``Zebra`` files under
+    ``apple`` instead of jumping ahead of it (a plain ASCII sort puts all
+    uppercase names first).  The raw name is the tie-break, so two datasets
+    differing only by case (``MLS`` vs ``mls``) stay adjacent in a
+    deterministic order (uppercase first) instead of inheriting the
+    directory-read order.  Names are validated ``[A-Za-z0-9._-]``, so a
+    plain ``lower()`` is an exact case fold here.
+    """
+    return (name.lower(), name)
+
+
+# Bounded parallel preprocessing fan-out for batch ingests (Wave-4): up to
+# this many files inside one ``add_files_batch`` call are preprocessed
+# concurrently (store/copy/hash/classify/extract).  Document order, batch
+# composition and results stay deterministic — workers feed an ordered
+# sequencer.  ``RAG_INGEST_CONCURRENCY=1`` restores the strictly sequential
+# pre-Wave-4 behaviour.
+try:
+    _INGEST_CONCURRENCY = max(1, int(os.environ.get("RAG_INGEST_CONCURRENCY", "4")))
+except ValueError:
+    _INGEST_CONCURRENCY = 4
 
 # Optional Redis backend for cross-pod dataset existence caching.
 # When a dataset is created on pod A, pod B's NFS client cache may not
@@ -190,6 +250,120 @@ def _cross_process_lock(lock_path: Path):
                 _fallback_locks[key] = lk
         with lk:
             yield
+
+
+# ---------------------------------------------------------------------------
+# Upload history (persisted per-file log shown on the Manage page)
+# ---------------------------------------------------------------------------
+# Each completed upload/ingestion job appends one entry per processed file so
+# the Manage page can show a table of what was uploaded and when.  The log
+# lives under DATA_PATH (the shared RWX PVC) so it survives restarts and is
+# visible across pods; a cross-process fcntl lock serializes appends.
+#
+# Wave-5 (F2): these helpers moved here from api_server so the MCP
+# document-management tools record the SAME events as their REST twins
+# (single source of truth — api_server re-imports the names, so
+# ``api_server._record_upload_history`` keeps working for callers/monkeypatches).
+
+
+def _upload_history_path() -> Path:
+    return Path(os.environ.get("DATA_PATH", "/data")) / "upload_history.json"
+
+
+def _load_upload_history() -> list[dict[str, Any]]:
+    p = _upload_history_path()
+    if not p.exists():
+        return []
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except (json.JSONDecodeError, OSError):
+        logger.debug("Unable to parse upload history — starting empty", exc_info=True)
+        return []
+
+
+def _save_upload_history(entries: list[dict[str, Any]]) -> None:
+    p = _upload_history_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    # Atomic write: temp file + os.replace() so a crash mid-write never leaves
+    # a truncated history file.
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(entries, indent=2, default=str), encoding="utf-8")
+    os.replace(tmp, p)
+
+
+def _record_upload_history(dataset_name: str, files: list[dict[str, Any]], source: str) -> None:
+    """Persist one entry per processed file (name, outcome, timestamp)."""
+    if not files:
+        return
+    now = datetime.now(UTC).isoformat(timespec="seconds")
+    with _cross_process_lock(_upload_history_path().with_suffix(".lock")):
+        entries = _load_upload_history()
+        for f in files:
+            err = f.get("error")
+            chunks = f.get("chunks") or 0
+            status = "error" if err else ("ok" if chunks > 0 else "skipped")
+            entries.append(
+                {
+                    "timestamp": now,
+                    "dataset": dataset_name,
+                    "file": f.get("file") or "unknown",
+                    "chunks": chunks,
+                    "status": status,
+                    "source": source,
+                    "error": err,
+                }
+            )
+        # Bound the file size — keep only the newest 2000 entries.
+        if len(entries) > 2000:
+            entries = entries[-2000:]
+        _save_upload_history(entries)
+
+
+# ---------------------------------------------------------------------------
+# Ingest webhook (Wave-5 F2, opt-in — RAG_WEBHOOK_URL)
+# ---------------------------------------------------------------------------
+# When RAG_WEBHOOK_URL is set, every completed ingest fires one small JSON
+# event (dataset, doc_count, status) via utils/webhook.notify_ingest —
+# timeout-capped, failures logged-not-fatal, X-RAG-Webhook-Secret header when
+# RAG_WEBHOOK_SECRET is set.  Unset (the default) = zero behaviour: no
+# request, no latency.  Bulk replays (dataset restore/import) are muted.
+
+
+def _stored_points_count(files: list[dict[str, Any]] | None) -> int:
+    """Points added by a batch ingest result (failed and dedup-skipped
+    files add 0; legacy shapes without stored_ids fall back to chunks)."""
+    total = 0
+    for f in files or []:
+        if f.get("error"):
+            continue
+        ids = f.get("stored_ids")
+        if isinstance(ids, list):
+            total += len(ids)
+        else:
+            total += f.get("chunks") or 0
+    return total
+
+
+def _notify_ingest_hook(dataset_name: str, doc_count: int, status: str = "ok") -> None:
+    """Fire the opt-in ingest webhook for *dataset_name* (never raises)."""
+    if doc_count <= 0 and status == "ok":
+        # Nothing was ingested (all files dedup-skipped / empty batch) — the
+        # receiver cares about completed ingests, not no-ops.
+        return
+    try:
+        from multimodal_rag.utils.webhook import notify_ingest
+
+        notify_ingest(dataset_name, doc_count, status)
+    except Exception:  # pragma: no cover - defensive: never fail an ingest
+        logger.debug("Ingest webhook dispatch failed", exc_info=True)
+
+
+def _webhook_muted():
+    """Context manager suppressing ingest webhooks (dataset restore replays)."""
+    from multimodal_rag.utils.webhook import muted
+
+    return muted()
 
 
 # ---------------------------------------------------------------------------
@@ -465,6 +639,7 @@ def _download_s3(s3_url: str, timeout: int = 120) -> str:
     parsed = urlparse(s3_url)
     bucket = parsed.hostname  # s3://bucket/key → hostname = bucket
     key = parsed.path.lstrip("/")
+    _check_s3_bucket(bucket)
 
     basename = Path(key).name or "download"
     suffix = Path(basename).suffix or ""
@@ -557,6 +732,7 @@ def _list_s3_prefix(s3_url: str) -> list[str]:
     parsed = urlparse(s3_url)
     bucket = parsed.hostname
     prefix = parsed.path.lstrip("/")
+    _check_s3_bucket(bucket)
 
     def _list() -> list[str]:
         s3 = _get_s3_client()
@@ -609,122 +785,37 @@ _MAX_REMOTE_DOWNLOAD_BYTES = max(0, int(os.environ.get("MAX_REMOTE_DOWNLOAD_BYTE
 # against the URL policy).
 _MAX_URL_REDIRECTS = max(1, int(os.environ.get("MAX_URL_REDIRECTS", "5")))
 
-# Optional comma-separated allowlist of hosts for http(s) ingest.  An entry
-# like ``.minio.svc.cluster.local`` matches the zone and subdomains.  Empty
-# = all hosts allowed (default, backward compatible).
-_INGEST_ALLOW_HOSTS = tuple(h.strip().lower() for h in os.environ.get("INGEST_ALLOW_HOSTS", "").split(",") if h.strip())
-
-# Private-range block (DNS + literal-IP).  On by default so remote ingest
-# cannot reach internal/loopback targets (SSRF).  Explicitly-allowlisted
-# hosts (INGEST_ALLOW_HOSTS) bypass the block — set that to keep in-cluster
-# MinIO/internal ingestions working.  ``INGEST_BLOCK_PRIVATE_HOSTS=false``
-# restores the legacy permissive behaviour.
-_INGEST_BLOCK_PRIVATE = os.environ.get("INGEST_BLOCK_PRIVATE_HOSTS", "true").lower() in ("1", "true", "yes")
+# Optional comma-separated allowlist of S3 buckets for ingest/sync.  Empty
+# = all buckets the configured credentials can access (default, backward
+# compatible).  When set, _download_s3 / _list_s3_prefix refuse any bucket
+# not on the list — on a shared MinIO this stops one tenant's ingest token
+# from reading another tenant's buckets.
+_INGEST_ALLOW_S3_BUCKETS = tuple(
+    b.strip().lower() for b in os.environ.get("INGEST_ALLOW_S3_BUCKETS", "").split(",") if b.strip()
+)
 
 
-def _host_matches_allowlist(host: str) -> bool:
-    host = host.lower()
-    for pat in _INGEST_ALLOW_HOSTS:
-        if pat.startswith("."):
-            if host == pat[1:] or host.endswith(pat):
-                return True
-        elif host == pat:
-            return True
-    return False
-
-
-def _host_is_private(host: str, allow_loopback: bool = False) -> bool:
-    """Return True if *host* is or resolves to a private/loopback/link-local address.
-
-    With ``allow_loopback=True`` (the query-time media policy) loopback
-    addresses and the literal name ``localhost`` are *not* considered
-    private: clients legitimately hand the server's own media URLs
-    (``http://localhost:8000/api/datasets/...``) back to the query tools.
-    """
-    import ipaddress
-    import socket
-
-    hostname = host.rsplit(":", 1)[0].strip("[]")
-    if hostname == "localhost":
-        return not allow_loopback
-    try:
-        ip = ipaddress.ip_address(hostname)
-    except ValueError:
-        ip = None
-    if ip is not None:
-        if ip.is_loopback and allow_loopback:
-            return False
-        return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved
-    try:
-        addrinfos = socket.getaddrinfo(hostname, None)
-    except socket.gaierror:
-        return True  # unresolved — safest to treat as suspicious when blocking is on
-    for info in addrinfos:
-        try:
-            ip = ipaddress.ip_address(info[4][0])
-        except ValueError:
-            continue
-        if ip.is_loopback and allow_loopback:
-            continue
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
-            return True
-    return False
-
-
-def _check_url_policy(url: str) -> None:
-    """Raise :class:`ValueError` if *url* violates the configured URL policy."""
-    if not url.startswith(("http://", "https://")):
+def _check_s3_bucket(bucket: str | None) -> None:
+    """Raise :class:`ValueError` when *bucket* violates INGEST_ALLOW_S3_BUCKETS."""
+    if not _INGEST_ALLOW_S3_BUCKETS:
         return
-    from urllib.parse import urlparse
-
-    host = urlparse(url).hostname or ""
-    # An explicit allowlist is authoritative: hosts not listed are rejected,
-    # and listed hosts are allowed even when they resolve privately (that is
-    # how in-cluster MinIO/internal ingestions are permitted).
-    if _INGEST_ALLOW_HOSTS:
-        if not _host_matches_allowlist(host):
-            raise ValueError(
-                f"URL host '{host}' is not allowed by INGEST_ALLOW_HOSTS"
-                + (f"={','.join(_INGEST_ALLOW_HOSTS)}" if _INGEST_ALLOW_HOSTS else "")
-            )
-        return
-    if _INGEST_BLOCK_PRIVATE and _host_is_private(host):
-        raise ValueError(f"URL host '{host}' resolves to a private/internal address (INGEST_BLOCK_PRIVATE_HOSTS=true)")
-
-
-def _check_media_url_policy(url: str) -> None:
-    """Policy for *user-supplied query-time* media URLs (search with
-    image/video/audio, ``describe_media``, ``transcribe_audio``).
-
-    Ingest-time downloads guard the server against malicious URLs; this
-    guards the same surface for query-time fetches, which previously had no
-    check at all (an internal-SSRF / exfiltration channel: a caller could
-    point the embedder/VLM/ASR at cloud metadata or in-cluster services and
-    read the response back as a description/transcript/embedding match).
-
-    Same rules as :func:`_check_url_policy` with one difference: loopback is
-    allowed by default, because clients legitimately pass the server's own
-    media URLs (``http://localhost:8000/api/datasets/...?token=...``) back
-    to these tools.  ``INGEST_ALLOW_HOSTS`` remains authoritative when set;
-    set ``INGEST_BLOCK_PRIVATE_HOSTS=false`` to disable (not recommended).
-    """
-    if not url.startswith(("http://", "https://")):
-        return
-    from urllib.parse import urlparse
-
-    host = urlparse(url).hostname or ""
-    if _INGEST_ALLOW_HOSTS:
-        if not _host_matches_allowlist(host):
-            raise ValueError(
-                f"URL host '{host}' is not allowed by INGEST_ALLOW_HOSTS"
-                + (f"={','.join(_INGEST_ALLOW_HOSTS)}" if _INGEST_ALLOW_HOSTS else "")
-            )
-        return
-    if _INGEST_BLOCK_PRIVATE and _host_is_private(host, allow_loopback=True):
+    if (bucket or "").lower() not in _INGEST_ALLOW_S3_BUCKETS:
         raise ValueError(
-            f"URL host '{host}' resolves to a private/internal address "
-            f"(INGEST_BLOCK_PRIVATE_HOSTS=true; add it to INGEST_ALLOW_HOSTS to permit)"
+            f"S3 bucket '{bucket}' is not allowed by INGEST_ALLOW_S3_BUCKETS"
+            + (f"={','.join(_INGEST_ALLOW_S3_BUCKETS)}" if _INGEST_ALLOW_S3_BUCKETS else "")
         )
+
+
+# URL-fetch policy (SSRF guards) lives in utils/url_policy.py — re-exported
+# here because mcp_server (and older callers) import these names from
+# dataset_manager.  rag_system imports the module directly (this module
+# imports rag_system, so the reverse would be circular).
+from multimodal_rag.utils.url_policy import (  # noqa: E402, F401 — re-exported
+    _check_media_url_policy,
+    _check_url_policy,
+    _host_is_private,
+    _host_matches_allowlist,
+)
 
 
 def _download_url(url: str, timeout: int = 120) -> str:
@@ -738,11 +829,13 @@ def _download_url(url: str, timeout: int = 120) -> str:
     if url.startswith("s3://"):
         return _download_s3(url, timeout=timeout)
 
+    from multimodal_rag.utils.url_policy import validate_fetch_url
+
     _check_url_policy(url)
     import tempfile
     from urllib.parse import urlparse
 
-    import httpx
+    import httpx2
 
     parsed = urlparse(url)
     basename = Path(parsed.path).name or "download"
@@ -754,19 +847,35 @@ def _download_url(url: str, timeout: int = 120) -> str:
         try:
             # Follow redirects manually so every hop is re-checked against the
             # URL policy (a public URL must not be able to redirect into an
-            # internal/private address).
+            # internal/private address), and connect each hop to the IP the
+            # policy just validated — the DNS-rebinding pin (check-time DNS =
+            # fetch-time DNS; utils/url_policy.validate_fetch_url).  A pinned
+            # hop bypasses proxy envs on purpose (a proxy would re-resolve);
+            # when a proxy is configured the pin is inactive and trust_env
+            # keeps corporate egress working (documented residual).
             from urllib.parse import urljoin
 
             current = url
-            with httpx.Client(timeout=httpx.Timeout(timeout, connect=30.0), follow_redirects=False) as client:
-                for _ in range(_MAX_URL_REDIRECTS):
-                    with client.stream("GET", current) as response:
+            for _ in range(_MAX_URL_REDIRECTS):
+                pinned = validate_fetch_url(current, allow_loopback=False)
+                with httpx2.Client(
+                    timeout=httpx2.Timeout(timeout, connect=30.0),
+                    follow_redirects=False,
+                    trust_env=not pinned.pin_active,
+                ) as client:
+                    request = client.build_request(
+                        "GET",
+                        pinned.pinned_url,
+                        headers={"Host": pinned.host_header} if pinned.host_header else None,
+                        extensions=({"sni_hostname": pinned.sni_hostname} if pinned.sni_hostname else None),
+                    )
+                    response = client.send(request, stream=True, follow_redirects=False)
+                    try:
                         if response.is_redirect:
                             location = response.headers.get("location")
                             if not location:
                                 raise ValueError(f"Redirect from {current} has no Location header")
                             current = urljoin(current, location)
-                            _check_url_policy(current)
                             continue
                         response.raise_for_status()
                         content_length = int(response.headers.get("content-length") or 0)
@@ -784,8 +893,10 @@ def _download_url(url: str, timeout: int = 120) -> str:
                                 )
                             tmp.write(chunk)
                         break
-                else:
-                    raise ValueError(f"Too many redirects downloading {url}")
+                    finally:
+                        response.close()
+            else:
+                raise ValueError(f"Too many redirects downloading {url}")
         except ValueError:
             raise
         except Exception as e:
@@ -821,7 +932,10 @@ def _check_password(password: str, stored: str) -> bool:
         salt, h = stored.split("$", 1)
         computed = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), _PBKDF2_ITERATIONS).hex()
         return secrets.compare_digest(h, computed)
-    except (ValueError, AttributeError):
+    except (ValueError, AttributeError, TypeError):
+        # Malformed stored hash / wrong argument types verify to False — the
+        # stored value comes from meta.json and a corrupted (or hand-edited)
+        # entry must fail CLOSED, never raise into the caller.
         return False
 
 
@@ -837,6 +951,116 @@ def _fix_source(chunks: list, orig_name: str, stored_path: str) -> None:
 # ---------------------------------------------------------------------------
 # PVC preprocessing helpers
 # ---------------------------------------------------------------------------
+
+
+def _mp4_boxes_broken(path: Path) -> bool:
+    """Walk the top-level MP4 atoms; True on truncation or duplicate ``moov``.
+
+    Cheap (header bytes only) but catches exactly the damage two concurrent
+    ffmpeg finalizations on one path leave behind: a second ``moov`` spliced
+    into the file and/or an ``mdat`` whose declared size overruns EOF.
+    """
+    try:
+        size = path.stat().st_size
+        seen_moov = False
+        with path.open("rb") as fh:
+            offset = 0
+            while offset + 8 <= size:
+                header = fh.read(8)
+                if len(header) < 8:
+                    return True
+                box_size = int.from_bytes(header[:4], "big")
+                box_type = header[4:8].decode("latin-1", "replace")
+                if box_size == 1:
+                    largesize = fh.read(8)
+                    if len(largesize) < 8:
+                        return True
+                    box_size = int.from_bytes(largesize, "big")
+                elif box_size == 0:
+                    box_size = size - offset
+                if box_size < 8 or offset + box_size > size:
+                    return True  # box overruns EOF → truncated file
+                if box_type == "moov":
+                    if seen_moov:
+                        return True  # two finalizations raced on this path
+                    seen_moov = True
+                offset += box_size
+                fh.seek(offset)
+            return offset != size  # stray trailing bytes
+    except OSError:
+        return True
+
+
+def _media_file_ok(path: Path) -> bool:
+    """True when *path* is a fully-formed media file ffprobe can parse.
+
+    A file truncated mid-mux — or with a spliced-together trailer from two
+    concurrent ffmpeg runs sharing one output path — often still has a
+    positive size and a parseable leading ``moov``, so a naive
+    ``size > 0`` check happily promotes unplayable output.  Validation here
+    is cheap but real: ffprobe must exit 0 with at least one stream and a
+    positive duration, and for MP4-family containers the top-level atom
+    walk must find no truncation and no duplicated ``moov``.
+    """
+    import json
+    import subprocess as sp
+
+    if not path.exists() or path.stat().st_size == 0:
+        return False
+    try:
+        probe = sp.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration:stream=index",
+                "-of",
+                "json",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if probe.returncode != 0:
+            return False
+        info = json.loads(probe.stdout or "{}")
+        streams = info.get("streams") or []
+        duration = float((info.get("format") or {}).get("duration") or 0)
+        if not streams or duration <= 0:
+            return False
+    except Exception:
+        return False
+
+    if path.suffix.lower() not in (".mp4", ".mov", ".m4a", ".m4v"):
+        return True
+
+    return not _mp4_boxes_broken(path)
+
+
+def _image_file_ok(path: Path) -> bool:
+    """True when PIL can fully decode *path* (guards torn image writes)."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    try:
+        with Image.open(BytesIO(path.read_bytes())) as img:
+            img.verify()
+        return True
+    except Exception:
+        return False
+
+
+def _unique_tmp_sibling(final: Path) -> Path:
+    """A unique hidden temp path next to *final* (same filesystem, rename-safe).
+
+    Keeps the final file's extension — ffmpeg infers the output muxer from
+    the file extension, so an extension-less ``.tmp`` name would abort the
+    transcode with "Unable to find a suitable output format".
+    """
+    return final.with_name(f".{final.stem}.{os.getpid()}.{uuid.uuid4().hex}.tmp{final.suffix}")
 
 
 def _preprocess_image_file(path: Path, max_pixels: int = _PVC_IMAGE_MAX_PIXELS) -> Path:
@@ -864,7 +1088,25 @@ def _preprocess_image_file(path: Path, max_pixels: int = _PVC_IMAGE_MAX_PIXELS) 
 
     resized = _resize_image(raw, mime, max_pixels)
     preproc = path.with_stem(path.stem + "_preprocessed")
-    preproc.write_bytes(resized)
+
+    # Idempotency: another pod may have created a valid preprocessed copy
+    # while this resize was in flight — don't clobber it.
+    if preproc.exists() and _image_file_ok(preproc):
+        return preproc
+
+    tmp = _unique_tmp_sibling(preproc)
+    try:
+        resized = _resize_image(raw, mime, max_pixels)
+        tmp.write_bytes(resized)
+        if not _image_file_ok(tmp):
+            tmp.unlink(missing_ok=True)
+            return path  # write produced a broken file — keep the original
+        tmp.replace(preproc)  # atomic on POSIX
+    except Exception:
+        with contextlib.suppress(OSError):
+            tmp.unlink(missing_ok=True)
+        logger.warning("Image preprocess write failed for %s; keeping original", path.name, exc_info=True)
+        return path
     return preproc
 
 
@@ -881,6 +1123,24 @@ def _preprocess_video_file(
     """
     import json
     import subprocess as sp
+
+    # Container/codec compatibility: the transcode always emits H.264
+    # (libx264) + AAC, and ffmpeg picks the output muxer from the file
+    # extension.  Some containers — `.webm` above all — cannot legally
+    # carry that pair, so every transcode into them is doomed before it
+    # starts: ffmpeg writes the container header, then fails on the first
+    # packet (or burns the full timeout on a large file), leaving a tiny
+    # stub that a naive size check would promote as "preprocessed".  Only
+    # transcode into containers known to accept the codec pair; everything
+    # else keeps its original (embedding decodes frames regardless of the
+    # container, so retrieval is unaffected).
+    if path.suffix.lower() not in (".mp4", ".m4v", ".mov", ".mkv"):
+        logger.info(
+            "Skipping video preprocess for %s: %s container cannot hold the libx264/aac transcode output",
+            path.name,
+            path.suffix.lower() or "(unknown)",
+        )
+        return path
 
     # Probe source dimensions and frame rate
     vw = vh = 0
@@ -936,6 +1196,13 @@ def _preprocess_video_file(
         filters.append(f"fps={max_fps}")
 
     preproc = path.with_stem(path.stem + "_preprocessed")
+
+    # Idempotency: another pod may have produced a valid preprocessed copy
+    # while this transcode was in flight — don't clobber it.
+    if preproc.exists() and _media_file_ok(preproc):
+        return preproc
+
+    tmp = _unique_tmp_sibling(preproc)
     cmd: list[str] = [
         "ffmpeg",
         "-v",
@@ -957,16 +1224,24 @@ def _preprocess_video_file(
         "-movflags",
         "+faststart",
         "-y",
-        str(preproc),
+        str(tmp),
     ]
     try:
         sp.run(cmd, capture_output=True, timeout=300)
-        if preproc.exists() and preproc.stat().st_size > 0:
-            return preproc
+        # Size > 0 is not enough: a raced or truncated mux leaves a file that
+        # parses at the head but is unplayable.  Validate before promoting.
+        if not _media_file_ok(tmp):
+            tmp.unlink(missing_ok=True)
+            logger.warning("Video preprocess produced invalid output for %s; keeping original", path.name)
+            return path
+        tmp.replace(preproc)  # atomic on POSIX
     except Exception:
-        logger.debug("Suppressed exception", exc_info=True)
+        with contextlib.suppress(OSError):
+            tmp.unlink(missing_ok=True)
+        logger.debug("Video preprocess failed for %s", path.name, exc_info=True)
+        return path
 
-    return path
+    return preproc
 
 
 def _truncate_audio_file(path: Path, max_seconds: float = 60.0) -> Path:
@@ -1005,6 +1280,12 @@ def _truncate_audio_file(path: Path, max_seconds: float = 60.0) -> Path:
         return path
 
     truncated = path.with_stem(path.stem + "_truncated")
+
+    # Idempotency: don't redo (or clobber) another pod's valid truncation.
+    if truncated.exists() and _media_file_ok(truncated):
+        return truncated
+
+    tmp = _unique_tmp_sibling(truncated)
     try:
         sp.run(
             [
@@ -1018,32 +1299,36 @@ def _truncate_audio_file(path: Path, max_seconds: float = 60.0) -> Path:
                 "-c",
                 "copy",
                 "-y",
-                str(truncated),
+                str(tmp),
             ],
             capture_output=True,
             timeout=60,
         )
-        if truncated.exists() and truncated.stat().st_size > 0:
-            return truncated
         # Stream copy may fail for some containers — re-encode as fallback
-        sp.run(
-            [
-                "ffmpeg",
-                "-v",
-                "error",
-                "-t",
-                str(max_seconds),
-                "-i",
-                str(path),
-                "-y",
-                str(truncated),
-            ],
-            capture_output=True,
-            timeout=60,
-        )
-        if truncated.exists() and truncated.stat().st_size > 0:
-            return truncated
+        if not _media_file_ok(tmp):
+            sp.run(
+                [
+                    "ffmpeg",
+                    "-v",
+                    "error",
+                    "-t",
+                    str(max_seconds),
+                    "-i",
+                    str(path),
+                    "-y",
+                    str(tmp),
+                ],
+                capture_output=True,
+                timeout=60,
+            )
+        if not _media_file_ok(tmp):
+            tmp.unlink(missing_ok=True)
+            logger.warning("Audio truncation produced invalid output for %s; keeping original", path.name)
+            return path
+        tmp.replace(truncated)  # atomic on POSIX
     except Exception:
+        with contextlib.suppress(OSError):
+            tmp.unlink(missing_ok=True)
         logger.debug("Audio truncation failed", exc_info=True)
 
     return path
@@ -1099,7 +1384,24 @@ def _split_audio_segments(
 
     stem = path.stem
     suffix = path.suffix
-    output_pattern = str(path.parent / f"{stem}_segment_%03d{suffix}")
+
+    # Idempotency: another pod may have split this file already — reuse its
+    # segments when the expected number of valid ones exists.
+    import glob
+
+    existing = sorted(Path(p) for p in glob.glob(str(path.parent / f"{stem}_segment_*{suffix}")))
+    if len(existing) == num_segments and all(_media_file_ok(s) for s in existing):
+        return existing
+
+    # The segment muxer writes deterministic ``{stem}_segment_NNN`` names, so
+    # concurrent writers would interleave exactly like the preprocessed-MP4
+    # corruption (the fix in the *_preprocessed writers).  Split into a unique
+    # temp directory, validate, then move each segment into place atomically
+    # under the files-dir lock so the resulting SET is from one writer.
+    import shutil
+
+    tmp_dir = path.parent / f".{stem}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+    output_pattern = str(tmp_dir / f"{stem}_segment_%03d{suffix}")
 
     cmd: list[str] = [
         "ffmpeg",
@@ -1117,15 +1419,28 @@ def _split_audio_segments(
         output_pattern,
     ]
     try:
-        sp.run(cmd, capture_output=True, timeout=300)
-    except Exception:
+        with _cross_process_lock(path.parent / ".preprocess.lock"):
+            tmp_dir.mkdir(parents=True, exist_ok=False)
+            try:
+                sp.run(cmd, capture_output=True, timeout=300)
+            except Exception:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+                return [path]
+
+            segments = sorted(Path(p) for p in glob.glob(str(tmp_dir / f"{stem}_segment_*{suffix}")))
+            if not segments or not all(_media_file_ok(s) for s in segments):
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+                return [path]
+
+            moved: list[Path] = []
+            for seg in segments:
+                final_seg = path.parent / seg.name
+                seg.replace(final_seg)  # atomic on POSIX
+                moved.append(final_seg)
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+    except OSError:
         return [path]
-
-    # Collect segment files in order
-    import glob
-
-    segments = sorted(Path(p) for p in glob.glob(str(path.parent / f"{stem}_segment_*{suffix}")))
-    return segments if segments else [path]
+    return moved if moved else [path]
 
 
 class DatasetManager:
@@ -1228,7 +1543,7 @@ class DatasetManager:
         if model.api_key:
             headers["Authorization"] = f"Bearer {model.api_key}"
         try:
-            with httpx.Client(verify=False, timeout=5.0) as client:
+            with httpx2.Client(verify=False, timeout=5.0) as client:
                 resp = client.get(url + "/v1/models", headers=headers)
                 resp.raise_for_status()
                 logger.info(
@@ -1389,6 +1704,10 @@ class DatasetManager:
         if password:
             meta["password_hash"] = _hash_password(password)
         self._write_meta(name, meta)
+        # A same-name recreate (delete + create, e.g. an import overwrite) on
+        # one pod must not inherit another pod's stale has_password negative
+        # — the import-overwrite gate trusts this value.
+        self._invalidate_has_password(name)
 
         # Signal dataset existence to other pods via Redis (NFS cache bypass)
         _dataset_exist_set(name)
@@ -1416,6 +1735,31 @@ class DatasetManager:
         with self._has_password_lock:
             self._has_password_cache[name] = (now, result)
         return result
+
+    def has_password_fresh(self, name: str) -> bool:
+        """Uncached protection check that tolerates NFS visibility delays.
+
+        Use for SECURITY DECISIONS, not hot paths: the import-overwrite gate
+        consulted the TTL-cached :meth:`has_password`, and on the 4-replica
+        rollout a pod that had recently cached a negative (dataset not yet
+        visible / not yet carrying a hash on this pod) skipped the gate and
+        REPLACED a password-protected dataset without demanding its password.
+        A stale negative is harmless for search throughput but fatal for an
+        authz check.
+
+        Mirrors :meth:`get_dataset`'s bridge over the NFS close-to-open gap:
+        when Redis confirms the dataset exists but ``meta.json`` isn't
+        visible (or is stale) on this pod yet, retry briefly before
+        answering.  The result is deliberately NOT written to the TTL cache.
+        """
+        meta = self._read_meta(name)
+        if not meta and _dataset_exist_check(name):
+            for _ in range(_DATASET_EXIST_RETRY_COUNT):
+                time.sleep(_DATASET_EXIST_RETRY_DELAY)
+                meta = self._read_meta(name)
+                if meta:
+                    break
+        return bool(meta and meta.get("password_hash"))
 
     def _invalidate_has_password(self, name: str) -> None:
         with self._has_password_lock:
@@ -1605,6 +1949,41 @@ class DatasetManager:
         "preprocessed_video",
     )
 
+    # Import bounds (M-1 hardening).  Unlike ingested archives (which go
+    # through archive_processor's pre-extraction audit), a backup .tar.gz
+    # used to be extracted with no cap on member count or total unpacked
+    # size — a ≤MAX_UPLOAD_BYTES tar.gz can expand ~1000× (gzip bomb) and
+    # fill the PVC.  Declared tar sizes are authoritative, so the audit is
+    # cheap.  ``0`` disables a cap.
+    _MAX_IMPORT_EXTRACT_BYTES = max(0, int(os.environ.get("MAX_IMPORT_EXTRACT_BYTES", str(8 * 1024 * 1024 * 1024))))
+    _MAX_IMPORT_MEMBERS = max(0, int(os.environ.get("MAX_IMPORT_MEMBERS", "20000")))
+    _MAX_IMPORT_META_BYTES = 4 * 1024 * 1024
+
+    @staticmethod
+    def peek_backup_meta(tar_path: str | Path) -> dict[str, Any]:
+        """Read just the ``meta.json`` of a dataset export without extracting.
+
+        Used by the REST import endpoint to learn the *target* dataset name
+        (``new_name`` fallback: the archive's original name) BEFORE
+        :meth:`prepare_import` runs, so an ``overwrite=true`` import of an
+        existing password-protected dataset can demand that dataset's
+        password first (destructive routes are password-gated — deleting
+        must not be easier than reading).
+        """
+        import tarfile
+
+        with tarfile.open(Path(tar_path), "r:*") as tar:
+            info = tar.getmember("meta.json")  # raises KeyError if absent
+            if info.size > DatasetManager._MAX_IMPORT_META_BYTES:
+                raise ValueError("Backup meta.json is implausibly large — not a dataset export")
+            member = tar.extractfile(info)
+            if member is None:
+                raise ValueError("Backup archive has no meta.json — not a dataset export")
+            meta = json.loads(member.read().decode("utf-8"))
+        if not isinstance(meta, dict):
+            raise TypeError("Backup meta.json is malformed")
+        return meta
+
     def prepare_import(
         self,
         tar_path: str | Path,
@@ -1624,6 +2003,7 @@ class DatasetManager:
         Raises ``ValueError`` for non-export archives, unsafe members, bad
         target names, or existing targets without ``overwrite=True``.
         """
+        import shutil
         import tarfile
 
         src = Path(tar_path)
@@ -1632,6 +2012,17 @@ class DatasetManager:
 
         with tarfile.open(src, "r:*") as tar:
             members = tar.getmembers()
+            if self._MAX_IMPORT_MEMBERS and len(members) > self._MAX_IMPORT_MEMBERS:
+                raise ValueError(
+                    f"Backup archive has too many members ({len(members)} > {self._MAX_IMPORT_MEMBERS}; "
+                    f"tune MAX_IMPORT_MEMBERS)"
+                )
+            total_declared = sum(m.size for m in members)
+            if self._MAX_IMPORT_EXTRACT_BYTES and total_declared > self._MAX_IMPORT_EXTRACT_BYTES:
+                raise ValueError(
+                    f"Backup archive unpacks to {total_declared} bytes — exceeds "
+                    f"MAX_IMPORT_EXTRACT_BYTES ({self._MAX_IMPORT_EXTRACT_BYTES})"
+                )
             for m in members:
                 name = m.name
                 if name not in ("meta.json", "documents.jsonl") and not name.startswith("files/"):
@@ -1642,6 +2033,9 @@ class DatasetManager:
             meta_member = tar.extractfile("meta.json")
             if meta_member is None:
                 raise ValueError("Backup archive has no meta.json — not a dataset export")
+            meta_size = next(m.size for m in members if m.name == "meta.json")
+            if meta_size > self._MAX_IMPORT_META_BYTES:
+                raise ValueError("Backup meta.json is implausibly large — not a dataset export")
             backup_meta = json.loads(meta_member.read().decode("utf-8"))
             if not isinstance(backup_meta, dict):
                 raise TypeError("Backup meta.json is malformed")
@@ -1655,27 +2049,48 @@ class DatasetManager:
                 docs_member = None  # tolerate archives without a documents member
             row_count = 0
             if docs_member is not None:
-                for line in docs_member.read().decode("utf-8").splitlines():
-                    if line.strip():
+                # Stream the count — documents.jsonl can be hundreds of MB and
+                # is only needed line-by-line (never buffered whole).
+                for raw_line in docs_member:
+                    if raw_line.strip():
                         row_count += 1
 
             target = new_name or original_name
             self._validate_name(target)
 
             dataset_dir = self.datasets_path / target
+            if dataset_dir.exists() and not overwrite:
+                raise FileExistsError(f"Dataset '{target}' already exists; pass overwrite=true to replace it.")
+
+            # Stage the restore in a hidden sibling dir first: the existing
+            # dataset is replaced only AFTER the archive is fully unpacked and
+            # a restorable mode is determined — a bad/partial archive must
+            # never destroy the dataset it was meant to replace.
+            staging = self.datasets_path / f".{target}.importing-{os.getpid()}-{int(time.time())}"
+            try:
+                (staging / "files").mkdir(parents=True)
+                file_members = [m for m in members if m.name.startswith("files/") and m.isfile()]
+                if file_members:
+                    # filter="data" refuses traversal, absolute paths, devices.
+                    tar.extractall(staging, members=file_members, filter="data")
+
+                has_files = any(p.is_file() for p in (staging / "files").rglob("*"))
+                mode = "re-embed-files" if has_files else ("text-replay" if row_count else None)
+                if mode is None:
+                    raise ValueError("Backup archive contains no files and no documents — nothing to restore")
+            except BaseException:
+                shutil.rmtree(staging, ignore_errors=True)
+                raise
+
+            # Swap: drop the existing dataset (dir + old collection), then move
+            # the staged files into place.  Past this point the archive is
+            # known-good; a failure in the later re-embed phase leaves a
+            # dataset that a re-run of the import repairs.
             if dataset_dir.exists():
-                if not overwrite:
-                    raise FileExistsError(f"Dataset '{target}' already exists; pass overwrite=true to replace it.")
                 self.delete_dataset(target)
-
-            files_dir = dataset_dir / "files"
-            files_dir.mkdir(parents=True, exist_ok=True)
-            file_members = [m for m in members if m.name.startswith("files/") and m.isfile()]
-            if file_members:
-                # filter="data" refuses traversal, absolute paths, devices.
-                tar.extractall(dataset_dir, members=file_members, filter="data")
-
-            has_files = any(p.is_file() for p in files_dir.rglob("*"))
+            dataset_dir.mkdir(parents=True, exist_ok=True)
+            (staging / "files").rename(dataset_dir / "files")
+            shutil.rmtree(staging, ignore_errors=True)
 
         restored_meta = dict(backup_meta)
         restored_meta["name"] = target
@@ -1692,12 +2107,6 @@ class DatasetManager:
         ):
             restored_meta.pop(stale, None)
         self._write_meta(target, restored_meta)
-
-        mode = "re-embed-files" if has_files else ("text-replay" if row_count else None)
-        if mode is None:
-            # Nothing restorable — clean up the half-made dataset.
-            self.delete_dataset(target)
-            raise ValueError("Backup archive contains no files and no documents — nothing to restore")
 
         return {
             "dataset": target,
@@ -1730,12 +2139,15 @@ class DatasetManager:
         placeholder = _re.compile(r"^\s*\[(?:Image|Video|Audio)[^\]]*\][\d\s–—-]*$")
         counted = 0
         skipped = 0
-        batch: list[dict[str, Any]] = []
+        batch: list[str | dict[str, Any]] = []
 
         def _flush() -> None:
             nonlocal counted
             if batch:
-                self.add_documents(dataset_name, batch)
+                # Restore replay: one logical ingest, not hundreds of
+                # per-batch webhook events — mute the webhook inside.
+                with _webhook_muted():
+                    self.add_documents(dataset_name, batch)
                 counted += len(batch)
                 batch.clear()
                 if progress_callback:
@@ -1805,19 +2217,76 @@ class DatasetManager:
         result = self.replay_imported_documents(target, tar_path, progress_callback=progress_callback)
         return {**plan, "result": result, "password_set": bool(password)}
 
-    def list_datasets(self) -> list[dict[str, Any]]:
-        """Return metadata for all existing datasets (password hash stripped)."""
-        datasets: list[dict[str, Any]] = []
-        if not self.datasets_path.exists():
+    # The return shape depends on the call mode: no cursor/limit → the
+    # historical full listing (list); either given → a page dict.  The
+    # overloads let callers get the shape they actually receive back.
+    @overload
+    def list_datasets(self, cursor: None = None, limit: None = None) -> list[dict[str, Any]]: ...
+
+    @overload
+    def list_datasets(self, cursor: str | None = ..., limit: int | None = ...) -> dict[str, Any]: ...
+
+    def list_datasets(
+        self, cursor: str | None = None, limit: int | None = None
+    ) -> list[dict[str, Any]] | dict[str, Any]:
+        """Return metadata for all existing datasets (password hash stripped).
+
+        Additive cursor pagination (Wave-4): with **no** *cursor* and **no**
+        *limit* the full listing is returned as a plain list (the historical
+        shape).  Datasets are ordered alphabetically regardless of case (an
+        ASCII sort would file ``Zebra`` ahead of ``apple``); names differing
+        only by case tie-break on their raw spelling (``MLS`` before
+        ``mls``).  Passing either parameter switches the return to
+        ``{"datasets": [...], "next_cursor": str | None}`` — *next_cursor* is
+        an opaque token that resumes the listing after the last returned
+        dataset, and ``None`` once the listing is exhausted.  Counts follow
+        ``RAG_DEFER_COUNT_SYNC`` on every page, exactly as for the full list.
+        """
+        paginated = cursor is not None or limit is not None
+        if not paginated:
+            datasets: list[dict[str, Any]] = []
+            if not self.datasets_path.exists():
+                return datasets
+            for child in sorted(self.datasets_path.iterdir(), key=lambda p: _dataset_order_key(p.name)):
+                if child.is_dir():
+                    meta = self._read_meta(child.name)
+                    if meta:
+                        if not _DEFER_COUNT_SYNC:
+                            self._sync_count_from_qdrant(child.name, meta)
+                        datasets.append(self._strip_password(meta))
             return datasets
-        for child in sorted(self.datasets_path.iterdir()):
-            if child.is_dir():
-                meta = self._read_meta(child.name)
-                if meta:
-                    if not _DEFER_COUNT_SYNC:
-                        self._sync_count_from_qdrant(child.name, meta)
-                    datasets.append(self._strip_password(meta))
-        return datasets
+
+        if limit is not None and limit < 1:
+            raise ValueError("limit must be >= 1")
+        names: list[str] = []
+        if self.datasets_path.exists():
+            names = [
+                child.name
+                for child in sorted(self.datasets_path.iterdir(), key=lambda p: _dataset_order_key(p.name))
+                if child.is_dir()
+            ]
+        if cursor:
+            # Empty string = start of the listing (a client's first page);
+            # only a real token is decoded.  bisect_LEFT: the token names the
+            # first item of the NEXT page (it was never returned), so the
+            # resume position includes it.  The probe is pre-keyed because
+            # bisect's ``key`` applies to the elements, not to the probe.
+            after = _decode_list_cursor(cursor)
+            names = names[bisect.bisect_left(names, _dataset_order_key(after), key=_dataset_order_key) :]
+        if limit is not None:
+            page_names = names[:limit]
+            overflow = names[limit:]
+        else:
+            page_names, overflow = names, []
+        datasets = []
+        for name in page_names:
+            meta = self._read_meta(name)
+            if meta:
+                if not _DEFER_COUNT_SYNC:
+                    self._sync_count_from_qdrant(name, meta)
+                datasets.append(self._strip_password(meta))
+        next_cursor = _encode_list_cursor(overflow[0]) if overflow else None
+        return {"datasets": datasets, "next_cursor": next_cursor}
 
     def get_dataset(self, name: str, sync_count: bool = True) -> dict[str, Any]:
         """Return metadata for a single dataset (password hash stripped).
@@ -1883,7 +2352,7 @@ class DatasetManager:
     # Adding content
     # ------------------------------------------------------------------
 
-    def add_documents(self, dataset_name: str, documents: list[str | dict[str, Any]]) -> list[str]:
+    def add_documents(self, dataset_name: str, documents: Sequence[str | dict[str, Any]]) -> list[str]:
         """Add raw documents (strings or multimodal dicts) to a dataset.
 
         Documents are embedded and stored in the dataset's Qdrant collection.
@@ -1892,6 +2361,9 @@ class DatasetManager:
         rag = self._get_rag(dataset_name)
         ids = rag.add_to_vector_store(documents)
         self._increment_count(dataset_name, len(ids))
+        # Opt-in ingest webhook (RAG_WEBHOOK_URL) — logged-not-fatal, no-op
+        # when unset.
+        _notify_ingest_hook(dataset_name, len(ids))
         return ids
 
     def add_file(self, dataset_name: str, file_path: str, original_name: str | None = None) -> dict[str, Any]:
@@ -1938,6 +2410,8 @@ class DatasetManager:
                 original_name=original_name,
                 source_url=source_url,
             )
+            # Opt-in ingest webhook (RAG_WEBHOOK_URL) — logged-not-fatal.
+            _notify_ingest_hook(dataset_name, len(result.get("stored_ids") or []))
             return result
         finally:
             for tmp_path in _tmp_cleanup:
@@ -2142,6 +2616,16 @@ class DatasetManager:
         consumer_thread.start()
 
         # -- Producer: preprocess files, queue batches --------------------------
+        # Parallel preprocessing fan-out (Wave-4): up to ``RAG_INGEST_CONCURRENCY``
+        # (default 4) files are preprocessed CONCURRENTLY in worker threads —
+        # store/copy, classify, hash, dedup check, PDF/image/video/audio
+        # extraction.  Deterministic ordering is preserved by design: each
+        # worker emits its output as ordered events on a per-file bounded
+        # queue, and the sequencer below absorbs them strictly in file order,
+        # so batch composition, document order, ``file_results`` order and
+        # progress-callback semantics match the sequential implementation
+        # regardless of worker completion order.  ``RAG_INGEST_CONCURRENCY=1``
+        # degenerates to the strictly sequential pre-Wave-4 behaviour.
         batch_docs: list[str | dict[str, Any]] = []
         # (fname, chunk_count, file_type, content_hash) — the content hash lets
         # the consumer mark successfully-embedded files for ingest dedup.
@@ -2163,235 +2647,379 @@ class DatasetManager:
                 else:
                     file_results.append({"file": fname, "chunks": count})
 
-        for tmp_path, orig_name in file_entries:
-            fname = orig_name
-            if progress_callback:
-                progress_callback({"file": fname, "status": "preprocessing"})
+        # Bounded per-file event queues: a worker blocks once its queue is
+        # full, so in-flight preprocessing memory stays bounded (the same
+        # reason the batch handoff is bounded below).
+        _EVENT_QUEUE_MAX = 8
+        ingest_concurrency = _INGEST_CONCURRENCY
+        evqs: list[queue.Queue] = []
+        worker_threads: list[threading.Thread] = []
 
+        def _preprocess_worker(evq: queue.Queue, tmp_path_: str, orig_name_: str) -> None:
+            """Preprocess ONE file, emitting ordered events for the sequencer.
+
+            Event shapes (positional):
+              ("progress", payload)                       — progress-callback event
+              ("docs", docs, file_entry, score_delta, reset, flush_after)
+                                                          — batch-buffer append
+              ("skip", fname)                             — content-hash dedup skip
+              ("direct_result", fname, chunks)            — inline text-file result
+              ("progress_error", fname, err)              — per-file failure
+              ("base_error", exc)                         — BaseException; re-raised
+              ("score_reset",)                            — current_score = 0.0
+              ("done",)                                   — terminal; run tail logic
+            """
+            fname = orig_name_
             try:
-                dst = self._store_file(dataset_name, tmp_path, original_name=fname, defer_write=True)
-                dst_str = str(dst)
-                stored_path = str(dst)  # tier-0 stored path (before preprocessing)
-                file_type = _classify_file(dst_str)
-                content_hash = _sha256_file(dst)
-                if self._is_ingested(dataset_name, content_hash) and not (force_names and fname in force_names):
-                    file_results.append({"file": fname, "chunks": 0, "deduplicated": True})
-                    if progress_callback:
-                        progress_callback({"file": fname, "status": "skipped", "chunks": 0, "deduplicated": True})
-                    continue
-                file_bytes = dst.stat().st_size
-                file_total = 0  # estimated total chunks (0 if unknown)
+                try:
+                    evq.put(("progress", {"file": fname, "status": "preprocessing"}))
 
-                if file_type == "pdf":
-                    pdf_proc = PDFProcessor()
-                    embed_batch = getattr(rag.embed, "chunk_size", 64) or 64
-                    chunk_count = 0
-                    pdf_batch: list[dict[str, Any]] = []
-                    for chunk in pdf_proc.extract_chunks_iter(
-                        dst_str,
-                        chunk_size=chunk_size,
-                        chunk_overlap=chunk_overlap,
-                        text_splitter=rag.embedder.text_splitter,
-                        ocr=self._get_ocr_enabled(dataset_name),
-                    ):
-                        pdf_batch.append(chunk)
-                        chunk_count += 1
+                    dst = self._store_file(dataset_name, tmp_path_, original_name=fname, defer_write=True)
+                    dst_str = str(dst)
+                    stored_path = str(dst)  # tier-0 stored path (before preprocessing)
+                    file_type = _classify_file(dst_str)
+                    content_hash = _sha256_file(dst)
+                    if self._is_ingested(dataset_name, content_hash) and not (force_names and fname in force_names):
+                        evq.put(("skip", fname))
+                        return
+                    file_bytes = dst.stat().st_size
+                    file_total = 0  # estimated total chunks (0 if unknown)
 
-                        # Hand off to consumer mid-PDF for concurrent
-                        # extraction + embedding.  This lets the embedder
-                        # start processing the first pages while later
-                        # pages are still being extracted.
-                        if len(pdf_batch) >= embed_batch:
+                    if file_type == "pdf":
+                        pdf_proc = PDFProcessor()
+                        embed_batch = getattr(rag.embed, "chunk_size", 64) or 64
+                        chunk_count = 0
+                        pdf_batch: list[dict[str, Any]] = []
+                        for chunk in pdf_proc.extract_chunks_iter(
+                            dst_str,
+                            chunk_size=chunk_size,
+                            chunk_overlap=chunk_overlap,
+                            text_splitter=rag.embedder.text_splitter,
+                            ocr=self._get_ocr_enabled(dataset_name),
+                        ):
+                            pdf_batch.append(chunk)
+                            chunk_count += 1
+
+                            # Hand off to consumer mid-PDF for concurrent
+                            # extraction + embedding.  This lets the embedder
+                            # start processing the first pages while later
+                            # pages are still being extracted.
+                            if len(pdf_batch) >= embed_batch:
+                                _fix_source(pdf_batch, fname, dst_str)
+                                self._save_doc_media(dataset_name, pdf_batch, model_max_pixels=max_pixels)
+                                evq.put(
+                                    (
+                                        "docs",
+                                        pdf_batch,
+                                        (fname, len(pdf_batch), file_type, content_hash, stored_path),
+                                        0.0,
+                                        True,
+                                        True,
+                                    )
+                                )
+                                pdf_batch = []
+
+                        # Handle remaining chunks from the generator
+                        if pdf_batch:
                             _fix_source(pdf_batch, fname, dst_str)
                             self._save_doc_media(dataset_name, pdf_batch, model_max_pixels=max_pixels)
-                            batch_docs.extend(pdf_batch)
-                            batch_files_list.append((fname, len(pdf_batch), file_type, content_hash, stored_path))
-                            pdf_batch = []
+                            evq.put(
+                                (
+                                    "docs",
+                                    pdf_batch,
+                                    (fname, len(pdf_batch), file_type, content_hash, stored_path),
+                                    0.0,
+                                    True,
+                                    False,
+                                )
+                            )
+                        file_total = chunk_count
 
-                            _queue_batch(batch_docs, batch_files_list)
-                            batch_docs = []
-                            batch_files_list = []
-                            current_score = 0.0
-                            _drain_results()
+                    elif file_type == "image":
+                        original_dst = dst_str
+                        dst = _preprocess_image_file(dst)
+                        dst_str = str(dst)
+                        img_proc = ImageProcessor(max_pixels=max_pixels)
+                        doc = img_proc.process(dst_str)
+                        _fix_source([doc], fname, dst_str)
+                        doc["preprocessed_image"] = f"file://{dst_str}"
+                        if dst_str != original_dst:
+                            doc["original_image"] = f"file://{original_dst}"
+                        file_total = 1
 
-                    # Handle remaining chunks from the generator
-                    if pdf_batch:
-                        _fix_source(pdf_batch, fname, dst_str)
-                        self._save_doc_media(dataset_name, pdf_batch, model_max_pixels=max_pixels)
-                        batch_docs.extend(pdf_batch)
-                        batch_files_list.append((fname, len(pdf_batch), file_type, content_hash, stored_path))
-                    current_score = 0.0
-                    file_total = chunk_count
+                        # Delete original if keep_originals=False (mutates only
+                        # this worker's own doc — emitted afterwards).
+                        if dst_str != original_dst and not self._get_keep_originals(dataset_name):
+                            self._delete_original_file(dataset_name, original_dst, [], "original_image")
+                            doc.pop("original_image", None)
 
-                elif file_type == "image":
-                    original_dst = dst_str
-                    dst = _preprocess_image_file(dst)
-                    dst_str = str(dst)
-                    img_proc = ImageProcessor(max_pixels=max_pixels)
-                    doc = img_proc.process(dst_str)
-                    _fix_source([doc], fname, dst_str)
-                    doc["preprocessed_image"] = f"file://{dst_str}"
-                    if dst_str != original_dst:
-                        doc["original_image"] = f"file://{original_dst}"
-                    batch_docs.append(doc)
-                    current_score += file_bytes / _MB
-                    batch_files_list.append((fname, 1, file_type, content_hash, stored_path))
-                    file_total = 1
+                        evq.put(
+                            (
+                                "docs",
+                                [doc],
+                                (fname, 1, file_type, content_hash, stored_path),
+                                file_bytes / _MB,
+                                False,
+                                False,
+                            )
+                        )
 
-                    # Delete original if keep_originals=False
-                    if dst_str != original_dst and not self._get_keep_originals(dataset_name):
-                        self._delete_original_file(dataset_name, original_dst, [], "original_image")
-                        doc.pop("original_image", None)
+                    elif file_type == "video":
+                        original_dst = dst_str
+                        dst = _preprocess_video_file(dst)
+                        dst_str = str(dst)
+                        vid_proc = VideoProcessor(
+                            fps=fps,
+                            max_pixels=max_pixels,
+                            total_pixels=total_pixels,
+                            target_frames=target_frames,
+                        )
+                        embed_batch = getattr(rag.embed, "chunk_size", 64) or 64
+                        vid_batch: list[dict[str, Any]] = []
+                        vid_chunk_count = 0
+                        store_url = f"file://{dst_str}"
+                        original_url = f"file://{original_dst}" if dst_str != original_dst else None
+                        for doc in vid_proc.process_iter(dst_str):
+                            doc["preprocessed_video"] = store_url
+                            if original_url:
+                                doc["original_video"] = original_url
+                            vid_batch.append(doc)
+                            vid_chunk_count += 1
 
-                elif file_type == "video":
-                    original_dst = dst_str
-                    dst = _preprocess_video_file(dst)
-                    dst_str = str(dst)
-                    vid_proc = VideoProcessor(
-                        fps=fps,
-                        max_pixels=max_pixels,
-                        total_pixels=total_pixels,
-                        target_frames=target_frames,
-                    )
-                    embed_batch = getattr(rag.embed, "chunk_size", 64) or 64
-                    vid_batch: list[dict[str, Any]] = []
-                    vid_chunk_count = 0
-                    store_url = f"file://{dst_str}"
-                    original_url = f"file://{original_dst}" if dst_str != original_dst else None
-                    for doc in vid_proc.process_iter(dst_str):
-                        doc["preprocessed_video"] = store_url
-                        if original_url:
-                            doc["original_video"] = original_url
-                        vid_batch.append(doc)
-                        vid_chunk_count += 1
+                            if len(vid_batch) >= embed_batch:
+                                _fix_source(vid_batch, fname, dst_str)
+                                self._save_doc_media(dataset_name, vid_batch)
+                                evq.put(
+                                    (
+                                        "docs",
+                                        vid_batch,
+                                        (fname, len(vid_batch), file_type, content_hash, stored_path),
+                                        0.0,
+                                        True,
+                                        True,
+                                    )
+                                )
+                                vid_batch = []
 
-                        if len(vid_batch) >= embed_batch:
+                        delete_original = dst_str != original_dst and not self._get_keep_originals(dataset_name)
+                        if vid_batch:
                             _fix_source(vid_batch, fname, dst_str)
                             self._save_doc_media(dataset_name, vid_batch)
-                            batch_docs.extend(vid_batch)
-                            batch_files_list.append((fname, len(vid_batch), file_type, content_hash, stored_path))
-                            vid_batch = []
+                            if delete_original:
+                                # Mirrors the sequential pop over the un-flushed
+                                # batch remainder — these docs are emitted after
+                                # the pop, so their metadata is identical.
+                                for vd in vid_batch:
+                                    if isinstance(vd, dict):
+                                        vd.pop("original_video", None)
+                            evq.put(
+                                (
+                                    "docs",
+                                    vid_batch,
+                                    (fname, len(vid_batch), file_type, content_hash, stored_path),
+                                    0.0,
+                                    True,
+                                    False,
+                                )
+                            )
+                        if delete_original:
+                            self._delete_original_file(dataset_name, original_dst, [], "original_video")
+                        file_total = vid_chunk_count
 
-                            _queue_batch(batch_docs, batch_files_list)
-                            batch_docs = []
-                            batch_files_list = []
-                            current_score = 0.0
-                            _drain_results()
-
-                    if vid_batch:
-                        _fix_source(vid_batch, fname, dst_str)
-                        self._save_doc_media(dataset_name, vid_batch)
-                        batch_docs.extend(vid_batch)
-                        batch_files_list.append((fname, len(vid_batch), file_type, content_hash, stored_path))
-                    current_score = 0.0
-                    file_total = vid_chunk_count
-
-                    # Delete original if keep_originals=False
-                    if dst_str != original_dst and not self._get_keep_originals(dataset_name):
-                        self._delete_original_file(dataset_name, original_dst, [], "original_video")
-                        for vd in batch_docs:
-                            if isinstance(vd, dict):
-                                vd.pop("original_video", None)
-
-                elif file_type == "audio":
-                    segments = _split_audio_segments(dst)
-                    audio_batch: list[dict[str, Any]] = []
-                    for seg_idx, seg_path in enumerate(segments):
-                        raw = seg_path.read_bytes()
-                        mime = mimetypes.guess_type(str(seg_path))[0] or "audio/mpeg"
-                        b64 = base64.b64encode(raw).decode("utf-8")
-                        seg_name = (
-                            f"{dst.name} — segment {seg_idx + 1}/{len(segments)}" if len(segments) > 1 else dst.name
+                    elif file_type == "audio":
+                        segments = _split_audio_segments(dst)
+                        audio_batch: list[dict[str, Any]] = []
+                        for seg_idx, seg_path in enumerate(segments):
+                            raw = seg_path.read_bytes()
+                            mime = mimetypes.guess_type(str(seg_path))[0] or "audio/mpeg"
+                            b64 = base64.b64encode(raw).decode("utf-8")
+                            seg_name = (
+                                f"{dst.name} — segment {seg_idx + 1}/{len(segments)}" if len(segments) > 1 else dst.name
+                            )
+                            doc = {
+                                "text": f"[Audio: {seg_name}]",
+                                "audio": f"data:{mime};base64,{b64}",
+                                "source": dst_str,
+                                "segment_index": seg_idx,
+                            }
+                            _fix_source([doc], fname, dst_str)
+                            audio_batch.append(doc)
+                        # Save each segment to disk so _strip_media_payloads
+                        # doesn't replace the segment data URL with the full
+                        # source file (which could be tens of MB and exceed
+                        # the ASR endpoint's size cap at query time).
+                        self._save_doc_media(dataset_name, audio_batch)
+                        evq.put(
+                            (
+                                "docs",
+                                audio_batch,
+                                (fname, len(segments), file_type, content_hash, stored_path),
+                                file_bytes / _MB,
+                                False,
+                                False,
+                            )
                         )
-                        doc = {
-                            "text": f"[Audio: {seg_name}]",
-                            "audio": f"data:{mime};base64,{b64}",
-                            "source": dst_str,
-                            "segment_index": seg_idx,
-                        }
-                        _fix_source([doc], fname, dst_str)
-                        audio_batch.append(doc)
-                    # Save each segment to disk so _strip_media_payloads
-                    # doesn't replace the segment data URL with the full
-                    # source file (which could be tens of MB and exceed
-                    # the ASR endpoint's size cap at query time).
-                    self._save_doc_media(dataset_name, audio_batch)
-                    batch_docs.extend(audio_batch)
-                    current_score += file_bytes / _MB
-                    batch_files_list.append((fname, len(segments), file_type, content_hash, stored_path))
-                    file_total = len(segments)
+                        file_total = len(segments)
 
-                else:
-                    result = self._add_file_processed(
-                        dataset_name,
-                        dst_str,
-                        rag,
-                        mpk,
-                        chunk_size,
-                        chunk_overlap,
-                        original_name=fname,
-                    )
-                    file_results.append({"file": fname, "chunks": result.get("chunks", 0)})
+                    else:
+                        result = self._add_file_processed(
+                            dataset_name,
+                            dst_str,
+                            rag,
+                            mpk,
+                            chunk_size,
+                            chunk_overlap,
+                            original_name=fname,
+                        )
+                        evq.put(("direct_result", fname, result.get("chunks", 0)))
+
+                    # Mark as preprocessed (waiting in batch buffer).
+                    # Skip for the else branch — those files are already fully
+                    # processed (embedded + stored) and have sent "complete".
+                    in_batch_buffer = file_type in ("pdf", "image", "video", "audio")
+                    if in_batch_buffer:
+                        evq.put(("progress", {"file": fname, "status": "preprocessed", "total": file_total}))
+
+                    # pdf/video always zero the score after their streaming
+                    # windows (the sequential code did this unconditionally).
+                    if file_type in ("pdf", "video"):
+                        evq.put(("score_reset",))
+
+                except Exception as exc:
+                    logger.warning("File '%s' failed: %s", fname, exc)
+                    evq.put(("progress_error", fname, str(exc)))
+                except BaseException as exc:
+                    # KeyboardInterrupt/SystemExit must abort the whole batch
+                    # exactly as the sequential producer did — re-raised by the
+                    # sequencer in the calling thread.
+                    evq.put(("base_error", exc))
+                    raise
+            finally:
+                evq.put(("done",))
+
+        # Launch the first ``ingest_concurrency`` workers; each subsequent
+        # worker starts only after an earlier file's events have been fully
+        # absorbed — this bounds both the thread count and the in-flight
+        # preprocessing memory without starving the pipeline.
+        n_entries = len(file_entries)
+        for idx0 in range(min(ingest_concurrency, n_entries)):
+            tmp_path, orig_name = file_entries[idx0]
+            evq: queue.Queue = queue.Queue(maxsize=_EVENT_QUEUE_MAX)
+            evqs.append(evq)
+            t = threading.Thread(
+                target=contextvars.copy_context().run,
+                args=(_preprocess_worker, evq, tmp_path, orig_name),
+                daemon=True,
+            )
+            worker_threads.append(t)
+            t.start()
+
+        for k in range(n_entries):
+            evq = evqs[k]
+            while True:
+                ev = evq.get()
+                kind = ev[0]
+                if kind == "progress":
+                    if progress_callback:
+                        progress_callback(ev[1])
+                elif kind == "docs":
+                    _, docs_, entry_, score_delta_, reset_, flush_ = ev
+                    batch_docs.extend(docs_)
+                    batch_files_list.append(entry_)
+                    if reset_:
+                        current_score = 0.0
+                    else:
+                        current_score += score_delta_
+                    if flush_:
+                        _queue_batch(batch_docs, batch_files_list)
+                        batch_docs = []
+                        batch_files_list = []
+                        current_score = 0.0
+                        _drain_results()
+                elif kind == "skip":
+                    file_results.append({"file": ev[1], "chunks": 0, "deduplicated": True})
+                    if progress_callback:
+                        progress_callback({"file": ev[1], "status": "skipped", "chunks": 0, "deduplicated": True})
+                    break
+                elif kind == "direct_result":
+                    file_results.append({"file": ev[1], "chunks": ev[2]})
                     if progress_callback:
                         progress_callback(
                             {
-                                "file": fname,
-                                "chunks": result.get("chunks", 0),
+                                "file": ev[1],
+                                "chunks": ev[2],
                                 "status": "complete",
                             }
                         )
-
-                # Mark as preprocessed (waiting in batch buffer).
-                # Skip for the else branch — those files are already fully
-                # processed (embedded + stored) and have sent "complete".
-                in_batch_buffer = file_type in ("pdf", "image", "video", "audio")
-                if progress_callback and in_batch_buffer:
-                    progress_callback({"file": fname, "status": "preprocessed", "total": file_total})
-
-                # Hand off to consumer when the batch reaches the score
-                # threshold.  Also send a reasonable chunk when the consumer
-                # is idle so it never sits around waiting.
-                if current_score >= batch_score:
-                    _queue_batch(batch_docs, batch_files_list)
-                    batch_docs = []
-                    batch_files_list = []
+                    # Falls through to the tail logic on "done", exactly like
+                    # the sequential else-branch did.
+                elif kind == "progress_error":
+                    if progress_callback:
+                        progress_callback({"file": ev[1], "status": "error", "error": ev[2]})
+                    break
+                elif kind == "base_error":
+                    raise ev[1]
+                elif kind == "score_reset":
                     current_score = 0.0
-                elif batch_docs and not consumer_busy.is_set():
-                    # Consumer idle → send a chunk to keep it fed, bounded to
-                    # at most 10 files AND ~_IDLE_SEND_BYTES of in-memory
-                    # payload so huge media files can't form one multi-GB batch.
-                    n = min(len(batch_files_list), 10)
-                    send_doc_count = 0
-                    send_bytes = 0
-                    send_files: list[tuple[str, int, str, str, str]] = []
-                    for fname, cnt, file_type_, content_hash, stored_path in batch_files_list[:n]:
-                        file_payload = sum(
-                            _doc_payload_bytes(d) for d in batch_docs[send_doc_count : send_doc_count + cnt]
-                        )
-                        if send_files and send_bytes + file_payload > _IDLE_SEND_BYTES:
-                            break
-                        send_files.append((fname, cnt, file_type_, content_hash, stored_path))
-                        send_bytes += file_payload
-                        send_doc_count += cnt
-                    if not send_files:
-                        # Even one file is over the cap — send it anyway so the
-                        # pipeline cannot deadlock on a single huge file.
-                        send_files = batch_files_list[:1]
-                        send_doc_count = sum(c for _, c, _, _, _ in send_files)
-                    keep_files = batch_files_list[len(send_files) :]
-                    _queue_batch(batch_docs[:send_doc_count], send_files)
-                    batch_docs = batch_docs[send_doc_count:]
-                    batch_files_list = keep_files
-                    current_score = 0.0
+                elif kind == "done":
+                    # Hand off to consumer when the batch reaches the score
+                    # threshold.  Also send a reasonable chunk when the consumer
+                    # is idle so it never sits around waiting.
+                    if current_score >= batch_score:
+                        _queue_batch(batch_docs, batch_files_list)
+                        batch_docs = []
+                        batch_files_list = []
+                        current_score = 0.0
+                    elif batch_docs and not consumer_busy.is_set():
+                        # Consumer idle → send a chunk to keep it fed, bounded to
+                        # at most 10 files AND ~_IDLE_SEND_BYTES of in-memory
+                        # payload so huge media files can't form one multi-GB batch.
+                        n = min(len(batch_files_list), 10)
+                        send_doc_count = 0
+                        send_bytes = 0
+                        send_files: list[tuple[str, int, str, str, str]] = []
+                        for fname_, cnt, file_type_, content_hash, stored_path in batch_files_list[:n]:
+                            file_payload = sum(
+                                _doc_payload_bytes(d) for d in batch_docs[send_doc_count : send_doc_count + cnt]
+                            )
+                            if send_files and send_bytes + file_payload > _IDLE_SEND_BYTES:
+                                break
+                            send_files.append((fname_, cnt, file_type_, content_hash, stored_path))
+                            send_bytes += file_payload
+                            send_doc_count += cnt
+                        if not send_files:
+                            # Even one file is over the cap — send it anyway so the
+                            # pipeline cannot deadlock on a single huge file.
+                            send_files = batch_files_list[:1]
+                            send_doc_count = sum(c for _, c, _, _, _ in send_files)
+                        keep_files = batch_files_list[len(send_files) :]
+                        _queue_batch(batch_docs[:send_doc_count], send_files)
+                        batch_docs = batch_docs[send_doc_count:]
+                        batch_files_list = keep_files
+                        current_score = 0.0
 
-                # Drain any completed results so the frontend gets
-                # "complete" callbacks promptly rather than all at the end.
-                _drain_results()
+                    # Drain any completed results so the frontend gets
+                    # "complete" callbacks promptly rather than all at the end.
+                    _drain_results()
+                    break
 
-            except Exception as exc:
-                logger.warning("File '%s' failed: %s", fname, exc)
-                if progress_callback:
-                    progress_callback({"file": fname, "status": "error", "error": str(exc)})
+            # Keep the pipeline full: replace the absorbed worker with the
+            # next file's worker.
+            nxt = k + ingest_concurrency
+            if nxt < n_entries:
+                tmp_path, orig_name = file_entries[nxt]
+                nxt_evq: queue.Queue = queue.Queue(maxsize=_EVENT_QUEUE_MAX)
+                evqs.append(nxt_evq)
+                t = threading.Thread(
+                    target=contextvars.copy_context().run,
+                    args=(_preprocess_worker, nxt_evq, tmp_path, orig_name),
+                    daemon=True,
+                )
+                worker_threads.append(t)
+                t.start()
+
+        for t in worker_threads:
+            t.join(timeout=30)
 
         # -- Flush remaining batch and shut down consumer -----------------------
         if batch_docs:
@@ -2426,6 +3054,10 @@ class DatasetManager:
         from multimodal_rag.utils.metrics import observe_ingest_results
 
         observe_ingest_results(file_results, dataset_name)
+        # Opt-in ingest webhook (RAG_WEBHOOK_URL) — one event per completed
+        # batch. add_urls_batch delegates here, so URL ingests fire exactly
+        # one event too (not one per add path).
+        _notify_ingest_hook(dataset_name, _stored_points_count(file_results))
         return {"status": "ok", "file_count": len(file_entries), "files": file_results}
 
     def add_urls_batch(
@@ -2921,9 +3553,14 @@ class DatasetManager:
         client = vs._client  # type: ignore[attr-defined]
         coll = vs.collection_name  # type: ignore[attr-defined]
 
-        # Batch retrieve all points in a single request
+        # Batch retrieve all points in a single request.  The local-write
+        # guard serializes against concurrent ingest workers on the
+        # in-process local backend (no internal locking there); remote
+        # clients and in-memory stores are unaffected.
+        _guard = _store_write_guard(vs)
         try:
-            points = client.retrieve(coll, ids=point_ids, with_payload=True, with_vectors=False)
+            with _guard:
+                points = client.retrieve(coll, ids=point_ids, with_payload=True, with_vectors=False)
         except Exception as exc:
             # Non-fatal: heavy data URLs stay in Qdrant and the next ingest
             # batch retries the strip.  Log so the silence isn't total.
@@ -3001,11 +3638,12 @@ class DatasetManager:
         # Batch set_payload — one call per unique payload group
         for payload_json, ids in updates.items():
             try:
-                client.set_payload(
-                    coll,
-                    payload=json.loads(payload_json),
-                    points=ids,
-                )
+                with _guard:
+                    client.set_payload(
+                        coll,
+                        payload=json.loads(payload_json),
+                        points=ids,
+                    )
             except Exception as exc:
                 logger.warning(
                     "Media payload strip: set_payload for %d point(s) on %s failed: %s",
@@ -3234,6 +3872,90 @@ class DatasetManager:
             _record_ingest_warning(
                 f"Removed unreferenced file (not embeddable by the embedder; no caption): {stored_path}"
             )
+
+    def repair_preprocessed_media(
+        self,
+        dataset_name: str,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Regenerate broken ``*_preprocessed`` media siblings from their originals.
+
+        Concurrent preprocessing of one file (multiple server replicas share
+        the dataset PVC) can leave an interleaved, unplayable ``*_preprocessed``
+        file behind even though the original is intact.  For every
+        ``*_preprocessed.*`` file that fails :func:`_media_file_ok` /
+        :func:`_image_file_ok`, deletes the broken copy and re-runs the
+        corresponding preprocess function on the tier-1 original.
+
+        Pass ``dry_run=True`` to only report which files would be repaired.
+        """
+        files_dir = self._dataset_dir(dataset_name) / "files"
+        if not files_dir.is_dir():
+            return {"dataset": dataset_name, "dry_run": dry_run, "checked": 0, "repaired": [], "failed": []}
+
+        # Registry of candidates: iterate the files dir directly — a broken
+        # preprocessed sibling exists even when the hash index is stale.
+        candidates: dict[Path, Path] = {}
+        for f in sorted(files_dir.iterdir()):
+            if not f.is_file() or not f.stem.endswith("_preprocessed"):
+                continue
+            tier1 = f.with_name(f.stem[: -len("_preprocessed")] + f.suffix)
+            if tier1.exists():
+                candidates[f] = tier1
+
+        repaired: list[dict[str, Any]] = []
+        failed: list[dict[str, Any]] = []
+        checked = 0
+        for preproc, tier1 in candidates.items():
+            checked += 1
+            suffix = preproc.suffix.lower()
+            ok = _image_file_ok if suffix in (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp") else _media_file_ok
+            if ok(preproc):
+                continue
+            record: dict[str, Any] = {"preprocessed": str(preproc), "original": str(tier1)}
+            if dry_run:
+                record["action"] = "would-regenerate"
+                repaired.append(record)
+                continue
+            # The writers create tmp siblings next to the final name, so
+            # serialise under the files-dir lock; unlink first so the writer
+            # cannot skip-regenerate (its exists+valid check would pass on
+            # the old broken file otherwise).
+            with _cross_process_lock(files_dir / ".preprocess.lock"):
+                try:
+                    preproc.unlink()
+                except OSError:
+                    pass
+                file_type = _classify_file(str(tier1))
+                if file_type == "image":
+                    result = _preprocess_image_file(tier1)
+                elif file_type == "video":
+                    result = _preprocess_video_file(tier1)
+                elif file_type == "audio":
+                    result = _truncate_audio_file(tier1, max_seconds=60.0)
+                else:
+                    result = tier1
+                if result != tier1 and result == preproc and ok(preproc):
+                    record["regenerated_bytes"] = preproc.stat().st_size
+                    repaired.append(record)
+                    logger.info("Repaired broken preprocessed media: %s", preproc.name)
+                else:
+                    record["reason"] = (
+                        "preprocess returned the original (no transcode needed, or the original's "
+                        "container cannot hold the libx264/aac output — broken sibling was removed)"
+                        if result == tier1
+                        else "regenerated file failed validation"
+                    )
+                    failed.append(record)
+                    logger.warning("Could not repair %s: %s", preproc.name, record["reason"])
+
+        return {
+            "dataset": dataset_name,
+            "dry_run": dry_run,
+            "checked": checked,
+            "repaired": repaired,
+            "failed": failed,
+        }
 
     def _file_referenced(self, rag: MultimodalRAG, sources: list[str]) -> bool:
         """True if the vector store holds a doc referencing one of *sources*.
@@ -3570,24 +4292,62 @@ class DatasetManager:
             output.append(entry)
         return output
 
-    def list_documents(self, dataset_name: str, limit: int = 50) -> list[tuple[str, dict[str, Any]]]:
-        """List stored document payloads for a dataset."""
-        rag = self._get_rag(dataset_name)
-        return rag.list_documents(limit=limit)
+    # Return shape depends on the call mode: no cursor → the historical
+    # first-page pair list; cursor given → a page dict.  The overloads let
+    # callers get the shape they actually receive back.
+    @overload
+    def list_documents(
+        self, dataset_name: str, limit: int = ..., cursor: None = None, check_embedder: bool = ...
+    ) -> list[tuple[str, dict[str, Any]]]: ...
+
+    @overload
+    def list_documents(
+        self, dataset_name: str, limit: int = ..., cursor: str = ..., check_embedder: bool = ...
+    ) -> dict[str, Any]: ...
+
+    def list_documents(
+        self,
+        dataset_name: str,
+        limit: int = 50,
+        cursor: str | None = None,
+        check_embedder: bool = True,
+    ) -> list[tuple[str, dict[str, Any]]] | dict[str, Any]:
+        """List stored document payloads for a dataset.
+
+        Additive cursor pagination (Wave-4): without *cursor* the first
+        *limit* documents are returned exactly as before.  With a *cursor*
+        (the ``next_cursor`` token from a previous page) the return switches
+        to ``{"documents": [...], "next_cursor": str | None}`` and the Qdrant
+        scroll resumes at the token instead of re-reading from the top.
+
+        ``check_embedder=False`` skips the embedder fingerprint guard — for
+        payload-only reads (listing / export) that never embed anything, so
+        a dataset indexed by a since-swapped embedder stays readable/exportable
+        (the documented export→import recovery path depends on this).
+        """
+        rag = self._get_rag(dataset_name, check_embedder=check_embedder)
+        if cursor is None:
+            return rag.list_documents(limit=limit)
+        return rag.list_documents_page(limit=limit, cursor=cursor)
 
     def stream_all_documents(
         self,
         dataset_name: str,
         emit: Callable[[dict[str, Any]], None],
         batch_size: int = 500,
+        check_embedder: bool = True,
     ) -> None:
         """Stream every document in a dataset (id + payload) to *emit*.
 
         Uses paginated Qdrant scroll so arbitrarily large collections are
         exported without holding all points in memory.  Each call emits a
         ``{"id": …, "payload": …}`` dict.
+
+        ``check_embedder=False`` skips the embedder fingerprint guard — the
+        export path must stay usable across an embedder swap (it embeds
+        nothing; re-embedding happens on the import side).
         """
-        rag = self._get_rag(dataset_name)
+        rag = self._get_rag(dataset_name, check_embedder=check_embedder)
         vs = rag.vector_store
         if vs is None or isinstance(vs, dict):
             return
@@ -3689,7 +4449,9 @@ class DatasetManager:
         :meth:`delete_session_history` the caller supplies exact point IDs,
         so nothing is deleted by similarity or by filter.
         """
-        clean = [str(d).strip() for d in (doc_ids or []) if str(d).strip()]
+        # PointIdsList.points is list[ExtendedPointId] (int | str | UUID);
+        # str ids are a member, the annotation just needs the union type.
+        clean: list[int | str | uuid.UUID] = [str(d).strip() for d in (doc_ids or []) if str(d).strip()]
         if not clean:
             return 0
         rag = self._get_rag(dataset_name)
@@ -4016,6 +4778,10 @@ class DatasetManager:
 
         cur_name = (getattr(self.embedder, "model_name", "") or "") if self.embedder else ""
         cur_dim = self._embedder_dimension()
+        # Alias group: ids the operator declared equivalent to the configured
+        # embedder (e.g. a quantized redeploy of the same base model).  A
+        # dataset fingerprinted under any of them passes the name check.
+        cur_aliases = tuple(getattr(self.embedder, "alias_names", ()) or ()) if self.embedder else ()
 
         if not stored_dim and not stored_name:
             # First time — record the fingerprint (dataset newly created or
@@ -4031,12 +4797,15 @@ class DatasetManager:
                 "are incompatible — recreate the dataset to rebuild it "
                 "(POST /api/admin/datasets/{name}/recreate)."
             )
-        if stored_name and cur_name and stored_name != cur_name:
-            # Same dimension, different model — semantically incompatible.
+        if stored_name and cur_name and stored_name != cur_name and stored_name not in cur_aliases:
+            # Same dimension, different model — semantically incompatible
+            # (unless the configured embedder declares the stored name as an
+            # alias — e.g. a quantized variant of the same base model).
+            alias_hint = f" (aliases accepted: {', '.join(sorted(cur_aliases))})" if cur_aliases else ""
             raise EmbedderMismatchError(
                 f"Dataset '{dataset_name}' was indexed with embedder "
                 f"{stored_name!r} but the currently configured embedder is "
-                f"{cur_name!r} (same dim {cur_dim}). Existing vectors are "
+                f"{cur_name!r}{alias_hint} (same dim {cur_dim}). Existing vectors are "
                 "semantically incompatible — recreate the dataset to rebuild it "
                 "(POST /api/admin/datasets/{name}/recreate)."
             )

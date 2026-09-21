@@ -1,8 +1,23 @@
+# Multimodal RAG MCP server — ingest documents/images/video into Qdrant and
+# retrieve via multimodal embeddings. PCAI (HPE Ezmeral Unified Analytics)
+# deployment with a web frontend, MCP 2.0 tools, and configurable models.
 apiVersion: v2
 name: rag-mcp-server
-description: Multi-modal RAG MCP Server with Qdrant, web frontend, and configurable models
+description: >-
+  Multi-modal RAG MCP server with Qdrant, a web frontend, and configurable
+  models (embedder/reranker/VLM/ASR). Exposes ingestion and retrieval over
+  REST and MCP (SSE) behind the PCAI Istio gateway.
 type: application
-version: 3.4.0
-appVersion: "3.4.0"
+version: 4.0.7
+appVersion: "4.0.7"
+keywords:
+  - rag
+  - multimodal
+  - qdrant
+  - mcp
+  - hpe
+  - pcai
+maintainers:
+  - name: HPE AI Solution Engineering
 sources:
   - https://github.com/ai-solution-eng/internal-projects/tree/main/multimodal-rag-project

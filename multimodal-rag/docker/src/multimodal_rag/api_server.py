@@ -31,9 +31,9 @@ from collections.abc import Iterator
 from contextlib import asynccontextmanager
 from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-import httpx
+import httpx2
 from fastapi import (
     Body,
     FastAPI,
@@ -46,6 +46,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from multimodal_rag import __version__
 from multimodal_rag.dataset_manager import (
@@ -53,6 +54,11 @@ from multimodal_rag.dataset_manager import (
     EmbedderMismatchError,
     _check_media_url_policy,
     _cross_process_lock,
+    _load_upload_history,
+    _notify_ingest_hook,
+    _record_upload_history,
+    _save_upload_history,
+    _upload_history_path,
 )
 from multimodal_rag.rag_system import (
     _arerank_with,
@@ -60,8 +66,10 @@ from multimodal_rag.rag_system import (
     merge_federated_results,
     resolve_federated_targets,
 )
+from multimodal_rag.utils import clients_registry as _clients_registry
 from multimodal_rag.utils.general_tools import sync_pool
 from multimodal_rag.utils.logging_utils import logging, setup_logger
+from multimodal_rag.utils.media_paths import MediaRefError
 
 logger = logging.getLogger(__name__)
 
@@ -250,60 +258,11 @@ _upload_jobs = _UploadJobTracker()
 # the Manage page can show a table of what was uploaded and when.  The log
 # lives under DATA_PATH (the shared RWX PVC) so it survives restarts and is
 # visible across pods; a cross-process fcntl lock serializes appends.
-
-
-def _upload_history_path() -> Path:
-    return Path(os.environ.get("DATA_PATH", "/data")) / "upload_history.json"
-
-
-def _load_upload_history() -> list[dict[str, Any]]:
-    p = _upload_history_path()
-    if not p.exists():
-        return []
-    try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-        return data if isinstance(data, list) else []
-    except (json.JSONDecodeError, OSError):
-        logger.debug("Unable to parse upload history — starting empty", exc_info=True)
-        return []
-
-
-def _save_upload_history(entries: list[dict[str, Any]]) -> None:
-    p = _upload_history_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    # Atomic write: temp file + os.replace() so a crash mid-write never leaves
-    # a truncated history file.
-    tmp = p.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(entries, indent=2, default=str), encoding="utf-8")
-    os.replace(tmp, p)
-
-
-def _record_upload_history(dataset_name: str, files: list[dict[str, Any]], source: str) -> None:
-    """Persist one entry per processed file (name, outcome, timestamp)."""
-    if not files:
-        return
-    now = datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds")
-    with _cross_process_lock(_upload_history_path().with_suffix(".lock")):
-        entries = _load_upload_history()
-        for f in files:
-            err = f.get("error")
-            chunks = f.get("chunks") or 0
-            status = "error" if err else ("ok" if chunks > 0 else "skipped")
-            entries.append(
-                {
-                    "timestamp": now,
-                    "dataset": dataset_name,
-                    "file": f.get("file") or "unknown",
-                    "chunks": chunks,
-                    "status": status,
-                    "source": source,
-                    "error": err,
-                }
-            )
-        # Bound the file size — keep only the newest 2000 entries.
-        if len(entries) > 2000:
-            entries = entries[-2000:]
-        _save_upload_history(entries)
+#
+# Wave-5 (F2): the implementation moved to dataset_manager (single source of
+# truth) so the MCP document-management tools record the SAME events as these
+# REST twins. The names are imported at the top of this module —
+# `api_server._record_upload_history` keeps working for callers and tests.
 
 
 # ---------------------------------------------------------------------------
@@ -461,26 +420,72 @@ def _get_redis() -> Any:
     return _redis_client
 
 
-def _unlock_client_id(request: Request) -> str:
-    """Return a per-user identifier for the unlock cache.
+def _shared_unlock_enabled() -> bool:
+    """True when RAG_MCP_SHARED_UNLOCK opts OUT of per-caller unlock scoping
+    (decision D10 escape hatch for gateway-fronted single-user deployments):
+    every caller shares one unlock cache and one throttle bucket — the
+    pre-D10 shared behaviour.  Read per call so a config change needs no
+    restart."""
+    return os.environ.get("RAG_MCP_SHARED_UNLOCK", "").strip().lower() in ("1", "true", "yes")
 
-    Prefers the authenticated user identity injected by oauth2-proxy
-    (``X-Auth-Request-Email`` / ``X-Auth-Request-User``) — but only when
-    ``RAG_TRUST_PROXY_IDENTITY`` confirms an enforcing proxy sits in front
-    of this server (the headers are client-spoofable otherwise) — then
-    falls back to the socket peer for deployments without an auth proxy.
 
-    ``X-Forwarded-For`` is deliberately NOT used: it is client-supplied and
-    spoofable, so trusting it would let a caller impersonate another user's
-    unlock cache entry (and its cached plaintext password).
+def _request_identity(request: Request) -> str:
+    """Resolve the per-caller identity (decision D10), most precise source first.
+
+    Order of availability:
+
+    1. **Provided identity** — the auth proxy's identity headers
+       (``X-Auth-Request-Email`` / ``X-Auth-Request-User`` / ``X-Email`` /
+       ``X-User``), honoured only when ``RAG_TRUST_PROXY_IDENTITY`` confirms
+       an enforcing proxy sits in front of this server (client-spoofable
+       otherwise) — per-USER.
+    2. **Forwarded-for chain** — ``X-Forwarded-For``, under the same trust
+       gate — per client IP behind a proxy that sets it.  The FULL
+       normalized chain is the identity value, so a caller cannot
+       reconstruct another user's chain value to read their cached unlock;
+       an XFF-appending proxy does leave client-sent prefixes in the chain
+       (fresh throttle buckets per fake prefix — residual documented in
+       mcp_server's mirror of this helper; the provided identity wins when
+       present).
+    3. **Socket peer** — direct connections (single-user direct deployments:
+       unchanged — the peer is stable across requests and sessions).
+
+    The opencode session id is deliberately NOT an unlock identity (see the
+    mirror comment in mcp_server: spoofable, and it would split a direct
+    single user's unlock per conversation).
     """
     if _TRUST_PROXY_IDENTITY:
         for header in ("X-Auth-Request-Email", "X-Auth-Request-User", "X-Email", "X-User"):
             val = request.headers.get(header)
-            if val:
+            if val and val.strip():
                 return val.strip()
+        xff = request.headers.get("X-Forwarded-For")
+        if xff:
+            chain = ",".join(p.strip() for p in xff.split(",") if p.strip())
+            if chain:
+                return f"xff:{chain}"
     client = request.client
     return client.host if client else "unknown"
+
+
+def _unlock_client_id(request: Request) -> str:
+    """Return the per-caller identifier for the unlock cache and the
+    password-failure throttle (decision D10: per-caller).
+
+    Resolution order: a D15 registry-key identity (``key:<name>`` — stable
+    per key, per-key throttle buckets ride this machinery) → the D10 identity
+    (provided identity → forwarded-for chain → socket peer, trust-gated) →
+    the shared ``"default"`` under ``RAG_MCP_SHARED_UNLOCK=1`` — the pre-D10
+    shared behaviour, restored explicitly for gateway-fronted single-user
+    deployments.
+    """
+    if _clients_registry.registry_configured():
+        identity = _clients_registry.current_identity()
+        if identity is not None and not identity.is_admin:
+            return identity.client_id
+    if _shared_unlock_enabled():
+        return "default"
+    return _request_identity(request)
 
 
 def _unlock_cache_key(dataset: str, cid: str) -> str:
@@ -734,6 +739,13 @@ async def _embedder_mismatch_handler(request: Request, exc: EmbedderMismatchErro
 # With the key set, interactive docs (/docs) are effectively disabled.
 _RAG_API_KEY = os.environ.get("RAG_API_KEY", "")
 
+# Multi-user API keys → dataset ACLs (fleet decision D15, Wave-5 — OPT-IN).
+# When RAG_API_KEY_CLIENTS is set, REST requests may also authenticate with a
+# registry key; the resolved per-key identity is ACL-enforced on every
+# dataset-scoped path (list/read/search/unlock/manage) and denied the admin
+# surface.  The deployment keys keep full (admin) access.  DEFAULT (registry
+# unset): the single-key check below behaves exactly as before.
+
 # Identity headers (X-Auth-Request-Email / X-Auth-Request-User / X-Email /
 # X-User) are client-supplied unless an enforcing auth proxy overwrites them
 # on every request.  They are only honoured for unlock-cache scoping and the
@@ -791,9 +803,36 @@ def _is_public_path(path: str, endpoint: Any = None) -> bool:
     return False
 
 
+def _rag_acl_path_denial(path: str, method: str, identity) -> "str | None":
+    """D15 REST enforcement for a registry-key identity: the denial reason for
+    *path*, or None when allowed.
+
+    Rules (fail-closed; matching the MCP tool checks):
+      * ``/api/admin/*``      — admin surface, never reachable with a client key.
+      * ``POST /api/datasets`` — dataset creation ("manage"): only with the
+        ``*`` grant (a named-ACL key cannot mint datasets outside its grant).
+      * ``/api/datasets/{name}(/…)`` — dataset must be in the key's ACL.
+      * everything else (federated /api/search, staging, …) — allowed; the
+        federated resolution filters ACL-denied datasets itself.
+    """
+    if path.startswith("/api/admin"):
+        return "Dataset ACLs are configured (D15): this API key has no admin access."
+    if path == "/api/datasets" or path == "/api/datasets/":
+        if method == "POST" and "*" not in (identity.datasets or frozenset()):
+            return "Dataset ACLs are configured (D15): this API key cannot create datasets."
+        return None
+    name = _clients_registry.dataset_name_from_path(path)
+    if name is not None and not _clients_registry.dataset_allowed(identity, name):
+        return _clients_registry.DatasetAccessDenied(
+            f"Dataset '{name}' is not permitted for this API key (dataset ACLs are configured — D15)."
+        ).args[0]
+    return None
+
+
 @app.middleware("http")
 async def _api_key_auth(request: Request, call_next):
-    if not _RAG_API_KEY:
+    registry_on = _clients_registry.registry_configured()
+    if not _RAG_API_KEY and not registry_on:
         return await call_next(request)
     # Resolve the matched endpoint EXPLICITLY.  An http middleware runs
     # BEFORE routing, so scope["route"] is not set here — relying on it made
@@ -824,8 +863,37 @@ async def _api_key_auth(request: Request, call_next):
             key = auth[len("Bearer ") :]
     import secrets
 
-    if secrets.compare_digest(key, _RAG_API_KEY):
-        return await call_next(request)
+    if _RAG_API_KEY and secrets.compare_digest(key, _RAG_API_KEY):
+        # Deployment key: full access. Bind the (admin) identity so the D15
+        # surfaces resolve it consistently.
+        reset_handle = None
+        if registry_on:
+            reset_handle = _clients_registry.set_current_identity(
+                _clients_registry.Identity(kind="admin", name=None, datasets=None)
+            )
+        try:
+            return await call_next(request)
+        finally:
+            if reset_handle is not None:
+                _clients_registry.reset_current_identity(reset_handle)
+    if registry_on:
+        identity = _clients_registry.resolve_presented([key] if key else [])
+        if identity is not None and identity.is_admin:
+            # An MCP-keyset key (MCP_API_KEYS / RAG_API_KEYS) — admin semantics.
+            reset_handle = _clients_registry.set_current_identity(identity)
+            try:
+                return await call_next(request)
+            finally:
+                _clients_registry.reset_current_identity(reset_handle)
+        if identity is not None:
+            denial = _rag_acl_path_denial(request.url.path, request.method, identity)
+            if denial is not None:
+                return JSONResponse({"detail": denial}, status_code=403)
+            reset_handle = _clients_registry.set_current_identity(identity)
+            try:
+                return await call_next(request)
+            finally:
+                _clients_registry.reset_current_identity(reset_handle)
     return JSONResponse({"detail": "Missing or invalid API key"}, status_code=401)
 
 
@@ -872,14 +940,58 @@ async def _metrics_middleware(request: Request, call_next):
     return response
 
 
+# --- /metrics auth gate (fleet wave-3 C2: the exposition is unauthenticated
+# by default — in-cluster scrapers; bound the exposure with a
+# NetworkPolicy / AuthorizationPolicy if the pod is otherwise broadly
+# reachable).  RAG_METRICS_AUTH=1 requires a key on every scrape, accepted
+# from the same headers as the REST + MCP auth (X-RAG-Api-Key / X-API-Key /
+# Authorization: Bearer) and validated against RAG_API_KEY plus the MCP key
+# set (MCP_API_KEYS / RAG_API_KEYS) — the ServiceMonitor then needs
+# metrics.bearerTokenSecret (values: metrics.serviceMonitorBearerSecret).
+
+
+def _metrics_auth_enabled() -> bool:
+    """True when RAG_METRICS_AUTH gates the /metrics exposition (read per
+    request — a config change needs no restart).  Default off = the
+    exposition stays public, byte-for-byte today's behaviour."""
+    return os.environ.get("RAG_METRICS_AUTH", "").strip().lower() in ("1", "true", "yes")
+
+
+def _metrics_key_ok(request: Request) -> bool:
+    """True when the request presents a key that satisfies the metrics gate."""
+    import hmac
+
+    presented: list[str] = []
+    key = request.headers.get("X-RAG-Api-Key") or request.headers.get("X-API-Key") or ""
+    if key.strip():
+        presented.append(key.strip())
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer ") and auth[len("Bearer ") :].strip():
+        presented.append(auth[len("Bearer ") :].strip())
+    if not presented:
+        return False
+    from multimodal_rag.utils.mcp_auth import configured_keys
+
+    valid = [k for k in (_RAG_API_KEY, *configured_keys(("MCP_API_KEYS", "RAG_API_KEYS"))) if k]
+    for candidate in presented:
+        for v in valid:
+            if hmac.compare_digest(candidate.encode("utf-8"), v.encode("utf-8")):
+                return True
+    return False
+
+
 @app.get("/metrics")
-async def api_metrics():
+async def api_metrics(request: Request):
     """Prometheus exposition (process-local counters/histograms).
 
-    Exempt from ``RAG_API_KEY`` like the health endpoints (scrapers are
-    in-cluster; bound the exposure with a NetworkPolicy / AuthorizationPolicy
-    if the pod is otherwise broadly reachable).
+    Exempt from ``RAG_API_KEY`` by default, like the health endpoints
+    (scrapers are in-cluster; bound the exposure with a NetworkPolicy /
+    AuthorizationPolicy if the pod is otherwise broadly reachable).  Set
+    ``RAG_METRICS_AUTH=1`` (helm: security.metricsAuth) to require an API
+    key on every scrape — see ``_metrics_key_ok`` for the accepted headers.
     """
+    if _metrics_auth_enabled() and not _metrics_key_ok(request):
+        raise HTTPException(401, "Metrics exposition requires an API key (RAG_METRICS_AUTH is on)")
     from multimodal_rag.utils.metrics import render_metrics
 
     body, content_type = render_metrics()
@@ -1098,7 +1210,7 @@ async def readyz():
         raise HTTPException(503, "DatasetManager not yet initialised")
     try:
         url = f"http://{_dm.qdrant_host}:{_dm.qdrant_port}/readyz"
-        async with httpx.AsyncClient(timeout=2.0) as client:
+        async with httpx2.AsyncClient(timeout=2.0) as client:
             resp = await client.get(url)
         if resp.status_code != 200:
             raise HTTPException(503, f"Qdrant not ready (HTTP {resp.status_code})")
@@ -1132,10 +1244,19 @@ async def api_create_dataset(body: dict[str, Any] = Body(...)):
     full-quality files are kept on disk after preprocessing.
     ``password`` is optional — if set, all read operations on the dataset
     will require it.
+
+    Whitespace runs in ``name`` are auto-converted to ``_`` before creation
+    (``"my dataset"`` → ``"my_dataset"``) — the common hand-typo, and the
+    one invalid character a user can type without noticing.  Any other
+    name the validator rejects comes back as HTTP 400, not 500.
     """
     name = body.get("name", "").strip()
     if not name:
         raise HTTPException(400, "Field 'name' is required")
+    # Dataset names allow [A-Za-z0-9._-]; spaces are the invalid character
+    # users hit by accident, so convert whitespace runs to '_' instead of
+    # failing the request outright.
+    name = re.sub(r"\s+", "_", name)
     description = body.get("description", "")
     dm = await get_manager_async()
     # Defaults follow the server-wide config (env RAG_CAPTION_WITH_ASR /
@@ -1165,6 +1286,10 @@ async def api_create_dataset(body: dict[str, Any] = Body(...)):
         return {"status": "ok", "dataset": meta}
     except FileExistsError as e:
         raise HTTPException(409, str(e))
+    except ValueError as e:
+        # _validate_name rejections (invalid characters etc.) — a clear 400
+        # carrying the validator message, not an unhandled ValueError → 500.
+        raise HTTPException(400, str(e))
 
 
 @app.post("/api/datasets/{name}/verify-password")
@@ -1278,17 +1403,61 @@ async def api_media_token(name: str, request: Request):
     return {"token": _sign_media_token(name, "*"), "ttl_seconds": _MEDIA_TOKEN_TTL}
 
 
+def _rag_acl_filter_datasets(datasets: list) -> tuple:
+    """D15: drop datasets the caller's registry-key identity may not see.
+
+    Returns ``(visible, hidden_count)``.  With the registry unconfigured (the
+    default) or an admin identity, nothing is filtered — byte-identical list.
+    """
+    if not _clients_registry.registry_configured():
+        return datasets, 0
+    identity = _clients_registry.current_identity()
+    if identity is None or identity.is_admin:
+        return datasets, 0
+    visible = [d for d in datasets if _clients_registry.dataset_allowed(identity, str(d.get("name", "")))]
+    return visible, len(datasets) - len(visible)
+
+
 @app.get("/api/datasets")
-async def api_list_datasets(request: Request):
-    """List all datasets with metadata."""
+async def api_list_datasets(
+    request: Request,
+    cursor: str = Query("", description="Opaque continuation token from a previous page's next_cursor"),
+    limit: int = Query(0, ge=0, le=10000, description="Page size; 0 = no pagination (full list, default)"),
+):
+    """List all datasets with metadata.
+
+    Additive cursor pagination (Wave-4): with no ``cursor``/``limit`` the
+    response is exactly the historical full listing.  Passing either
+    parameter returns ``{"datasets": [...], "next_cursor": ...}`` — feed
+    ``next_cursor`` back as ``cursor`` to walk the listing (``null`` = done).
+    """
     dm = await get_manager_async()
     loop = asyncio.get_running_loop()
-    datasets = await loop.run_in_executor(sync_pool, dm.list_datasets)
+    if not cursor and not limit:
+        datasets = await loop.run_in_executor(sync_pool, dm.list_datasets)
+        cid = _unlock_client_id(request)
+        with _UNLOCK_CACHE_LOCK:
+            for ds in datasets:
+                ds["unlocked"] = (ds["name"], cid) in _UNLOCK_CACHE
+        datasets, _acl_hidden = _rag_acl_filter_datasets(datasets)
+        return {"datasets": datasets, **({"acl_hidden": _acl_hidden} if _acl_hidden else {})}
+    try:
+        page = await loop.run_in_executor(
+            sync_pool, lambda: dm.list_datasets(cursor=cursor or None, limit=limit or None)
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    datasets = page["datasets"]
     cid = _unlock_client_id(request)
     with _UNLOCK_CACHE_LOCK:
         for ds in datasets:
             ds["unlocked"] = (ds["name"], cid) in _UNLOCK_CACHE
-    return {"datasets": datasets}
+    datasets, _acl_hidden = _rag_acl_filter_datasets(datasets)
+    return {
+        "datasets": datasets,
+        "next_cursor": page["next_cursor"],
+        **({"acl_hidden": _acl_hidden} if _acl_hidden else {}),
+    }
 
 
 @app.get("/api/datasets/{name}")
@@ -1374,8 +1543,15 @@ async def api_add_documents(
     payload: list[Any]
     if isinstance(body, list):
         payload = body
-    else:
+    elif isinstance(body, (dict, str)):
         payload = [body]
+    else:
+        # A non-JSON body (e.g. form-encoded) surfaces here as an opaque
+        # object that would otherwise flow into the pipeline and crash it
+        # with a 500 several layers deep.
+        raise HTTPException(422, "Send JSON (Content-Type: application/json): a document or an array of documents")
+    if not all(isinstance(d, (str, dict)) for d in payload):
+        raise HTTPException(422, "Each document must be a string or an object")
 
     try:
         dm = await get_manager_async()
@@ -1392,6 +1568,10 @@ async def api_add_documents(
         return resp
     except FileNotFoundError:
         raise HTTPException(404, f"Dataset '{name}' not found")
+    except MediaRefError as exc:
+        # A document carried a media ref the server refuses to read/fetch
+        # (local path outside the allowlist, blocked http host, s3://).
+        raise HTTPException(400, str(exc))
 
 
 # -- Files -------------------------------------------------------------------
@@ -1516,6 +1696,7 @@ async def api_upload_files_batch(
             _record_upload_history(name, r.get("files") or [], "files")
         except Exception as exc:
             _upload_jobs.fail(job_id, str(exc))
+            _notify_ingest_hook(name, 0, "error")
             _record_upload_history(
                 name,
                 [{"file": orig, "chunks": 0, "error": str(exc)} for _, orig in file_entries],
@@ -1600,6 +1781,7 @@ async def api_upload_urls_batch(
             _record_upload_history(name, r.get("files") or [], "urls")
         except Exception as exc:
             _upload_jobs.fail(job_id, str(exc))
+            _notify_ingest_hook(name, 0, "error")
             failed_files = [
                 {"file": Path(url.split("?")[0].rstrip("/")).name or "file", "chunks": 0, "error": str(exc)}
                 for url in urls
@@ -1850,7 +2032,7 @@ async def _federated_rerank_rag(dm: DatasetManager, targets: list[str]) -> Any:
 
 async def _federated_rest_search(
     dm: DatasetManager,
-    datasets: "list[str] | str",
+    datasets: "str | list[Any] | tuple[Any, ...]",
     q: str,
     top_k: int = 5,
     use_reranker: bool = False,
@@ -1876,9 +2058,15 @@ async def _federated_rest_search(
     use ``POST /api/datasets/{name}/unlock`` first).
     """
     loop = asyncio.get_running_loop()
+    # D15: a registry-key identity's ACL restricts the fan-out (skipped with
+    # a note, exactly like a password lock). None = no enforcement.
+    identity = _clients_registry.current_identity() if _clients_registry.registry_configured() else None
+    allowed = None
+    if identity is not None and not identity.is_admin:
+        allowed = lambda name: _clients_registry.dataset_allowed(identity, name)
     try:
         targets, skipped, errors = await loop.run_in_executor(
-            sync_pool, resolve_federated_targets, dm, datasets, is_unlocked
+            sync_pool, partial(resolve_federated_targets, dm, datasets, is_unlocked, allowed)
         )
     except (TypeError, ValueError) as exc:
         raise HTTPException(400, str(exc))
@@ -1938,9 +2126,10 @@ async def _federated_rest_search(
     results: list[dict[str, Any]] = []
     for name, doc, score in merged:
         entry_out: dict[str, Any] = {"dataset": name}
-        extra = extra_fields.get(id(doc))
-        if extra:
-            entry_out.update(extra)
+        # "extra" above already names a rerank-path dict — distinct name here.
+        extra_meta = extra_fields.get(id(doc))
+        if extra_meta:
+            entry_out.update(extra_meta)
         entry_out["content"] = doc
         entry_out["score"] = round(float(score), 4)
         if isinstance(doc, dict):
@@ -2042,18 +2231,43 @@ async def api_list_documents(
     name: str,
     request: Request,
     limit: int = Query(50, ge=1, le=1000),
+    cursor: str | None = Query(
+        None, description="Opaque continuation token from a previous page's next_cursor ('' = start of listing)"
+    ),
     x_dataset_password: str | None = Header(None, alias="X-Dataset-Password"),
 ):
-    """List stored document payloads in a dataset."""
+    """List stored document payloads in a dataset.
+
+    Additive cursor pagination (Wave-4): with no ``cursor`` parameter the
+    response is exactly the historical first-page listing.  Passing
+    ``cursor`` (empty string to start, or a previous ``next_cursor``)
+    returns ``{"documents": [...], "next_cursor": ...}`` and resumes at the
+    token instead of re-reading the collection from the top.
+    """
     dm = await get_manager_async()
     try:
         await _require_dataset_password(dm, name, x_dataset_password, request)
         loop = asyncio.get_running_loop()
-        docs = await loop.run_in_executor(sync_pool, dm.list_documents, name, limit)
-        _meta = await loop.run_in_executor(sync_pool, dm.get_dataset, name, False)
-        total = _meta.get("document_count", 0)
-        entries = [{"id": doc_id, "payload": payload} for doc_id, payload in docs]
-        return {"documents": entries, "count": total}
+        if cursor is None:
+            docs = await loop.run_in_executor(sync_pool, lambda: dm.list_documents(name, limit, check_embedder=False))
+            _meta = await loop.run_in_executor(sync_pool, dm.get_dataset, name, False)
+            total = _meta.get("document_count", 0)
+            entries = [{"id": doc_id, "payload": payload} for doc_id, payload in docs]
+            return {"documents": entries, "count": total}
+        try:
+            # Pass cursor through verbatim: "" is the documented "start of
+            # listing" token — coercing it to None (cursor or None) flips
+            # list_documents to its list return shape and 500s below.
+            page = await loop.run_in_executor(
+                sync_pool, lambda: dm.list_documents(name, limit, cursor, check_embedder=False)
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        # list_documents' shared signature returns list|dict; with a cursor the
+        # page dict is the live shape (the None-cursor list path ran above).
+        page = cast("dict[str, Any]", page)
+        entries = [{"id": doc_id, "payload": payload} for doc_id, payload in page["documents"]]
+        return {"documents": entries, "next_cursor": page["next_cursor"]}
     except FileNotFoundError:
         raise HTTPException(404, f"Dataset '{name}' not found")
 
@@ -2139,7 +2353,7 @@ def _dataset_export_stream(dm: DatasetManager, name: str):
                     fh.write(json.dumps(doc, default=str))
                     fh.write("\n")
 
-                dm.stream_all_documents(name, _emit)
+                dm.stream_all_documents(name, _emit, check_embedder=False)
             with open(tmp, "rb") as rf:
                 info = tarfile.TarInfo("documents.jsonl")
                 info.size = os.fstat(rf.fileno()).st_size
@@ -2187,6 +2401,20 @@ async def api_export_dataset(
     except FileNotFoundError:
         raise HTTPException(404, f"Dataset '{name}' not found")
 
+    # Resolve the collection BEFORE the response starts: once the stream
+    # begins the headers are already sent, and a failure inside the generator
+    # would surface to the client as an empty 200 (Starlette's "response
+    # already started").  Payload reads bypass the embedder guard — export
+    # embeds nothing; re-embedding happens on the import side.
+    def _probe_collection() -> None:
+        rag = dm._get_rag(name, check_embedder=False)
+        vs = rag.vector_store
+        if vs is None or isinstance(vs, dict):
+            return
+        vs._client.scroll(vs.collection_name, limit=1)  # type: ignore[attr-defined]
+
+    await loop.run_in_executor(sync_pool, _probe_collection)
+
     # Generate the (blocking) tar stream in a worker thread so the event
     # loop stays free, yielding chunks to the response as they are produced.
     loop = asyncio.get_running_loop()
@@ -2220,7 +2448,7 @@ def _documents_download_stream(dm: DatasetManager, name: str, fmt: str):
     kept so media stays locatable.  Paginated Qdrant scroll — no memory
     blow-up on large collections.
     """
-    rag = dm._get_rag(name)
+    rag = dm._get_rag(name, check_embedder=False)
     vs = rag.vector_store
     if vs is None or isinstance(vs, dict):
         return
@@ -2401,6 +2629,19 @@ async def api_serve_file(
     if not inline:
         safe_name = quote(file_path.name, safe="")
         headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{safe_name}"
+    # Derived media (`*_preprocessed`, `*_segment_*`, `*_truncated`) can be
+    # regenerated at any time by a repair pass or another replica's
+    # preprocessing — the bytes under a given URL are NOT immutable.  Without
+    # an explicit policy, browsers apply heuristic caching and will keep
+    # serving stale (historically: corrupt, pre-repair) bytes for days
+    # without ever revalidating the etag.  `no-cache` forces conditional
+    # revalidation (etag/last-modified are already sent by FileResponse), so
+    # every client sees regenerated bytes as soon as they exist — at the cost
+    # of one 304-round-trip per reuse.  Originals are immutable (content-hash
+    # names), so normal caching stays.
+    stem_matches = file_path.stem.endswith("_preprocessed") or file_path.stem.endswith("_truncated")
+    if stem_matches or "_segment_" in file_path.name:
+        headers["Cache-Control"] = "no-cache"
     return FileResponse(str(file_path), headers=headers)
 
 
@@ -2412,7 +2653,7 @@ async def api_serve_file(
 _MAX_UPLOAD_BYTES = max(0, int(os.environ.get("MAX_UPLOAD_BYTES", str(1024 * 1024 * 1024))))
 
 
-async def _stream_upload(file: UploadFile, dest: Any, max_bytes: int = _MAX_UPLOAD_BYTES) -> int:
+async def _stream_upload(file: StarletteUploadFile, dest: Any, max_bytes: int = _MAX_UPLOAD_BYTES) -> int:
     """Stream an UploadFile to *dest*, aborting once *max_bytes* is exceeded.
 
     Returns the number of bytes written.
@@ -2871,7 +3112,7 @@ def _qdrant_replica_usage(
     if now - _QDRANT_TELEMETRY_CACHE["ts"] <= _QDRANT_TELEMETRY_TTL:
         return dict(_QDRANT_TELEMETRY_CACHE["usage"])
     try:
-        import httpx
+        import httpx2
 
         usage: dict[str, int] = {}
         for r in replicas:
@@ -2879,7 +3120,7 @@ def _qdrant_replica_usage(
             if not host:
                 continue
             try:
-                with httpx.Client(timeout=10.0) as client:
+                with httpx2.Client(timeout=10.0) as client:
                     # details_level=6 (full) exposes per-shard local storage.
                     resp = client.get(f"http://{host}.{qhost}:{qport}/telemetry?details_level=6")
                     resp.raise_for_status()
@@ -2951,9 +3192,9 @@ def _collect_health_stats() -> dict[str, Any]:
     qdrant_collections = 0
     qdrant_total_points = 0
     try:
-        import httpx
+        import httpx2
 
-        with httpx.Client(timeout=5.0) as client:
+        with httpx2.Client(timeout=5.0) as client:
             qhost = os.environ.get("QDRANT_HOST", "")
             qport = os.environ.get("QDRANT_PORT", "6333")
             if qhost:
@@ -2994,9 +3235,9 @@ def _collect_health_stats() -> dict[str, Any]:
     # spread without exec/kubectl.
     cluster_info: dict[str, Any] | None = None
     try:
-        import httpx
+        import httpx2
 
-        with httpx.Client(timeout=5.0) as client:
+        with httpx2.Client(timeout=5.0) as client:
             qhost = os.environ.get("QDRANT_HOST", "")
             qport = os.environ.get("QDRANT_PORT", "6333")
             if qhost:
@@ -3402,6 +3643,38 @@ async def api_recreate_dataset(
     return {"job_id": job_id, "status": "recreating", "total_files": len(file_entries)}
 
 
+@app.post("/api/admin/datasets/{name}/repair-preprocessed")
+async def api_repair_preprocessed(
+    name: str,
+    request: Request,
+    dry_run: bool = False,
+    x_dataset_password: str | None = Header(None, alias="X-Dataset-Password"),
+) -> dict[str, Any]:
+    """Regenerate broken ``*_preprocessed`` media files from their originals.
+
+    Concurrent preprocessing of one file (multiple server replicas share the
+    dataset PVC) can leave an interleaved, unplayable ``*_preprocessed`` file
+    behind even though the original is intact — the classic symptom is a
+    browser reporting "the video can't be played because the file is corrupt"
+    while the dataset's search index is fine.  This scans the dataset's
+    ``files/`` directory, validates every ``*_preprocessed`` file (ffprobe +
+    MP4 atom walk for video/audio, full PIL decode for images) and re-runs
+    preprocessing on the tier-1 original for each broken copy.
+
+    Pass ``?dry_run=true`` to only report which files would be repaired.
+    Synchronous: only broken files are re-transcoded, nothing is re-embedded,
+    so the call returns the full repair report directly.
+    """
+    dm = await get_manager_async()
+    await _require_dataset_password(dm, name, x_dataset_password, request)
+    loop = asyncio.get_running_loop()
+    try:
+        await loop.run_in_executor(sync_pool, dm.get_dataset, name, False)
+    except FileNotFoundError:
+        raise HTTPException(404, f"Dataset '{name}' not found")
+    return await loop.run_in_executor(sync_pool, dm.repair_preprocessed_media, name, dry_run)
+
+
 @app.post("/api/admin/datasets/import")
 async def api_import_dataset(request: Request) -> dict[str, Any]:
     """Restore a dataset from a ``GET /api/datasets/{name}/export`` backup.
@@ -3450,6 +3723,8 @@ async def api_import_dataset(request: Request) -> dict[str, Any]:
             s3_uri = str(body.get("s3_uri") or "").strip()
             if not s3_uri:
                 raise HTTPException(400, "JSON body must provide 's3_uri' (or upload multipart 'file')")
+            if not s3_uri.startswith("s3://"):
+                raise HTTPException(400, "s3_uri must be an s3:// URI (s3://bucket/key.tar.gz)")
             new_name = body.get("new_name") or None
             overwrite = bool(body.get("overwrite", False))
             password = body.get("password") or None
@@ -3458,6 +3733,32 @@ async def api_import_dataset(request: Request) -> dict[str, Any]:
             tmp_path = Path(await loop.run_in_executor(sync_pool, _download_s3, s3_uri))
         else:
             raise HTTPException(415, "Send multipart/form-data with a 'file' field, or JSON with 's3_uri'")
+
+        # Password-gate overwrites of EXISTING datasets: prepare_import
+        # DELETES the target when overwrite=true, and destructive routes are
+        # password-gated (delete/recreate/migrate/backfill all are) — the
+        # import path must not be a bypass.  The target name comes from
+        # new_name or the archive's own meta.json, whichever prepare_import
+        # will use; peek it before anything is touched.
+        if overwrite:
+            try:
+                backup_meta = await loop.run_in_executor(sync_pool, dm.peek_backup_meta, tmp_path)
+            except KeyError as exc:
+                # Not an export archive — map to 400 (KeyError isn't a
+                # ValueError, so the generic handler below would 500 it).
+                raise HTTPException(400, f"Not a dataset export (missing {exc}): cannot determine the overwrite target")
+            except TypeError as exc:
+                raise HTTPException(400, str(exc))
+            candidate = str(new_name or backup_meta.get("name") or "").strip()
+            if candidate:
+                dm._validate_name(candidate)
+                # SECURITY: the fresh variant, not the TTL-cached check — a
+                # pod that cached a stale negative (NFS visibility delay or
+                # the 30s TTL from before the dataset was protected) would
+                # skip this gate and replace a protected dataset without its
+                # password (demonstrated on the 4-replica rollout).
+                if await loop.run_in_executor(sync_pool, dm.has_password_fresh, candidate):
+                    await _require_dataset_password(dm, candidate, password, request)
 
         plan = await loop.run_in_executor(
             sync_pool,
@@ -3540,9 +3841,7 @@ async def index():
     # X-RAG-Api-Key themselves.
     html = _HTML_INDEX
     if RAG_OCR_DEFAULT:
-        html = html.replace(
-            "</head>", '<meta name="rag-ocr-default" content="true"></head>', 1
-        )
+        html = html.replace("</head>", '<meta name="rag-ocr-default" content="true"></head>', 1)
     if _RAG_API_KEY:
         html = html.replace(
             "</head>",
@@ -3588,6 +3887,15 @@ def main():
     os.environ["RAG_REMOTE"] = os.environ.get("RAG_REMOTE", "true")
 
     setup_logger(level=args.log_level)
+
+    # Live autopsy hook: `kill -USR1 <pid>` dumps every thread's stack to the
+    # container log — the definitive way to see where a hung request is
+    # actually parked (pool exhaustion, blocked model call, deadlocked lock).
+    import faulthandler
+    import signal
+
+    faulthandler.register(signal.SIGUSR1)
+    logger.info("Stack-dump hook installed: kill -USR1 <pid> dumps all thread stacks")
 
     # Must share MEDIA_TOKEN_SECRET with the MCP server so protected media is
     # served via short-lived HMAC tokens (never a clear ?password= URL).

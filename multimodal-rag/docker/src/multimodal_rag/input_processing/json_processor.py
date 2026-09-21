@@ -129,12 +129,20 @@ class JSONProcessor:
         content = Path(json_path).read_text(encoding="utf-8")
         try:
             data = json.loads(content)
-        except json.JSONDecodeError as e:
+        except (json.JSONDecodeError, RecursionError) as e:
+            # RecursionError: pathologically deep nesting trips the C scanner
+            # (and our own flattener) before JSONDecodeError ever fires.
             logger.warning("Invalid JSON in %s: %s", json_path, e)
             return []
 
         source = str(json_path)
-        return self.process_data(data, source)
+        try:
+            return self.process_data(data, source)
+        except RecursionError:
+            # The parse survived but the flattener recursed per level —
+            # modern scanners accept nesting depths our flattener cannot.
+            logger.warning("JSON in %s is too deeply nested to flatten — skipped", json_path)
+            return []
 
     def process_data(self, data: Any, source: str = "") -> list[dict[str, Any]]:
         """Process an already-parsed JSON value into document dicts."""

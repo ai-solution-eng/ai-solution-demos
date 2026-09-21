@@ -93,6 +93,14 @@ class ImageProcessor:
 
         HTTP(S) URLs are passed through without resizing (the server fetches them).
         Data URLs and local file paths are resized in memory.
+
+        .. warning::
+            ``_read_file`` opens ANY path (no allowlist).  This method must
+            never be wired to user-controlled URLs — document media refs
+            entering through the API/MCP are validated centrally in
+            ``rag_system`` (see ``utils/media_paths.py``); anything new that
+            routes user input here must apply the same
+            ``_media_path_allowed`` check first.
         """
         if url.startswith(("http://", "https://")):
             return {"text": caption or f"[Image: {url}]", "image": url, "source": url}

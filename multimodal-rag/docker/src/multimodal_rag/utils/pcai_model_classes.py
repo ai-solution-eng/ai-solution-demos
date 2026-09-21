@@ -6,13 +6,13 @@ import os
 import re
 import sys
 import threading
+import time
 import weakref
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import cached_property, partial
 from typing import Any, Literal
 
-import httpx
 import httpx2
 from openai import AsyncOpenAI, OpenAI
 
@@ -39,8 +39,8 @@ _MLIS_PAGE = "https://mlis.pcai-se-ai-application.hst.rdlabs.hpecorp.net/ui/depl
 _NOT_DEPLOYED = ""
 
 
-def _pool_limits_from_env() -> httpx.Limits:
-    """Build httpx connection-pool limits from env vars.
+def _pool_limits_from_env() -> httpx2.Limits:
+    """Build httpx2 connection-pool limits from env vars.
 
     Default (128) tracks the benchmark target: concurrency levels are chosen
     so the client is never the bottleneck, and SGLang servers are typically
@@ -48,7 +48,7 @@ def _pool_limits_from_env() -> httpx.Limits:
     ``MODEL_POOL_MAX_CONNECTIONS`` (and ``MODEL_POOL_MAX_KEEPALIVE_CONNECTIONS``)
     for other deployments (e.g. the original single-replica chart used 30/10).
     """
-    return httpx.Limits(
+    return httpx2.Limits(
         max_connections=model_pool_max_connections(),
         max_keepalive_connections=model_pool_max_keepalive_connections(),
         keepalive_expiry=120.0,
@@ -74,11 +74,11 @@ def model_pool_max_keepalive_connections() -> int:
 # Single source of truth for model-request timeouts.  NOTE: the openai SDK
 # resolves a *per-request* timeout from the OpenAI/AsyncOpenAI ``timeout``
 # kwarg — falling back to its own DEFAULT_TIMEOUT (connect=5s, read=600s) —
-# and IGNORES the timeout configured on an injected httpx client.  So the
+# and IGNORES the timeout configured on an injected httpx2 client.  So the
 # SDK clients MUST be given this explicitly (see _openai_client_kwargs) or
-# the httpx-level value is dead config: a 5s connect timeout turns slow
+# the httpx2-level value is dead config: a 5s connect timeout turns slow
 # TLS handshakes at high concurrency into spurious request failures.
-_MODEL_REQUEST_TIMEOUT = httpx.Timeout(600.0, connect=30.0)
+_MODEL_REQUEST_TIMEOUT = httpx2.Timeout(600.0, connect=30.0)
 
 
 # TLS verification for "remote" model endpoints.  PCAI endpoints use
@@ -136,8 +136,8 @@ def _client_verify(remote: bool) -> str | bool:
 
 
 # Sync clients are thread-safe and can be shared globally.
-_SHARED_HTTP_CLIENT = httpx.Client()
-_SHARED_REMOTE_HTTP_CLIENT = httpx.Client(
+_SHARED_HTTP_CLIENT = httpx2.Client()
+_SHARED_REMOTE_HTTP_CLIENT = httpx2.Client(
     verify=_client_verify(remote=True),
     limits=_pool_limits_from_env(),
 )
@@ -153,7 +153,7 @@ _async_client_lock = threading.Lock()
 # Fallback async client used when no event loop is running.  A single
 # process-global instance is reused (and lives for the process) so this
 # rare path never leaks a fresh client+sockets per call.
-_async_client_fallback: httpx.AsyncClient | None = None
+_async_client_fallback: httpx2.AsyncClient | None = None
 _async_client_fallback_lock = threading.Lock()
 
 # Cache of discovered model names keyed by the ``{base_url}/models`` URL.
@@ -164,6 +164,11 @@ _async_client_fallback_lock = threading.Lock()
 _discovered_model_names: dict[str, str] = {}
 _discovered_model_lock = threading.Lock()
 _MAX_DISCOVERED_MODEL_NAMES = max(64, int(os.environ.get("DISCOVERED_MODEL_CACHE_MAX", "512")))
+# Negative cache: a *failed* discovery is retried only after this TTL.
+# Without it, every model construction against a down endpoint repeats the
+# full 10s timeout — historically on the event loop itself.
+_DISCOVERY_FAILURE_TTL_S = 60.0
+_discovery_failures: dict[str, float] = {}
 
 
 def discover_model_name(base_url: str, api_key: str = "", remote: bool = True) -> str:
@@ -173,13 +178,17 @@ def discover_model_name(base_url: str, api_key: str = "", remote: bool = True) -
     serve a single model, so the first ``data[].id`` is returned.  Returns
     ``""`` on any failure (network, non-200, empty list) -- keeping this
     best-effort so a transient blip never hard-fails the caller.  Successful
-    lookups are cached per URL; failures are not, so a recovered endpoint is
-    retried on the next call.
+    lookups are cached per URL; failures carry a short negative-TTL so a
+    down endpoint is not re-probed on every single construction.
     """
     url = f"{base_url}/models"
     cached = _discovered_model_names.get(url)
     if cached:
         return cached
+    with _discovered_model_lock:
+        last_failure = _discovery_failures.get(url)
+    if last_failure is not None and (time.monotonic() - last_failure) < _DISCOVERY_FAILURE_TTL_S:
+        return ""
     client = _SHARED_REMOTE_HTTP_CLIENT if remote else _SHARED_HTTP_CLIENT
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     try:
@@ -197,10 +206,13 @@ def discover_model_name(base_url: str, api_key: str = "", remote: bool = True) -
             )
             with _discovered_model_lock:
                 _discovered_model_names[url] = ids[0]
+                _discovery_failures.pop(url, None)
                 if len(_discovered_model_names) > _MAX_DISCOVERED_MODEL_NAMES:
                     _discovered_model_names.pop(next(iter(_discovered_model_names)))
             return ids[0]
         logger.warning("No models listed at %s; leaving model_name empty.", url)
+        with _discovered_model_lock:
+            _discovery_failures[url] = time.monotonic()
     except Exception as e:
         logger.warning(
             "Could not auto-discover model name from %s: %s. "
@@ -208,10 +220,12 @@ def discover_model_name(base_url: str, api_key: str = "", remote: bool = True) -
             url,
             e,
         )
+        with _discovered_model_lock:
+            _discovery_failures[url] = time.monotonic()
     return ""
 
 
-def _get_async_client(remote: bool = False) -> httpx.AsyncClient:
+def _get_async_client(remote: bool = False) -> httpx2.AsyncClient:
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -222,7 +236,7 @@ def _get_async_client(remote: bool = False) -> httpx.AsyncClient:
         global _async_client_fallback
         with _async_client_fallback_lock:
             if _async_client_fallback is None:
-                _async_client_fallback = httpx.AsyncClient(
+                _async_client_fallback = httpx2.AsyncClient(
                     verify=_client_verify(remote),
                     timeout=_MODEL_REQUEST_TIMEOUT,
                     limits=_pool_limits_from_env(),
@@ -232,7 +246,7 @@ def _get_async_client(remote: bool = False) -> httpx.AsyncClient:
     with _async_client_lock:
         client = cache.get(loop)
         if client is None:
-            client = httpx.AsyncClient(
+            client = httpx2.AsyncClient(
                 verify=_client_verify(remote),
                 timeout=_MODEL_REQUEST_TIMEOUT,
                 limits=_pool_limits_from_env(),
@@ -310,7 +324,7 @@ async def _get_mcp_servers(
         try:
             params: dict[str, Any] = {
                 "url": cfg["url"],
-                # TLS-bypass httpx factory (PCAI ingress serves self-signed
+                # TLS-bypass httpx2 factory (PCAI ingress serves self-signed
                 # certs); defined below.
                 "httpx_client_factory": _streamable_http_factory,
                 # Skip the session-terminate DELETE on cleanup - the PCAI
@@ -322,12 +336,12 @@ async def _get_mcp_servers(
             if cfg.get("headers"):
                 params["headers"] = cfg["headers"]
             # The openai-agents SDK hardcodes a 5s MCP session read timeout (*)
-            # and a 5s httpx request timeout (**) unless overridden. Real tool
+            # and a 5s httpx2 request timeout (**) unless overridden. Real tool
             # calls (SQL queries, k8s ops, ...) routinely exceed that, surfacing
             # as "Timed out while waiting for response to ClientRequest. Waited
             # 5.0 seconds." Allow an optional per-server `timeout` (seconds) in
             # the tool config, falling back to a saner default. We apply it to
-            # both the ClientSession read timeout and the underlying httpx
+            # both the ClientSession read timeout and the underlying httpx2
             # request so neither layer cancels slow tool calls.
             #   (*)  MCPServerStreamableHttp.client_session_timeout_seconds
             #   (**) MCPServerStreamableHttp.params["timeout"]
@@ -504,7 +518,7 @@ class BaseModel:
             "api_key": self.api_key,
             "base_url": self.base_url,
             "http_client": http_client,
-            # The SDK ignores the httpx client's timeout and applies its own
+            # The SDK ignores the injected client's timeout and applies its own
             # DEFAULT_TIMEOUT (connect=5s, read=600s) per request unless one
             # is given here — pass ours so connect=30s survives.
             "timeout": _MODEL_REQUEST_TIMEOUT,
@@ -972,7 +986,13 @@ class VoiceModel(BaseModel):
                     "voice": voice,
                 }
 
-            voices_str = ", ".join(sorted(self._get_available_voices())) or "default"
+            # No network I/O at tool-listing time: _get_available_voices()
+            # performs a blocking GET ({base_url}/audio/voices) that used to
+            # stall the event loop on every tools/list.  Advertise voices
+            # already resolved (init-time config or memoized from a prior
+            # call); otherwise advertise the configured default voice — the
+            # handler validates the requested voice against the endpoint.
+            voices_str = ", ".join(sorted(self.tts_supported_voices)) or (self.tts_voice or "default")
             tools.append(
                 ToolDefinition(
                     name="synthesize",
@@ -1249,7 +1269,10 @@ class SpeechFlowModel(BaseModel):
                 "models": models,
             }
 
-        from ..orchestration.context import get_current_context
+        # Lazy import: `orchestration.context` only exists when this module is
+        # vendored into a real package tree (src/<pkg>/utils/), never in the
+        # flat pcai_utils checkout — hence the mypy suppression.
+        from ..orchestration.context import get_current_context  # type: ignore[misc]
 
         ctx = get_current_context()
         artifact_store = getattr(ctx, "artifact_store", None)
@@ -1326,12 +1349,28 @@ class EmbeddingModel(BaseModel):
     tokenizer_name: str | None = None
     tokenizer_type: Literal["HuggingFace", "TikToken"] | None = None
 
+    # Other model id(s) that must be treated as THE SAME embedder by the
+    # dataset fingerprint guard — e.g. a quantized (FP8) redeploy of the same
+    # base model: datasets indexed under the alias keep working without a
+    # rebuild.  Accepts one name or a list (a comma-separated string is also
+    # normalized).  Set via values ``models.embedder.extra.alias``.
+    alias: str | list[str] | tuple[str, ...] | None = None
+
     mm_processor_kwargs: dict[str, Any] = field(default_factory=dict)
 
     # If input should be preprocessed
     preprocessor: Callable | None = None
 
     allowable_modalities = ("text", "audio", "image", "video")
+
+    @property
+    def alias_names(self) -> tuple[str, ...]:
+        """Normalized alias ids considered identical to :attr:`model_name`."""
+        if not self.alias:
+            return ()
+        if isinstance(self.alias, str):
+            return tuple(a.strip() for a in self.alias.split(",") if a.strip())
+        return tuple(str(a).strip() for a in self.alias if str(a).strip())
 
     @cached_property
     def text_splitter(self) -> TokenTextSplitter | None:

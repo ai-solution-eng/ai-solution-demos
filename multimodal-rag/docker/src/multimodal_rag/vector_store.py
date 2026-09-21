@@ -104,14 +104,13 @@ def build_payload_filter(filters: dict[str, Any] | None) -> Any:
     if date_from or date_to:
         from datetime import datetime
 
-        def _parse(value: Any, label: str) -> str:
+        def _parse(value: Any, label: str) -> datetime:
             try:
-                datetime.fromisoformat(str(value))
+                return datetime.fromisoformat(str(value))
             except ValueError as exc:
                 raise ValueError(f"search filter '{label}' must be an ISO-8601 datetime, got {value!r}") from exc
-            return str(value)
 
-        range_kwargs: dict[str, str] = {}
+        range_kwargs: dict[str, datetime] = {}
         if date_from:
             range_kwargs["gte"] = _parse(date_from, "date_from")
         if date_to:
@@ -220,6 +219,11 @@ def _points_to_docs(responses: Any) -> list[list[tuple[Document, float]]]:
         for pt in resp.points:
             payload = pt.payload or {}
             meta = dict(payload.get("metadata", {}))
+            # Private transport key (Wave-4): lets ``aretrieve`` back-fill the
+            # tier-3 base64 media onto the surviving top_k docs after a
+            # media-lite rerank.  Stripped again before results reach any
+            # caller — never part of API/MCP responses.
+            meta["_point_id"] = str(pt.id)
             doc = Document(page_content=payload.get("page_content", ""), metadata=meta)
             results.append((doc, float(pt.score)))
         all_results.append(results)
@@ -469,11 +473,18 @@ class QdrantVectorStore(VectorStore):
         bm25_stats_path: str | None = None,
         **kwargs: Any,
     ) -> None:
+        import threading
+
         self._client = client
         self.collection_name = collection_name
         self.embedding = embedding
         self.vector_name = vector_name
         self.bm25_stats_path = bm25_stats_path
+        # Serializes Qdrant calls on the in-process LOCAL backend, which has
+        # no internal locking — concurrent writers (the Wave-4 parallel ingest
+        # workers + the batch consumer) corrupt its state ("bad parameter or
+        # other API misuse").  See :meth:`_local_write_guard`.
+        self._write_lock = threading.Lock()
         # Feature-detection caches (None = not probed yet).  Collection
         # schema never changes short of a drop+recreate, and a fusion
         # failure against a given backend is permanent — both are probed
@@ -489,6 +500,11 @@ class QdrantVectorStore(VectorStore):
         # lets stores constructed against the legacy unnamed vector target the
         # named dense lane correctly after a Recreate.
         self._dense_vector_name: str | None = None
+        # True once a capability probe SUCCEEDED (whether or not it found a
+        # named dense vector): the collection's shape is then KNOWN, so an
+        # unnamed collection can safely target the server default vector
+        # (``using=None``) instead of the "dense" fallback below.
+        self._dense_name_probed: bool = False
         # Accept and ignore legacy kwargs (content_payload_key,
         # metadata_payload_key, distance_strategy, ...) for forward-compat.
         self._extra_kwargs = kwargs
@@ -500,6 +516,35 @@ class QdrantVectorStore(VectorStore):
         self._batchers: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, _QdrantBatcher] = (
             weakref.WeakKeyDictionary()
         )
+
+    def _local_write_guard(self) -> Any:
+        """Context manager serializing Qdrant calls on the in-process LOCAL backend.
+
+        qdrant-client's local mode has no internal locking: concurrent calls
+        (the Wave-4 parallel ingest workers + the batch consumer, or any
+        multi-threaded caller) corrupt its state — observed as
+        ``sqlite3.InterfaceError: bad parameter or other API misuse`` under
+        parallel ingests.  The remote HTTP/gRPC clients are thread-safe, so
+        this is a transparent null context there.  Acquire per client call
+        (never across an ``await``): the lock is taken inside the executor
+        thread.
+
+        Detection note: ``_client`` is qdrant_client's generic ``QdrantClient``
+        wrapper; its ``__module__`` never says "local", so unwrap the inner
+        backend (``_client._client`` → ``QdrantLocal``) before checking.
+        """
+        import contextlib
+
+        backend = self._client
+        inner = getattr(backend, "_client", None)
+        if inner is not None and type(inner).__module__.startswith("qdrant_client.local"):
+            return self._write_lock
+        try:
+            if type(backend).__module__.startswith("qdrant_client.local"):
+                return self._write_lock
+        except Exception:  # pragma: no cover - defensive
+            pass
+        return contextlib.nullcontext()
 
     # -- hybrid (dense + BM25) support ---------------------------------------
 
@@ -536,18 +581,105 @@ class QdrantVectorStore(VectorStore):
                         break
             capable = bool(sparse.get(bm25_lane.BM25_VECTOR_NAME)) and dense_name is not None
         except Exception as exc:
-            logger.debug("Hybrid capability probe failed for %s: %s", self.collection_name, exc)
+            # Transient failure (observed live: probes fired during the
+            # qdrant consensus outage of 2026-09-11 failed cluster-wide and
+            # healed minutes later).  A failed probe must NOT be cached —
+            # caching turned a 60-second outage into a permanent capability
+            # regression on every worker that probed during the window.
+            logger.warning(
+                "Hybrid capability probe failed for %s (will retry on the next call): %s",
+                self.collection_name,
+                exc,
+            )
+            return False
         self._bm25_capable = capable
         self._dense_vector_name = dense_name
+        # A successful probe means the collection shape is now known — the
+        # unnamed-default case included (otherwise _dense_using() could not
+        # tell "confirmed unnamed" apart from "probe never ran / failed").
+        self._dense_name_probed = True
         self._bm25_probed_at = now
         return capable
 
     def _dense_using(self) -> str | None:
         """The dense lane using-target: the detected named vector on
-        bm25-capable collections; else the store's configured name (None
-        = unnamed default on legacy collections).
+        bm25-capable collections; the store's configured name; ``None``
+        (= server default vector) on collections a successful probe
+        confirmed to use the UNNAMED default vector; else the "dense"
+        fallback.
+
+        The trailing ``or "dense"`` is the v3.6.1 fix for the live failure
+        where BOTH terms resolved falsy (probe failed during an outage +
+        no configured name) and qdrant received ``using=""`` — failing every
+        batched dataset search with "Not existing vector name" (2026-09-11:
+        ~30 errors/10min while ALL collections were named-dense, so the
+        fallback is safe fleet-wide).
+
+        ``"dense"`` is only correct for NAMED-vector collections though —
+        sending it for the legacy unnamed default vector fails with
+        "Dense vector dense is not found in the collection" (local mode /
+        "Not existing vector name" on the server), which broke every
+        search against a legacy collection.  A successful capability probe
+        tells the two shapes apart, so a confirmed-unnamed collection now
+        targets ``None`` (the server default) and the "dense" fallback
+        stays reserved for the genuinely-unknown case (probe failed or
+        never ran — the outage scenario the fallback was added for).
         """
-        return self._dense_vector_name or self.vector_name
+        if self._dense_vector_name:
+            return self._dense_vector_name
+        if self.vector_name:
+            return self.vector_name
+        if self._dense_name_probed:
+            return None
+        return "dense"
+
+    @staticmethod
+    def _embedding_scores_enabled() -> bool:
+        """Whether hybrid results should carry the true dense cosine.
+
+        Recomputed client-side from the dense vector the fusion response
+        carries back (``with_vector`` — Qdrant fetches vectors by id after
+        fusing, so this costs no extra query and no second HNSW traversal).
+        Disable via ``RAG_HYBRID_EMBEDDING_SCORES=0`` to skip the vector
+        transfer (very large k / very high-dimensional embedders).
+        """
+        return os.environ.get("RAG_HYBRID_EMBEDDING_SCORES", "1").strip().lower() not in ("0", "false", "no", "off")
+
+    def _stamp_dense_cosines(
+        self,
+        query_emb: list[float],
+        points: list[Any],
+        per_query: list[tuple[Document, float]],
+    ) -> None:
+        """Recompute the dense cosine client-side and stamp it on each doc.
+
+        The fusion response's points arrive in the same order as
+        ``per_query`` (both are built from the same response), so pairing is
+        positional — no point-id plumbing needed.  Best-effort: any shape or
+        numeric surprise (dimension drift, unexpected vector type, zero
+        vector) leaves the score unset and consumers show it as unknown.
+        """
+        q = np.asarray(query_emb, dtype=np.float32)
+        qnorm = float(np.linalg.norm(q))
+        if not np.isfinite(qnorm) or qnorm == 0.0:
+            return
+        dense_name = self._dense_using()
+        for pt, (doc, _fused) in zip(points, per_query):
+            vec = pt.vector
+            if isinstance(vec, dict):
+                vec = vec.get(dense_name)
+            if not isinstance(vec, (list, tuple)) or len(vec) != len(q):
+                continue
+            try:
+                v = np.asarray(vec, dtype=np.float32)
+            except (TypeError, ValueError):
+                continue
+            vnorm = float(np.linalg.norm(v))
+            if not np.isfinite(vnorm) or vnorm == 0.0:
+                continue
+            cos = float(np.dot(q, v) / (qnorm * vnorm))
+            if np.isfinite(cos):
+                doc.metadata["_embedding_score"] = round(cos, 4)
 
     def _bm25_stats(self) -> dict[str, Any] | None:
         """Fresh df stats for the query weighting, or ``None`` when unusable.
@@ -582,6 +714,7 @@ class QdrantVectorStore(VectorStore):
         stats = self._bm25_stats() if hybrid else None
         lightweight = _lightweight_payload_selector()
         out: list[tuple[Any, bool]] = []
+        want_dense_vectors = self._embedding_scores_enabled()
         for emb, k, need_media, filters, query_text in queries:
             flt = build_payload_filter(filters)
             with_payload: Any = True if need_media else lightweight
@@ -594,6 +727,8 @@ class QdrantVectorStore(VectorStore):
                     # degrade this one query to dense-only, audibly.
                     logger.warning("BM25 query vector build failed — dense-only for this query: %s", exc)
             if sparse is not None:
+                # Hoisted so the None-check below narrows the same value mypy sees.
+                dense_using = self._dense_using()
                 out.append(
                     (
                         QueryRequest(
@@ -604,7 +739,18 @@ class QdrantVectorStore(VectorStore):
                             ],
                             limit=k,
                             with_payload=with_payload,
-                            with_vector=False,
+                            # Carrying the stored dense vectors back on the SAME
+                            # fusion response (fetched by id post-fusion) lets the
+                            # caller recompute the true dense cosine client-side —
+                            # no extra query, no second HNSW traversal.
+                            # Carry the stored dense vector back on the fusion
+                            # response (see below).  On a confirmed-unnamed
+                            # collection there is no name to ask for — True
+                            # returns the single default vector; ``[None]``
+                            # would fail qdrant-client request validation.
+                            with_vector=([dense_using] if dense_using is not None else True)
+                            if want_dense_vectors
+                            else False,
                         ),
                         True,
                     )
@@ -634,11 +780,24 @@ class QdrantVectorStore(VectorStore):
         / the batcher, which is where hybrid fusion happens; this direct
         vector-supplied entry point (multimodal queries, dedup probes) keeps
         today's single-lane request shape.
+
+        *need_media* is honoured here too (Wave-4): the default ``True``
+        fetches the full payload exactly as before, while ``False`` applies
+        the lightweight payload selector — dedup probes only need the text +
+        non-media metadata, so megabytes of tier-3 base64 image/video stay in
+        Qdrant instead of crossing the wire per probe.
         """
         from qdrant_client.models import QueryRequest
 
         from multimodal_rag.utils.metrics import observe_qdrant
 
+        # Resolve the collection shape before naming the dense lane: on a
+        # legacy unnamed-vector collection the using-target must be the
+        # server default (None), not the "dense" fallback (which only
+        # exists for named-dense collections whose probe failed).  Cached
+        # by supports_hybrid() — one round trip per store, then free.
+        self.supports_hybrid()
+        with_payload: Any = True if need_media else _lightweight_payload_selector()
         with observe_qdrant("query_batch_points"):
             responses = self._client.query_batch_points(
                 collection_name=self.collection_name,
@@ -647,13 +806,15 @@ class QdrantVectorStore(VectorStore):
                         query=embedding,
                         using=self._dense_using(),
                         limit=k,
-                        with_payload=True,
+                        with_payload=with_payload,
                         with_vector=False,
                         filter=build_payload_filter(filters),
                     )
                 ],
             )
-        return _points_to_docs(responses)
+        # Exactly one request was submitted — unwrap the single per-query
+        # result list (_points_to_docs returns one list per response).
+        return _points_to_docs(responses)[0]
 
     def similarity_search_with_score_by_vector_batch(
         self, queries: list[tuple[list[float], int, bool, dict[str, Any] | None, str | None]]
@@ -709,7 +870,27 @@ class QdrantVectorStore(VectorStore):
         for _, is_hybrid in executed:
             SEARCH_HYBRID.labels(mode="hybrid" if is_hybrid else "dense").inc()
 
-        return _points_to_docs(responses)
+        results = _points_to_docs(responses)
+        # Annotate hybrid-lane results.  An RRF-fusion score is rank
+        # arithmetic (Σ 1/(rank+2) over the lanes) — NOT a cosine similarity —
+        # so every consumer that displays or thresholds these scores must be
+        # able to tell them apart ("_score_kind").  Dense-only results keep
+        # raw cosine and stay unstamped (consumers default to "cosine").
+        #
+        # When RAG_HYBRID_EMBEDDING_SCORES is on (default), the fusion request
+        # also carries back each point's stored dense vector, and the TRUE
+        # dense cosine is recomputed here against the query embedding we
+        # already hold — including for points the dense lane never ranked
+        # (sparse-only hits), which is exactly the score fusion hides.
+        want_vectors = self._embedding_scores_enabled()
+        for q_idx, ((_, is_hybrid), per_query) in enumerate(zip(executed, results)):
+            if not is_hybrid:
+                continue
+            for doc, _ in per_query:
+                doc.metadata["_score_kind"] = "rrf"
+            if want_vectors:
+                self._stamp_dense_cosines(queries[q_idx][0], responses[q_idx].points, per_query)
+        return results
 
     def _batcher(self) -> _QdrantBatcher:
         """Per-event-loop batcher (created lazily, one per running loop)."""
