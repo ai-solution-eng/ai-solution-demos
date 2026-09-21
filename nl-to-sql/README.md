@@ -178,27 +178,27 @@ We need to connect Open WebUI to our model deployed earlier in MLIS.
 - Open OpenWebUI
 
 - Navigate to **Admin Panel >> Settings >> Connections**
-![OpenWebUI Navigate to AdminPanel](https://github.com/ai-solution-eng/ai-solution-demos/blob/nl2sql/nl-to-sql-mcp-manufacturing/images/OpenWebUI_AdminPanel.png) ![OpenWebUI Navigate to Settings](https://github.com/ai-solution-eng/ai-solution-demos/blob/nl2sql/nl-to-sql-mcp-manufacturing/images/OpenWebUI_Settings.png) ![OpenWebUI Navigate to Connections](https://github.com/ai-solution-eng/ai-solution-demos/blob/nl2sql/nl-to-sql-mcp-manufacturing/images/OpenWebUI_Connections.png)
-![OpenWebUI Add Connection to Open WebUI](https://github.com/ai-solution-eng/ai-solution-demos/blob/nl2sql/nl-to-sql-mcp-manufacturing/images/OpenWebUI_AddConnection.png)
+![OpenWebUI Navigate to AdminPanel](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/nl-to-sql/images/OpenWebUI_AdminPanel.png) ![OpenWebUI Navigate to Settings](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/nl-to-sql/images/OpenWebUI_Settings.png) ![OpenWebUI Navigate to Connections](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/nl-to-sql/images/OpenWebUI_Connections.png)
+![OpenWebUI Add Connection to Open WebUI](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/nl-to-sql/images/OpenWebUI_AddConnection.png)
 - Fill in the details below (Remember you saved the endpoint url and api token in the previous step):
 
   URL : Use model endpoint link from MLIS or Gen AI-> Model Endpoints when you are on AIE 1.9 or newer and add /v1 to the end.
   
   Auth : Add the API Token generated from the model deployment and fill it in the API Key.
-![OpenWebUI Add PCAI Model to Open WebUI](https://github.com/ai-solution-eng/ai-solution-demos/blob/nl2sql/nl-to-sql-mcp-manufacturing/images/OpenWebUI_AddModel.png)
+![OpenWebUI Add PCAI Model to Open WebUI](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/nl-to-sql/images/OpenWebUI_AddModel.png)
 - Save
 
 
 Now we need to as well add the MCP Server Connection. Therefore navigate in Open WebUI to **Admin Panel >> Settings >> External Tools**
-![OpenWebUI Add Presto MCP Server to Open WebUI](https://github.com/ai-solution-eng/ai-solution-demos/blob/nl2sql/nl-to-sql-mcp-manufacturing/images/OpenWebUI_ExternalTools.png)
+![OpenWebUI Add Presto MCP Server to Open WebUI](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/nl-to-sql/images/OpenWebUI_ExternalTools.png)
 
 - Add a new Tool Server
 - Change the type to MCP Streamable HTTP 
 - Add the URL of your ezPresto MCP Server, for AIE 1.12 and above this can be retrieved from Data Engineering >> Data Sources >> MCP Server when you opened that menu click on copy endpoint. (if you don't have that button you might have an AIE version where MCP is not an official feature yet. For demo and non production use you can import it as custom framework still. If you are interested in that reach out to me.)
-![MCP Server Endpoint URL](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/nl-to-sql-mcp-manufacturing/images/MCPServer.png)
+![MCP Server Endpoint URL](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/nl-to-sql/images/MCPServer.png)
 - Add the JWT token of the user you want to have the Presto Connections of. The AI gets access to all datasources this user has access to.
 - Provide the ID and Name PrestoMCP
-![OpenWebUI Add Presto MCP Server to Open WebUI](https://github.com/ai-solution-eng/ai-solution-demos/blob/nl2sql/nl-to-sql-mcp-manufacturing/images/OpenWebUI_PrestoMCP.png)
+![OpenWebUI Add Presto MCP Server to Open WebUI](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/nl-to-sql/images/OpenWebUI_PrestoMCP.png)
 
 As next step we need to Create a Model that is leveraging the Qwen3 8b Base Model and has the MCP Server as Tool available. Therefore click in OpenWebUI on Workspace. Click **New Model**. Provide your Model a Name for example Manufacturing select Qwen/Qwen3-8B as base Model. Edit Visibility to *Public* in case you want the model to be available for everyone to chat. Add a System Prompt for example: "Always use 'manufacturingdb' catalog and the schema 'public' for SQL queries. Syntax: catalog.schema.table is how you reference a table in presto"
 
@@ -211,7 +211,7 @@ Underneath Tools tick the *PrestoMCP Tool* and click Save&Create.
 **4.1 Superset Installation**
 
 Install Superset if not yet available in your cluster. Therefore go to Administration > Tools & Frameworks. Locate Superset, select the 3 Dots and click Install.
-![Install Superset](https://github.com/ai-solution-eng/ai-solution-demos/blob/nl2sql/nl-to-sql-mcp-manufacturing/images/DeploySuperset.png)
+![Install Superset](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/nl-to-sql/images/DeploySuperset.png)
 
 **4.2 Superset Presto Connection**
 This step can be skipped if you plan to import the ready dashboard, as this connection will be created for you.
@@ -233,13 +233,13 @@ Therefore you will need to create Cashed Assets within Presto. In order to do th
 SELECT operators.location , "sum"(machine_metrics.units_produced) total_units , "sum"(machine_metrics.defect_rate) total_defects FROM (manufacturingdb.public.operators INNER JOIN manufacturingdb.public.machine_metrics ON (operators.machine_id = machine_metrics.machine_id)) GROUP BY operators.location
 ```
 
-![Presto Query](https://github.com/ai-solution-eng/ai-solution-demos/blob/nl2sql/nl-to-sql-mcp-manufacturing/images/Presto_Query.png)
+![Presto Query](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/nl-to-sql/images/Presto_Query.png)
 
 Save it as cached asset by going to Actions -> Save as View.
 
 Name this one location_performance and use the default schema.
 
-![Presto Cached Asset](https://github.com/ai-solution-eng/ai-solution-demos/blob/nl2sql/nl-to-sql-mcp-manufacturing/images/Presto_CachedAsset.png)
+![Presto Cached Asset](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/nl-to-sql/images/Presto_CachedAsset.png)
 This will only work if you used the created script to create the data as well as if you imported it as *manufacturingdb* into datasources, if you have changed anything there you will need to replicate the changes here as well.
 
 If you name the Cached Assets differently you will need to incorporate the changes within Superset as well.
@@ -262,15 +262,15 @@ To import the Dashboard open Superset. Navigate to Dashboards and click import D
 Within the *.zip* file you can find here in this folder, you will need to edit the file databases/Presto.yaml . In Line 2 please replace YOURDOMAINNAME with the domain name of the cluster you are working on. You can take that from the URL in your browser, eg home.YOURDOMAINNAME. Repackage that folder as zip and use this file to upload.
 
 This will create the database, the dashboard, the charts and the datasets for you. Again only if you created the Cached Assets with the same names. If you named something differently you will need to edit it accordingly.
-![Import Dashboard in Superset](https://github.com/ai-solution-eng/ai-solution-demos/blob/nl2sql/nl-to-sql-mcp-manufacturing/images/Superset_ImportDashboard.png)
+![Import Dashboard in Superset](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/nl-to-sql/images/Superset_ImportDashboard.png)
 
 The final Dashboard should look similar to this:
 
-![Final Dashboard in Superset](https://github.com/ai-solution-eng/ai-solution-demos/blob/nl2sql/nl-to-sql-mcp-manufacturing/images/Superset_FinalDashboard.png)
+![Final Dashboard in Superset](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/nl-to-sql/images/Superset_FinalDashboard.png)
 
 In order to change the color of the Dashboard you can click on Edit Dashboard then Edit Properties. Play around with different Color Schemes.
 
-![Change Color Dashboard in Superset](https://github.com/ai-solution-eng/ai-solution-demos/blob/nl2sql/nl-to-sql-mcp-manufacturing/images/Superset_EditColor.png)
+![Change Color Dashboard in Superset](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/nl-to-sql/images/Superset_EditColor.png)
 
 ## Production-ready considerations
 
