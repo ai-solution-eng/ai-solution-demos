@@ -124,6 +124,9 @@ OPENCLAW_TASK = """Use the bank-credit skill to verify loan renewal case {case_i
 analyst {analyst}. Requested renewal amount: ${amount:,} USD. The client is {client}
 (client code {code}).
 
+MCP base URL for THIS deployment (authoritative — use it for every curl call, it
+overrides any example host in the skill): {mcp_url}
+
 Fetch all five systems fresh (CRM profile, credit exposure, transaction behavior,
 compliance status, prior memo) using the curl commands in the skill. Then draft the
 renewal decision memo EXACTLY per the skill's memo format. Submit it via
@@ -239,6 +242,7 @@ def draft_openclaw(case: dict, data: dict, requested_amount_usd: int,
     task = OPENCLAW_TASK.format(
         case_id=case["case_id"], analyst=analyst, amount=requested_amount_usd,
         client=case["client"], code=case["client_code"],
+        mcp_url=settings.mcp_base_url.rstrip("/"),
     )
     session_id = f"slvd-{case['case_id'].lower()}-{int(time.time())}"
     log.info("openclaw agent turn for %s (session %s)", case["case_id"], session_id)

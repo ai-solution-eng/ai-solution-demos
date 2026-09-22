@@ -1,7 +1,7 @@
 ---
 name: bank-credit
 description: Pull governed loan/credit data from the bank's credit-memo-mcp back-office systems and draft + submit a loan renewal decision memo. Use when asked to verify a loan case, fetch credit/risk/compliance data, or draft/submit a renewal memo for a case id like CR-YYYY-NNNNN.
-metadata: { "openclaw": { "emoji": "🏦", "requires": { "bins": ["curl"] } } }
+metadata: { "openclaw": { "emoji": "🏦", "requires": { "bins": ["curl", "python3"] } } }
 ---
 
 # Bank Credit Verification (governed back-office)
@@ -14,8 +14,10 @@ call.
 
 ## The governed MCP server
 
-- Base URL: `http://credit-memo-mcp.slvd.svc:8000`
-- Endpoint: `POST /mcp` (JSON-RPC 2.0)
+- Base URL: **take it from the task message** ("MCP base URL for THIS deployment").
+  The examples below use `<MCP_BASE>` as a placeholder — substitute the real URL.
+  Never guess or reuse a host from memory; if the task gives none, fail fast and say so.
+- Endpoint: `POST <MCP_BASE>/mcp` (JSON-RPC 2.0)
 - Identity: pass the analyst's identity as the header `x-user-id: <ANALYST_ID>`.
   The server enforces per-case access; if you are not authorized you get
   `isError:true` with `403 analyst not authorized`.
@@ -27,14 +29,22 @@ Every tool call is `tools/call` with `name` and `arguments:{case_id}`.
 To call a tool, run this one-liner (replace TOOL, CASE, ANALYST):
 
 ```bash
-curl -s --max-time 20 -X POST http://credit-memo-mcp.slvd.svc:8000/mcp \
+curl -s --max-time 20 -X POST <MCP_BASE>/mcp \
   -H "Content-Type: application/json" \
   -H "x-user-id: <ANALYST_ID>" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"<TOOL>","arguments":{"case_id":"<CASE>"}}}'
 ```
 
 The response is `{"result":{"content":[{"text":"<json>"}],...}}`. Parse the
-inner JSON (it is double-encoded in `.text`).
+inner JSON (it is double-encoded in `.text`). **`jq` is NOT installed in the
+sandbox — never call it.** Parse with python3, which IS available:
+
+```bash
+curl -s --max-time 20 -X POST <MCP_BASE>/mcp \
+  -H "Content-Type: application/json" -H "x-user-id: <ANALYST_ID>" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"<TOOL>","arguments":{"case_id":"<CASE>"}}}' \
+| python3 -c 'import sys,json; d=json.load(sys.stdin); print(json.loads(d["result"]["content"][0]["text"]))'
+```
 
 ## The tools (call in this order)
 

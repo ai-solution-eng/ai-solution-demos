@@ -38,7 +38,7 @@ portal:
 engine:
   image:
     repository: slvd
-    tag: "0.3.1"
+    tag: "0.3.2"
     pullPolicy: IfNotPresent
   port: 8080
   env:
@@ -48,7 +48,7 @@ engine:
     #   SLVD_LLM_API_KEY    used when SLVD_AGENT_BACKEND=direct_llm (litellm master key)
     #   SLVD_OPENCLAW_TOKEN used when SLVD_AGENT_BACKEND=openclaw  (gateway token)
     # LLM (direct_llm)
-    SLVD_LLM_BASE_URL: "http://litellm-helm.<llm-namespace>.svc.cluster.local:4000/v1"  # fallback only — auto-detected in-cluster
+    SLVD_LLM_BASE_URL: "http://litellm-helm.project-user-aieadmin.svc.cluster.local:4000/v1"
     SLVD_LLM_MODEL: "qwen3-8-27b-int4-dflash2-r2"
     SLVD_LLM_TIMEOUT_S: "300"
     SLVD_LLM_API_KEY: ""
@@ -66,7 +66,7 @@ engine:
 mcp:
   image:
     repository: slvd
-    tag: "0.3.1"
+    tag: "0.3.2"
     pullPolicy: IfNotPresent
   port: 8000
   resources:

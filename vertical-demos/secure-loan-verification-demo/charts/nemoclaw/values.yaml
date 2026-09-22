@@ -34,7 +34,7 @@ gateway:
 litellm:
   # REQUIRED — the full URL of your OpenAI-compatible LLM endpoint.
   # Examples:
-  #   litellm proxy:    "http://litellm-helm.<llm-namespace>.svc.cluster.local:4000/v1"
+  #   litellm proxy:    "http://litellm-helm.project-user-aieadmin.svc.cluster.local:4000/v1"
   #   direct endpoint:  "https://<model>.<namespace>.serving.<your-pcai-domain>/v1"
   baseUrl: ""
   model: "qwen3-8-27b-int4-dflash2-r2"
