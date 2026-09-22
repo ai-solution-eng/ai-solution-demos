@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: credit-memo-mcp
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "slvd.labels" . | nindent 4 }}
+    app: credit-memo-mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: credit-memo-mcp }
+  template:
+    metadata:
+      labels:
+        {{- include "slvd.labels" . | nindent 8 }}
+        {{- include "hpe-ezua.labels" . | nindent 8 }}
+        app: credit-memo-mcp
+      annotations:
+        sidecar.istio.io/inject: "true"
+    spec:
+      containers:
+        - name: mcp
+          image: {{ .Values.global.imageRegistry }}/{{ .Values.mcp.image.repository }}:{{ .Values.mcp.image.tag }}
+          imagePullPolicy: {{ .Values.mcp.image.pullPolicy }}
+          command: ["/app/run-mcp.sh"]
+          ports: [{ containerPort: 8000 }]
+          env:
+            - name: SLVD_ENGINE_URL
+              value: http://engine.{{ .Values.global.namespace }}.svc:8080
+            {{- $h := .Values.engine.env.SLVD_HMAC_SECRET | default "" }}
+            - name: SLVD_MCP_INTERNAL_TOKEN
+              value: {{ if $h }}{{ $h | quote }}{{ else }}{{ include "slvd.secret.hmacSecret" . | quote }}{{ end }}
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8000 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources: {{- toYaml .Values.mcp.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: credit-memo-mcp
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "slvd.labels" . | nindent 4 }}
+    app: credit-memo-mcp
+spec:
+  selector: { app: credit-memo-mcp }
+  ports: [{ name: http, port: 8000, targetPort: 8000 }]

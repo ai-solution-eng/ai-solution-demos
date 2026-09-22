@@ -1,0 +1,44 @@
+# Portal — external ingress via the PCAI ezaf-gateway.
+# host = slvd.${DOMAIN_NAME} (controller substitutes ${DOMAIN_NAME}).
+{{- if .Values.ezua.virtualService.endpoint }}
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: slvd-portal-vs
+  namespace: istio-system
+  labels:
+    {{- include "slvd.labels" . | nindent 4 }}
+spec:
+  gateways:
+    - {{ .Values.ezua.virtualService.istioGateway }}
+  hosts:
+    - {{ .Values.ezua.virtualService.endpoint }}
+  http:
+    - route:
+        - destination:
+            host: portal.{{ .Values.global.namespace }}.svc.cluster.local
+            port:
+              number: {{ .Values.portal.port }}
+{{- end }}
+---
+# Mailpit UI on its own host (view approval + client emails in the demo).
+{{- if .Values.ezua.virtualService.mailEndpoint }}
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: slvd-mail-vs
+  namespace: istio-system
+  labels:
+    {{- include "slvd.labels" . | nindent 4 }}
+spec:
+  gateways:
+    - {{ .Values.ezua.virtualService.istioGateway }}
+  hosts:
+    - {{ .Values.ezua.virtualService.mailEndpoint }}
+  http:
+    - route:
+        - destination:
+            host: mailpit.{{ .Values.global.namespace }}.svc.cluster.local
+            port:
+              number: {{ .Values.mailpit.uiPort }}
+{{- end }}

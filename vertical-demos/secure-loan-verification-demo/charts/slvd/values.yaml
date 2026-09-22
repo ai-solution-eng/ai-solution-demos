@@ -1,0 +1,99 @@
+# SLVD chart values. Sensitive/endpoint values may be left EMPTY (zero-input
+# deploy): backend credentials under engine.env auto-detect from the owning
+# in-cluster apps when empty; signing keys are generated deterministically.
+# Real overrides are injected at deploy time via the EzAppConfig values block
+# (charts/slvd/ezappconfig.generated.yaml, gitignored).
+global:
+  namespace: slvd
+  imageRegistry: docker.io/eric021122
+  imageTag: "0.1.0"
+
+# External hosts (Istio VirtualService on istio-system/ezaf-gateway).
+# ${DOMAIN_NAME} is substituted by the EzAppConfig controller at deploy time
+# (e.g. your-domain.com), so the same chart adapts to any PCAI deployment.
+ingress:
+  host: slvd.${DOMAIN_NAME}
+  mailHost: slvd-mail.${DOMAIN_NAME}
+
+# HPE EZUA — required for the EzAppConfig controller to register the app on
+# the PCAI UI (virtualService endpoint + gateway + hpe-ezua pod labels).
+ezua:
+  appName: slvd
+  type: vendor-service
+  virtualService:
+    endpoint: "slvd.${DOMAIN_NAME}"
+    mailEndpoint: "slvd-mail.${DOMAIN_NAME}"
+    istioGateway: "istio-system/ezaf-gateway"
+
+portal:
+  image:
+    repository: slvd-portal
+    tag: "0.3.7"
+    pullPolicy: IfNotPresent
+  port: 80
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 200m, memory: 128Mi }
+
+engine:
+  image:
+    repository: slvd
+    tag: "0.3.1"
+    pullPolicy: IfNotPresent
+  port: 8080
+  env:
+    # agent backend: stub (sim) | direct_llm (real) | openclaw (NemoClaw runtime on PCAI)
+    SLVD_AGENT_BACKEND: "openclaw"
+    # Backend credentials — only consumed when the matching backend is active:
+    #   SLVD_LLM_API_KEY    used when SLVD_AGENT_BACKEND=direct_llm (litellm master key)
+    #   SLVD_OPENCLAW_TOKEN used when SLVD_AGENT_BACKEND=openclaw  (gateway token)
+    # LLM (direct_llm)
+    SLVD_LLM_BASE_URL: "http://litellm-helm.<llm-namespace>.svc.cluster.local:4000/v1"  # fallback only — auto-detected in-cluster
+    SLVD_LLM_MODEL: "qwen3-8-27b-int4-dflash2-r2"
+    SLVD_LLM_TIMEOUT_S: "300"
+    SLVD_LLM_API_KEY: ""
+    # OpenClaw gateway (openclaw)
+    SLVD_OPENCLAW_URL: "ws://nemoclaw-openclaw.nemoclaw.svc:80"
+    SLVD_OPENCLAW_TOKEN: ""
+    # workflow + mail
+    SLVD_SIMULATION: "0"
+    SLVD_APPROVER_EMAIL: "Sarah.Chen@mybank.com"
+    SLVD_CLIENT_EMAIL: "client@acme-industrial.example"
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+
+mcp:
+  image:
+    repository: slvd
+    tag: "0.3.1"
+    pullPolicy: IfNotPresent
+  port: 8000
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 200m, memory: 128Mi }
+
+mailpit:
+  image:
+    registry: docker.io
+    repository: axllent/mailpit
+    tag: "v1.21.0"
+    pullPolicy: IfNotPresent
+  smtpPort: 1025
+  uiPort: 8025
+  # mTLS handling for the sidecarless mailpit pod. Keep true on strict-mTLS
+  # meshes (a PeerAuthentication DISABLE is a no-op on permissive meshes).
+  mtlsDisable:
+    enabled: true
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 200m, memory: 128Mi }
+
+# (Removed `secrets:` block — signing keys are generated deterministically
+# from the release coordinates; backend credentials live under engine.env and
+# are auto-detected when empty. No K8s Secret objects — plain env vars only.)
+
+persistence:
+  enabled: true
+  size: 1Gi
+  storageClass: ""   # empty = cluster default StorageClass

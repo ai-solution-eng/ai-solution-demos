@@ -1,0 +1,8 @@
+apiVersion: v2
+name: slvd
+description: Secure Loan Verification Demo — governed agentic loan renewal (portal, workflow-engine, credit-memo-mcp, mailpit)
+type: application
+version: 0.11.3
+appVersion: "0.1.0"
+labels:
+  app.kubernetes.io/part-of: slvd

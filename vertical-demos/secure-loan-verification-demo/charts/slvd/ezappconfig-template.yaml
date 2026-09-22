@@ -1,0 +1,29 @@
+# EzAppConfig — the PCAI platform install trigger for the slvd chart.
+# The loop generates ezappconfig.generated.yaml (gitignored) at deploy time with
+# real values (endpoints + optional credential overrides). Template is placeholders.
+apiVersion: ezconfig.hpe.ezaf.com/v1alpha1
+kind: EzAppConfig
+metadata:
+  name: slvd-ezappconfig
+  namespace: ui
+  labels:
+    hpe-ezua/imported-app: "true"
+    app.kubernetes.io/part-of: slvd
+spec:
+  name: slvd
+  releaseName: slvd
+  install: true
+  chartVersion: __CHART_VERSION__
+  version: 0.1.0
+  description: "Secure Loan Verification Demo — governed agentic loan renewal"
+  label: "SLVD"
+  category: dataScience
+  backoffLimit: 2
+  retry: false
+  options:
+    namespace: slvd
+    create-namespace: "true"
+    wait: "true"
+    timeout: 15m
+    debug: "true"
+  values: __VALUES_JSON__

@@ -1,0 +1,126 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: engine
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "slvd.labels" . | nindent 4 }}
+    app: engine
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: engine }
+  template:
+    metadata:
+      labels:
+        {{- include "slvd.labels" . | nindent 8 }}
+        {{- include "hpe-ezua.labels" . | nindent 8 }}
+        app: engine
+      annotations:
+        sidecar.istio.io/inject: "true"
+        # Bypass sidecar interception for SMTP (1025): plain SMTP is not
+        # TLS and the sidecar would sniff it as HTTP, breaking the
+        # engine -> mailpit handshake.
+        traffic.sidecar.istio.io/excludeOutboundPorts: "1025"
+    spec:
+      containers:
+        - name: engine
+          image: {{ .Values.global.imageRegistry }}/{{ .Values.engine.image.repository }}:{{ .Values.engine.image.tag }}
+          imagePullPolicy: {{ .Values.engine.image.pullPolicy }}
+          command: ["/app/run-engine.sh"]
+          ports: [{ containerPort: 8080 }]
+          env:
+            - name: SLVD_DATA_DIR
+              value: /data
+            - name: SLVD_MCP_BASE_URL
+              value: http://credit-memo-mcp.{{ .Values.global.namespace }}.svc:8000
+            - name: SLVD_MAIL_HOST
+              value: mailpit.{{ .Values.global.namespace }}.svc
+            - name: SLVD_MAIL_PORT
+              value: "1025"
+            - name: SLVD_BASE_URL
+              value: https://{{ .Values.ingress.host }}
+            {{- $env := .Values.engine.env }}
+            {{- $backend := $env.SLVD_AGENT_BACKEND | default "stub" }}
+            {{- $ocUrl := include "slvd.openclawUrl" . }}
+            {{- $llmUrl := include "slvd.llmBaseUrl" . }}
+            {{- /* keys emitted individually below (backend-conditional /
+                   generated) — skipped in the generic range to avoid
+                   duplicates. */ -}}
+            {{- $special := list "SLVD_LLM_API_KEY" "SLVD_OPENCLAW_TOKEN" "SLVD_JWT_SECRET" "SLVD_HMAC_SECRET" }}
+            {{- range $k, $v := $env }}
+            {{- if not (has $k $special) }}
+            {{- if and (eq $k "SLVD_OPENCLAW_URL") $ocUrl }}
+            - name: SLVD_OPENCLAW_URL
+              value: {{ $ocUrl | quote }}
+            {{- else if and (eq $k "SLVD_LLM_BASE_URL") $llmUrl }}
+            - name: SLVD_LLM_BASE_URL
+              value: {{ $llmUrl | quote }}
+            {{- else }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- /* backend credential: emitted ONLY for the matching backend.
+                   engine.env value (non-empty) = operator override; empty ->
+                   auto-detect from the in-cluster owning app. */ -}}
+            {{- if eq $backend "direct_llm" }}
+            - name: SLVD_LLM_API_KEY
+              value: {{ include "slvd.secret.litellmApiKey" . | quote }}
+            {{- else if eq $backend "openclaw" }}
+            - name: SLVD_OPENCLAW_TOKEN
+              value: {{ include "slvd.secret.openclawToken" . | quote }}
+            {{- end }}
+            {{- /* signing keys: generated deterministically from release coords
+                   unless engine.env pins a non-empty value. */ -}}
+            {{- if $env.SLVD_JWT_SECRET | default "" }}
+            - name: SLVD_JWT_SECRET
+              value: {{ $env.SLVD_JWT_SECRET | quote }}
+            {{- else }}
+            - name: SLVD_JWT_SECRET
+              value: {{ include "slvd.secret.jwtSecret" . | quote }}
+            {{- end }}
+            {{- if $env.SLVD_HMAC_SECRET | default "" }}
+            - name: SLVD_HMAC_SECRET
+              value: {{ $env.SLVD_HMAC_SECRET | quote }}
+            - name: SLVD_MCP_INTERNAL_TOKEN
+              value: {{ $env.SLVD_HMAC_SECRET | quote }}
+            {{- else }}
+            - name: SLVD_HMAC_SECRET
+              value: {{ include "slvd.secret.hmacSecret" . | quote }}
+            - name: SLVD_MCP_INTERNAL_TOKEN
+              value: {{ include "slvd.secret.hmacSecret" . | quote }}
+            {{- end }}
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources: {{- toYaml .Values.engine.resources | nindent 12 }}
+          {{- if .Values.persistence.enabled }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          {{- end }}
+      {{- if .Values.persistence.enabled }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: slvd-data
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: engine
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "slvd.labels" . | nindent 4 }}
+    app: engine
+spec:
+  selector: { app: engine }
+  ports: [{ name: http, port: 8080, targetPort: 8080 }]
