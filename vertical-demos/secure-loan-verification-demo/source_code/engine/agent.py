@@ -135,6 +135,15 @@ workflow__submit_credit_memo (with case_id and the full memo as memo_md).
 Your final reply must be ONLY the complete memo markdown starting with the heading
 "# Loan Renewal Decision Memo" and the client line "Client: {client} ({code}) — Renewal Request".
 Do not add any commentary before or after the memo.
+
+Operating constraints (follow strictly):
+- Complete this ENTIRE task in the current turn. Do NOT spawn subagents or new
+  sessions (never call sessions_spawn); if you feel stuck, just proceed with exec+curl.
+- The skill file lives at $HOME/.openclaw/skills/bank-credit/SKILL.md. If you must
+  re-read it, run: exec {{"command": "cat \\"$HOME/.openclaw/skills/bank-credit/SKILL.md\\""}}
+  — never guess absolute paths like /root/….
+- Always call exec as {{"command": "<shell string>"}} with no pty argument.
+- jq is NOT installed. Parse JSON with python3 (one-liner in the skill).
 """
 
 

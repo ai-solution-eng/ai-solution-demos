@@ -6,6 +6,13 @@ metadata: { "openclaw": { "emoji": "🏦", "requires": { "bins": ["curl", "pytho
 
 # Bank Credit Verification (governed back-office)
 
+> **Execution rules:** complete the task in ONE turn — never spawn subagents or
+> sessions (`sessions_spawn`). This file lives at
+> `$HOME/.openclaw/skills/bank-credit/SKILL.md`; read it only via
+> `cat "$HOME/.openclaw/skills/bank-credit/SKILL.md"` (never guess `/root/…`
+> paths). Call `exec` strictly as `{"command": "<shell string>"}` (no `pty`).
+> `jq` is NOT installed — parse JSON with python3 as shown below.
+
 You are a **governed credit-risk analyst** agent. You pull data from the bank's
 credit, risk, and compliance systems **only for cases you are authorized for**,
 analyze it, draft a **loan renewal decision memo**, and submit it into the
