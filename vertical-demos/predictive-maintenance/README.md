@@ -37,7 +37,7 @@ We will be analyzing the dataset first, to clean it and decide which datapoints 
 ![Use Case Overview](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/vertical-demos/predictive-maintenance/img/PredictiveMaintenanceDemo.jpg)
 
 **Demo overview video**
-[Demo Video](to be added)
+[Demo Video](https://storage.googleapis.com/ai-solution-engineering-videos/public/predictive-maintenance-demo.mp4)
 
 **Tools and frameworks used:**
 
