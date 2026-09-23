@@ -6,7 +6,7 @@
 
 ##  AI Solution Archived Demos
 
-This folder contains older demos that may have been superseded by more recent ones, or are planned to be so. It also contains miscelleanous vertical agnostic demos that implement specific use cases with narrow applications. 
+This folder contains older demos that may have been superseded by more recent ones, or are planned to be so.
 
 **We do not guarantee support for these demos.**
 
