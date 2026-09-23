@@ -38,7 +38,7 @@ HOW = """The end-to-end flow:
 The 10 tracked steps: Identity validated -> Case resolved -> CRM -> Credit exposure ->
 Transactions -> Compliance -> Prior memo -> Draft memo -> Submission -> Approval decision."""
 
-COMPONENTS = """Core components (Kubernetes namespace 'slvd', 4 pods):
+COMPONENTS = """Core components (Kubernetes namespace '{ns}', 4 pods):
 - Portal — React + TS UI: analyst console, approver governance console, mail inbox.
 - Workflow Engine — FastAPI (Python 3.11). The system of record: the 10-step
   pipeline, the policy gate, JWT auth (analyst vs approver), the audit trail, the
@@ -49,12 +49,13 @@ COMPONENTS = """Core components (Kubernetes namespace 'slvd', 4 pods):
 - Mailpit — in-cluster SMTP sink + UI for approval/client email.
 
 AI layer:
-- OpenClaw agent (NemoClaw, ns 'nemoclaw') — the generative step; it pulls data
-  via the bank-credit skill and drafts the memo.
-- litellm-helm -> qwen3-8-27b (in-cluster LLM namespace) — LLM inference.
+- OpenClaw agent (NemoClaw, service '{agent_svc}' in ns '{agent_ns}') — the
+  generative step; it pulls data via the bank-credit skill and drafts the memo.
+- litellm proxy -> {model} (service '{llm_svc}' in ns '{llm_ns}') — LLM inference.
 
 Note: llama3.1-8b is NOT supported here — its output does not fit the accepted
-schema in OpenClaw, so the agent loop breaks. We use qwen3-8-27b."""
+schema in OpenClaw, so the agent loop breaks. Use the model the deployment's
+litellm proxy serves (shown above)."""
 
 WHY_BOTH = """We keep a FastAPI engine AND an OpenClaw agent because an LLM agent is
 not a trustworthy system of record:
@@ -183,6 +184,33 @@ def _case_answer(case: dict) -> str:
 
 # ---------- LLM path ----------
 
+def _host_ns(url: str) -> tuple[str, str]:
+    """Parse '<scheme>://<svc>.<ns>.svc[.cluster.local][:port]' -> (svc, ns).
+    Returns ('in-cluster', '') for anything unparseable/empty."""
+    import re as _re
+    m = _re.match(r"^[a-z]+://([^/:]+)", url or "")
+    if not m:
+        return ("in-cluster", "")
+    labels = m.group(1).split(".")
+    if len(labels) >= 2 and labels[1] not in ("svc",):
+        return (labels[0], labels[1])
+    return (labels[0], "")
+
+
+def _components_text() -> str:
+    from .config import settings
+    agent_svc, agent_ns = _host_ns(settings.openclaw_url)
+    llm_svc, llm_ns = _host_ns(settings.llm_base_url)
+    ns = (getattr(settings, "namespace", "") or "").strip()
+    if not ns:
+        # derive demo namespace from the MCP base URL (<svc>.<ns>.svc...)
+        _, ns = _host_ns(settings.mcp_base_url)
+    return COMPONENTS.format(ns=ns or "slvd", agent_svc=agent_svc,
+                             agent_ns=agent_ns or "the agent namespace",
+                             model=settings.llm_model,
+                             llm_svc=llm_svc, llm_ns=llm_ns or "the LLM namespace")
+
+
 def _system_prompt() -> str:
     from .workflow import _load_case
     cases = {}
@@ -193,7 +221,7 @@ def _system_prompt() -> str:
     kb = "\n\n".join([
         "DEMO OVERVIEW:\n" + WHAT,
         "HOW IT WORKS:\n" + HOW,
-        "COMPONENTS:\n" + COMPONENTS,
+        "COMPONENTS:\n" + _components_text(),
         "WHY FASTAPI + AGENT:\n" + WHY_BOTH,
         "APPROVAL POLICY:\n" + POLICY,
         "ROLES:\n" + ROLES,
@@ -261,7 +289,8 @@ def _rule_answer(message: str) -> str:
         return _case_answer(case)
     for keywords, ans in INTENTS:
         if any(k in low for k in keywords):
-            return ans
+            # COMPONENTS is a template resolved per deployment (ns/service names)
+            return _components_text() if "{ns}" in ans else ans
     return HELP
 
 

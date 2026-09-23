@@ -45,7 +45,9 @@ class Settings:
     client_email: str = os.environ.get("SLVD_CLIENT_EMAIL", "client@acme-industrial.example")
 
     # OpenClaw
-    openclaw_url: str = os.environ.get("SLVD_OPENCLAW_URL", "http://nemoclaw.nemoclaw.svc:18789")
+    # No baked default host: an unset/empty URL is a CONFIG ERROR surfaced at
+    # first use (agent.py) — the chart always sets the detected in-cluster URL.
+    openclaw_url: str = os.environ.get("SLVD_OPENCLAW_URL", "")
     openclaw_token: str = os.environ.get("SLVD_OPENCLAW_TOKEN", "")
 
     # Policy

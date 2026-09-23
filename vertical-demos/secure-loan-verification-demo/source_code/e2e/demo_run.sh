@@ -6,7 +6,7 @@ KUBE="${KUBE:?set KUBE=<kubeconfig path>}"
 export KUBECONFIG="$KUBE"
 K="kubectl"
 NS=slvd
-HOST="${SLVD_HOST:?set SLVD_HOST=slvd.<your-pcai-domain>}"
+HOST="${SLVD_HOST:?set SLVD_HOST=slvd.<platform-domain>}"
 BASE="https://$HOST"
 PASS=1
 

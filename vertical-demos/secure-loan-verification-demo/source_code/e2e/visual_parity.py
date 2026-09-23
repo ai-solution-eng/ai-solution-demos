@@ -29,8 +29,10 @@ REPO_ROOT = os.path.dirname(SRC_ROOT)                                     # repo
 sys.path.insert(0, REPO_ROOT)
 sys.path.insert(0, SRC_ROOT)
 
-HOST = os.environ.get("SLVD_HOST", "slvd.<your-pcai-domain>")
-MAIL_HOST = os.environ.get("SLVD_MAIL_HOST", "slvd-mail.<your-pcai-domain>")
+HOST = os.environ.get("SLVD_HOST", "")  # required: SLVD_HOST=slvd.<platform-domain>
+MAIL_HOST = os.environ.get("SLVD_MAIL_HOST", "").strip() or f"slvd-mail.{HOST.removeprefix('slvd.')}"
+if not HOST:
+    raise SystemExit("set SLVD_HOST=slvd.<platform-domain> (SLVD_MAIL_HOST optional)")
 BASE = f"https://{HOST}"
 
 CTX = ssl._create_unverified_context()

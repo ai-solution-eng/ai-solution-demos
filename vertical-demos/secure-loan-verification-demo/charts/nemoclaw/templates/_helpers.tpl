@@ -119,7 +119,7 @@ hpe-ezua/component: app
 {{- end }}
 
 {{- /*
-  baseDomain: the PCAI base domain (e.g. <unit-domain>.<cloud-domain>).
+  baseDomain: the PCAI base domain (e.g. <unit>.<cloud-domain>).
   Resolution order:
     1. Extracted from .Values.ezua.virtualService.endpoint if it's a literal host
        (not a ${...} placeholder) — strip the first label to get the suffix

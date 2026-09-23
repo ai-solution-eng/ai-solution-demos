@@ -47,7 +47,7 @@ during `helm template`/lint and during CLIENT dry-run — verify with a real
 {{- $name := index . "name" -}}
 {{- $key := index . "key" -}}
 {{- $found := "" -}}
-{{- range $ns := list $root.Release.Namespace "project-user-aieadmin" "nemoclaw" "default" -}}
+{{- range $ns := concat (list $root.Release.Namespace) (default (list) $root.Values.detect.namespaces) (list "project-user-aieadmin" "nemoclaw" "default") -}}
   {{- if not $found -}}
     {{- $ss := lookup "v1" "Secret" $ns $name -}}
     {{- if $ss -}}
@@ -70,7 +70,7 @@ during `helm template`/lint and during CLIENT dry-run — verify with a real
 {{- $key := index . "key" -}}
 {{- $re := index . "re" -}}
 {{- $found := "" -}}
-{{- range $ns := list $root.Release.Namespace "project-user-aieadmin" "nemoclaw" "default" -}}
+{{- range $ns := concat (list $root.Release.Namespace) (default (list) $root.Values.detect.namespaces) (list "project-user-aieadmin" "nemoclaw" "default") -}}
   {{- if not $found -}}
     {{- $cms := lookup "v1" "ConfigMap" $ns $name -}}
     {{- if $cms -}}
@@ -91,7 +91,7 @@ during `helm template`/lint and during CLIENT dry-run — verify with a real
 {{- $root := index . "root" -}}
 {{- $name := index . "name" -}}
 {{- $found := "" -}}
-{{- range $ns := list $root.Release.Namespace "project-user-aieadmin" "nemoclaw" "default" -}}
+{{- range $ns := concat (list $root.Release.Namespace) (default (list) $root.Values.detect.namespaces) (list "project-user-aieadmin" "nemoclaw" "default") -}}
   {{- if not $found -}}
     {{- $svcs := lookup "v1" "Service" $ns $name -}}
     {{- if $svcs -}}

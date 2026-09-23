@@ -11,11 +11,14 @@ SRC := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 ROOT := $(abspath $(SRC)/..)
 
 PY := $(ROOT)/venv/bin/python
-# Target registry for build-images (override: make REG=<your-registry>/<repo> ...)
+# Target registry for images (override: make REG=<registry>/<repo> ...).
+# Default matches charts/slvd/values.yaml global.imageRegistry.
+REG ?= docker.io/eric021122
 IMG ?= $(REG)/slvd
 VER := $(shell awk '/^version:/{print $$2}' $(ROOT)/charts/slvd/Chart.yaml)
 NS := slvd
-KUBE ?= $(shell echo $$KUBECONFIG)   # target-cluster kubeconfig (env KUBECONFIG)
+# Target-cluster kubeconfig: pass KUBE=<path> or export KUBECONFIG.
+KUBE ?= $(if $(KUBECONFIG),$(KUBECONFIG),$(error set KUBE=<kubeconfig path> or export KUBECONFIG))
 K := kubectl --kubeconfig=$(KUBE)
 
 .PHONY: help venv test-unit test-e2e test-security build build-images chart lint \

@@ -16,7 +16,9 @@ REPO_ROOT = os.path.dirname(SRC_ROOT)                                     # repo
 sys.path.insert(0, REPO_ROOT)
 sys.path.insert(0, SRC_ROOT)
 
-HOST = os.environ.get("SLVD_HOST", "slvd.<your-pcai-domain>")
+HOST = os.environ.get("SLVD_HOST", "")  # required: SLVD_HOST=slvd.<platform-domain>
+if not HOST:
+    raise SystemExit("set SLVD_HOST=slvd.<platform-domain>")
 BASE = f"https://{HOST}"
 TIMEOUT = int(os.environ.get("SLVD_GOLDEN_TIMEOUT", "300"))
 

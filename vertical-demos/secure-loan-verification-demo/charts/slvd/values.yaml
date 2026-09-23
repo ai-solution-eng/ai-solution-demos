@@ -38,7 +38,7 @@ portal:
 engine:
   image:
     repository: slvd
-    tag: "0.3.3"
+    tag: "0.3.4"
     pullPolicy: IfNotPresent
   port: 8080
   env:
@@ -48,7 +48,9 @@ engine:
     #   SLVD_LLM_API_KEY    used when SLVD_AGENT_BACKEND=direct_llm (litellm master key)
     #   SLVD_OPENCLAW_TOKEN used when SLVD_AGENT_BACKEND=openclaw  (gateway token)
     # LLM (direct_llm)
-    SLVD_LLM_BASE_URL: "http://litellm-helm.project-user-aieadmin.svc.cluster.local:4000/v1"
+    # fallback only — the chart auto-detects the real litellm Service FQDN
+    # in-cluster; this placeholder shape is used only when detection finds nothing
+    SLVD_LLM_BASE_URL: "http://litellm-helm.<llm-namespace>.svc.cluster.local:4000/v1"
     SLVD_LLM_MODEL: "qwen3-8-27b-int4-dflash2-r2"
     SLVD_LLM_TIMEOUT_S: "300"
     SLVD_LLM_API_KEY: ""
@@ -66,7 +68,7 @@ engine:
 mcp:
   image:
     repository: slvd
-    tag: "0.3.3"
+    tag: "0.3.4"
     pullPolicy: IfNotPresent
   port: 8000
   resources:
@@ -88,6 +90,12 @@ mailpit:
   resources:
     requests: { cpu: 50m, memory: 64Mi }
     limits: { cpu: 200m, memory: 128Mi }
+
+# Extra namespaces probed when auto-detecting the litellm / NemoClaw endpoints
+# (in addition to the release namespace and the usual PCAI homes). Only needed
+# on clusters hosting those apps in a non-default namespace.
+detect:
+  namespaces: []
 
 # (Removed `secrets:` block — signing keys are generated deterministically
 # from the release coordinates; backend credentials live under engine.env and

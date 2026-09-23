@@ -7,7 +7,7 @@ description: >-
   built in). Static dashboard URL and static gateway token.
   Device-auth disabled for all-device pairing. Optional Telegram channel.
 type: application
-version: 0.2.10
+version: 0.2.11
 appVersion: "2026.3.11"
 keywords:
   - nemoclaw

@@ -226,8 +226,8 @@ secure_loan_verification_demo/
 ├── charts/
 │   ├── slvd/            # SLVD Helm chart + EzAppConfig (PCAI BYOA deploy)
 │   └── nemoclaw/        # NemoClaw (OpenClaw agent) Helm chart — deployed first (prereq)
-├── slvd-0.12.1.tgz      # packaged SLVD helm chart (at repo root)
-├── nemoclaw-0.2.10.tgz   # packaged NemoClaw helm chart (at repo root)
+├── slvd-0.12.3.tgz       # packaged SLVD helm chart (at repo root)
+├── nemoclaw-0.2.11.tgz  # packaged NemoClaw helm chart (at repo root)
 ├── nemoclaw-icon.png    # NemoClaw chart icon (UI app tile logo)
 ├── slvd-icon.png        # SLVD app icon (UI app tile logo)
 └── images/              # screenshots + architecture/business diagrams (html + png)
@@ -248,7 +248,7 @@ NemoClaw chart must be deployed **before** the SLVD chart (the engine connects t
 `SLVD_OPENCLAW_URL`). It is shipped in this repo:
 
 - Chart source: `charts/nemoclaw/` (Helm chart, icon at `nemoclaw/icon.png`)
-- Packaged: `nemoclaw-0.2.10.tgz` (repo root)
+- Packaged: `nemoclaw-0.2.11.tgz` (repo root)
 - Skills: the chart ships `files/skills/bank-credit/SKILL.md` and seeds it into
   the agent state dir at every pod start — the OpenClaw agent runs headless, so
   without this the `bank-credit` skill is missing and memo drafting degrades.

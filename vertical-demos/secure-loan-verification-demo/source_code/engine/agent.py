@@ -151,6 +151,8 @@ async def _openclaw_agent_turn(message: str, session_id: str) -> str:
     """One agent turn over the NemoClaw gateway WS. Returns the final reply text."""
     import websockets  # lazy: only the openclaw backend needs it
 
+    if not settings.openclaw_url:
+        raise RuntimeError("SLVD_OPENCLAW_URL not configured")
     if not settings.openclaw_token:
         raise RuntimeError("SLVD_OPENCLAW_TOKEN not configured")
 
