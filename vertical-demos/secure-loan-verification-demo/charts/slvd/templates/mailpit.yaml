@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mailpit
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "slvd.labels" . | nindent 4 }}
+    app: mailpit
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: mailpit }
+  template:
+    metadata:
+      labels:
+        {{- include "slvd.labels" . | nindent 8 }}
+        {{- include "hpe-ezua.labels" . | nindent 8 }}
+        app: mailpit
+      annotations:
+        # NO istio sidecar: mailpit is plain SMTP(1025)/HTTP(8025). The
+        # sidecar sniffs 1025 as HTTP and eats the SMTP banner, which
+        # breaks engine -> mailpit mail delivery.
+        sidecar.istio.io/inject: "false"
+    spec:
+      containers:
+        - name: mailpit
+          image: {{ .Values.mailpit.image.registry }}/{{ .Values.mailpit.image.repository }}:{{ .Values.mailpit.image.tag }}
+          imagePullPolicy: {{ .Values.mailpit.image.pullPolicy }}
+          ports:
+            - { name: smtp, containerPort: 1025 }
+            - { name: ui, containerPort: 8025 }
+          readinessProbe:
+            httpGet: { path: /, port: 8025 }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources: {{- toYaml .Values.mailpit.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mailpit
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "slvd.labels" . | nindent 4 }}
+    app: mailpit
+spec:
+  selector: { app: mailpit }
+  ports:
+    - { name: smtp, port: 1025, targetPort: 1025 }
+    - { name: ui, port: 8025, targetPort: 8025 }

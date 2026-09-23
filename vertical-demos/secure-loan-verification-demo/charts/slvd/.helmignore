@@ -1,0 +1,10 @@
+# .helmignore — keep generated/local-only files out of the packaged chart tgz.
+# The EzAppConfig generated at deploy time carries real secrets + cluster-specific
+# URLs and must never be committed or shipped in the tgz.
+ezappconfig.generated.yaml
+values-secrets.yaml
+values-secrets.local.yaml
+values-secrets.yaml.template
+.git/
+*.swp
+*.bak

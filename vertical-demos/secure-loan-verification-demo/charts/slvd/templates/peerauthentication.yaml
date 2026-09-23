@@ -1,0 +1,23 @@
+{{- if .Values.mailpit.mtlsDisable.enabled }}
+# Mailpit runs WITHOUT an istio sidecar (plain SMTP 1025 must bypass the
+# proxy — the sidecar sniffs it as HTTP and breaks the engine's mail
+# delivery). On meshes with STRICT mTLS the ingress gateway's sidecar then
+# fails to reach the sidecarless pod over mTLS -> "no healthy upstream" in
+# the mail UI (list API can survive via pass-through paths; per-message
+# fetches break). Declaring DISABLE for these pods keeps plaintext working
+# on ANY mesh mode (no-op where the mesh is already PERMISSIVE).
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: slvd-mailpit-plaintext
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "slvd.labels" . | nindent 4 }}
+    app: mailpit
+spec:
+  selector:
+    matchLabels:
+      app: mailpit
+  mtls:
+    mode: DISABLE
+{{- end }}
