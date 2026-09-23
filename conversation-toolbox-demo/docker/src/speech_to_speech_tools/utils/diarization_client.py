@@ -6,7 +6,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 
-import httpx2
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ async def diarize_audio(
     Returns:
         DiarizationResult with segments, exclusive_segments, duration.
     """
-    async with httpx2.AsyncClient(timeout=httpx2.Timeout(DIARIZATION_TIMEOUT)) as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(DIARIZATION_TIMEOUT)) as client:
         with open(audio_path, "rb") as f:
             files = {"file": (os.path.basename(audio_path), f, "audio/wav")}
             data = {}

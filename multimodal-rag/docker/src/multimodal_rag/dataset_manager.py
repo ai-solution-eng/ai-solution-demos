@@ -953,6 +953,116 @@ def _fix_source(chunks: list, orig_name: str, stored_path: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _mp4_boxes_broken(path: Path) -> bool:
+    """Walk the top-level MP4 atoms; True on truncation or duplicate ``moov``.
+
+    Cheap (header bytes only) but catches exactly the damage two concurrent
+    ffmpeg finalizations on one path leave behind: a second ``moov`` spliced
+    into the file and/or an ``mdat`` whose declared size overruns EOF.
+    """
+    try:
+        size = path.stat().st_size
+        seen_moov = False
+        with path.open("rb") as fh:
+            offset = 0
+            while offset + 8 <= size:
+                header = fh.read(8)
+                if len(header) < 8:
+                    return True
+                box_size = int.from_bytes(header[:4], "big")
+                box_type = header[4:8].decode("latin-1", "replace")
+                if box_size == 1:
+                    largesize = fh.read(8)
+                    if len(largesize) < 8:
+                        return True
+                    box_size = int.from_bytes(largesize, "big")
+                elif box_size == 0:
+                    box_size = size - offset
+                if box_size < 8 or offset + box_size > size:
+                    return True  # box overruns EOF → truncated file
+                if box_type == "moov":
+                    if seen_moov:
+                        return True  # two finalizations raced on this path
+                    seen_moov = True
+                offset += box_size
+                fh.seek(offset)
+            return offset != size  # stray trailing bytes
+    except OSError:
+        return True
+
+
+def _media_file_ok(path: Path) -> bool:
+    """True when *path* is a fully-formed media file ffprobe can parse.
+
+    A file truncated mid-mux — or with a spliced-together trailer from two
+    concurrent ffmpeg runs sharing one output path — often still has a
+    positive size and a parseable leading ``moov``, so a naive
+    ``size > 0`` check happily promotes unplayable output.  Validation here
+    is cheap but real: ffprobe must exit 0 with at least one stream and a
+    positive duration, and for MP4-family containers the top-level atom
+    walk must find no truncation and no duplicated ``moov``.
+    """
+    import json
+    import subprocess as sp
+
+    if not path.exists() or path.stat().st_size == 0:
+        return False
+    try:
+        probe = sp.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration:stream=index",
+                "-of",
+                "json",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if probe.returncode != 0:
+            return False
+        info = json.loads(probe.stdout or "{}")
+        streams = info.get("streams") or []
+        duration = float((info.get("format") or {}).get("duration") or 0)
+        if not streams or duration <= 0:
+            return False
+    except Exception:
+        return False
+
+    if path.suffix.lower() not in (".mp4", ".mov", ".m4a", ".m4v"):
+        return True
+
+    return not _mp4_boxes_broken(path)
+
+
+def _image_file_ok(path: Path) -> bool:
+    """True when PIL can fully decode *path* (guards torn image writes)."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    try:
+        with Image.open(BytesIO(path.read_bytes())) as img:
+            img.verify()
+        return True
+    except Exception:
+        return False
+
+
+def _unique_tmp_sibling(final: Path) -> Path:
+    """A unique hidden temp path next to *final* (same filesystem, rename-safe).
+
+    Keeps the final file's extension — ffmpeg infers the output muxer from
+    the file extension, so an extension-less ``.tmp`` name would abort the
+    transcode with "Unable to find a suitable output format".
+    """
+    return final.with_name(f".{final.stem}.{os.getpid()}.{uuid.uuid4().hex}.tmp{final.suffix}")
+
+
 def _preprocess_image_file(path: Path, max_pixels: int = _PVC_IMAGE_MAX_PIXELS) -> Path:
     """Downscale an image on the PVC so width × height ≤ *max_pixels*.
 
@@ -978,7 +1088,25 @@ def _preprocess_image_file(path: Path, max_pixels: int = _PVC_IMAGE_MAX_PIXELS) 
 
     resized = _resize_image(raw, mime, max_pixels)
     preproc = path.with_stem(path.stem + "_preprocessed")
-    preproc.write_bytes(resized)
+
+    # Idempotency: another pod may have created a valid preprocessed copy
+    # while this resize was in flight — don't clobber it.
+    if preproc.exists() and _image_file_ok(preproc):
+        return preproc
+
+    tmp = _unique_tmp_sibling(preproc)
+    try:
+        resized = _resize_image(raw, mime, max_pixels)
+        tmp.write_bytes(resized)
+        if not _image_file_ok(tmp):
+            tmp.unlink(missing_ok=True)
+            return path  # write produced a broken file — keep the original
+        tmp.replace(preproc)  # atomic on POSIX
+    except Exception:
+        with contextlib.suppress(OSError):
+            tmp.unlink(missing_ok=True)
+        logger.warning("Image preprocess write failed for %s; keeping original", path.name, exc_info=True)
+        return path
     return preproc
 
 
@@ -995,6 +1123,24 @@ def _preprocess_video_file(
     """
     import json
     import subprocess as sp
+
+    # Container/codec compatibility: the transcode always emits H.264
+    # (libx264) + AAC, and ffmpeg picks the output muxer from the file
+    # extension.  Some containers — `.webm` above all — cannot legally
+    # carry that pair, so every transcode into them is doomed before it
+    # starts: ffmpeg writes the container header, then fails on the first
+    # packet (or burns the full timeout on a large file), leaving a tiny
+    # stub that a naive size check would promote as "preprocessed".  Only
+    # transcode into containers known to accept the codec pair; everything
+    # else keeps its original (embedding decodes frames regardless of the
+    # container, so retrieval is unaffected).
+    if path.suffix.lower() not in (".mp4", ".m4v", ".mov", ".mkv"):
+        logger.info(
+            "Skipping video preprocess for %s: %s container cannot hold the libx264/aac transcode output",
+            path.name,
+            path.suffix.lower() or "(unknown)",
+        )
+        return path
 
     # Probe source dimensions and frame rate
     vw = vh = 0
@@ -1050,6 +1196,13 @@ def _preprocess_video_file(
         filters.append(f"fps={max_fps}")
 
     preproc = path.with_stem(path.stem + "_preprocessed")
+
+    # Idempotency: another pod may have produced a valid preprocessed copy
+    # while this transcode was in flight — don't clobber it.
+    if preproc.exists() and _media_file_ok(preproc):
+        return preproc
+
+    tmp = _unique_tmp_sibling(preproc)
     cmd: list[str] = [
         "ffmpeg",
         "-v",
@@ -1071,16 +1224,24 @@ def _preprocess_video_file(
         "-movflags",
         "+faststart",
         "-y",
-        str(preproc),
+        str(tmp),
     ]
     try:
         sp.run(cmd, capture_output=True, timeout=300)
-        if preproc.exists() and preproc.stat().st_size > 0:
-            return preproc
+        # Size > 0 is not enough: a raced or truncated mux leaves a file that
+        # parses at the head but is unplayable.  Validate before promoting.
+        if not _media_file_ok(tmp):
+            tmp.unlink(missing_ok=True)
+            logger.warning("Video preprocess produced invalid output for %s; keeping original", path.name)
+            return path
+        tmp.replace(preproc)  # atomic on POSIX
     except Exception:
-        logger.debug("Suppressed exception", exc_info=True)
+        with contextlib.suppress(OSError):
+            tmp.unlink(missing_ok=True)
+        logger.debug("Video preprocess failed for %s", path.name, exc_info=True)
+        return path
 
-    return path
+    return preproc
 
 
 def _truncate_audio_file(path: Path, max_seconds: float = 60.0) -> Path:
@@ -1119,6 +1280,12 @@ def _truncate_audio_file(path: Path, max_seconds: float = 60.0) -> Path:
         return path
 
     truncated = path.with_stem(path.stem + "_truncated")
+
+    # Idempotency: don't redo (or clobber) another pod's valid truncation.
+    if truncated.exists() and _media_file_ok(truncated):
+        return truncated
+
+    tmp = _unique_tmp_sibling(truncated)
     try:
         sp.run(
             [
@@ -1132,32 +1299,36 @@ def _truncate_audio_file(path: Path, max_seconds: float = 60.0) -> Path:
                 "-c",
                 "copy",
                 "-y",
-                str(truncated),
+                str(tmp),
             ],
             capture_output=True,
             timeout=60,
         )
-        if truncated.exists() and truncated.stat().st_size > 0:
-            return truncated
         # Stream copy may fail for some containers — re-encode as fallback
-        sp.run(
-            [
-                "ffmpeg",
-                "-v",
-                "error",
-                "-t",
-                str(max_seconds),
-                "-i",
-                str(path),
-                "-y",
-                str(truncated),
-            ],
-            capture_output=True,
-            timeout=60,
-        )
-        if truncated.exists() and truncated.stat().st_size > 0:
-            return truncated
+        if not _media_file_ok(tmp):
+            sp.run(
+                [
+                    "ffmpeg",
+                    "-v",
+                    "error",
+                    "-t",
+                    str(max_seconds),
+                    "-i",
+                    str(path),
+                    "-y",
+                    str(tmp),
+                ],
+                capture_output=True,
+                timeout=60,
+            )
+        if not _media_file_ok(tmp):
+            tmp.unlink(missing_ok=True)
+            logger.warning("Audio truncation produced invalid output for %s; keeping original", path.name)
+            return path
+        tmp.replace(truncated)  # atomic on POSIX
     except Exception:
+        with contextlib.suppress(OSError):
+            tmp.unlink(missing_ok=True)
         logger.debug("Audio truncation failed", exc_info=True)
 
     return path
@@ -1213,7 +1384,24 @@ def _split_audio_segments(
 
     stem = path.stem
     suffix = path.suffix
-    output_pattern = str(path.parent / f"{stem}_segment_%03d{suffix}")
+
+    # Idempotency: another pod may have split this file already — reuse its
+    # segments when the expected number of valid ones exists.
+    import glob
+
+    existing = sorted(Path(p) for p in glob.glob(str(path.parent / f"{stem}_segment_*{suffix}")))
+    if len(existing) == num_segments and all(_media_file_ok(s) for s in existing):
+        return existing
+
+    # The segment muxer writes deterministic ``{stem}_segment_NNN`` names, so
+    # concurrent writers would interleave exactly like the preprocessed-MP4
+    # corruption (the fix in the *_preprocessed writers).  Split into a unique
+    # temp directory, validate, then move each segment into place atomically
+    # under the files-dir lock so the resulting SET is from one writer.
+    import shutil
+
+    tmp_dir = path.parent / f".{stem}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+    output_pattern = str(tmp_dir / f"{stem}_segment_%03d{suffix}")
 
     cmd: list[str] = [
         "ffmpeg",
@@ -1231,15 +1419,28 @@ def _split_audio_segments(
         output_pattern,
     ]
     try:
-        sp.run(cmd, capture_output=True, timeout=300)
-    except Exception:
+        with _cross_process_lock(path.parent / ".preprocess.lock"):
+            tmp_dir.mkdir(parents=True, exist_ok=False)
+            try:
+                sp.run(cmd, capture_output=True, timeout=300)
+            except Exception:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+                return [path]
+
+            segments = sorted(Path(p) for p in glob.glob(str(tmp_dir / f"{stem}_segment_*{suffix}")))
+            if not segments or not all(_media_file_ok(s) for s in segments):
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+                return [path]
+
+            moved: list[Path] = []
+            for seg in segments:
+                final_seg = path.parent / seg.name
+                seg.replace(final_seg)  # atomic on POSIX
+                moved.append(final_seg)
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+    except OSError:
         return [path]
-
-    # Collect segment files in order
-    import glob
-
-    segments = sorted(Path(p) for p in glob.glob(str(path.parent / f"{stem}_segment_*{suffix}")))
-    return segments if segments else [path]
+    return moved if moved else [path]
 
 
 class DatasetManager:
@@ -3671,6 +3872,90 @@ class DatasetManager:
             _record_ingest_warning(
                 f"Removed unreferenced file (not embeddable by the embedder; no caption): {stored_path}"
             )
+
+    def repair_preprocessed_media(
+        self,
+        dataset_name: str,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Regenerate broken ``*_preprocessed`` media siblings from their originals.
+
+        Concurrent preprocessing of one file (multiple server replicas share
+        the dataset PVC) can leave an interleaved, unplayable ``*_preprocessed``
+        file behind even though the original is intact.  For every
+        ``*_preprocessed.*`` file that fails :func:`_media_file_ok` /
+        :func:`_image_file_ok`, deletes the broken copy and re-runs the
+        corresponding preprocess function on the tier-1 original.
+
+        Pass ``dry_run=True`` to only report which files would be repaired.
+        """
+        files_dir = self._dataset_dir(dataset_name) / "files"
+        if not files_dir.is_dir():
+            return {"dataset": dataset_name, "dry_run": dry_run, "checked": 0, "repaired": [], "failed": []}
+
+        # Registry of candidates: iterate the files dir directly — a broken
+        # preprocessed sibling exists even when the hash index is stale.
+        candidates: dict[Path, Path] = {}
+        for f in sorted(files_dir.iterdir()):
+            if not f.is_file() or not f.stem.endswith("_preprocessed"):
+                continue
+            tier1 = f.with_name(f.stem[: -len("_preprocessed")] + f.suffix)
+            if tier1.exists():
+                candidates[f] = tier1
+
+        repaired: list[dict[str, Any]] = []
+        failed: list[dict[str, Any]] = []
+        checked = 0
+        for preproc, tier1 in candidates.items():
+            checked += 1
+            suffix = preproc.suffix.lower()
+            ok = _image_file_ok if suffix in (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp") else _media_file_ok
+            if ok(preproc):
+                continue
+            record: dict[str, Any] = {"preprocessed": str(preproc), "original": str(tier1)}
+            if dry_run:
+                record["action"] = "would-regenerate"
+                repaired.append(record)
+                continue
+            # The writers create tmp siblings next to the final name, so
+            # serialise under the files-dir lock; unlink first so the writer
+            # cannot skip-regenerate (its exists+valid check would pass on
+            # the old broken file otherwise).
+            with _cross_process_lock(files_dir / ".preprocess.lock"):
+                try:
+                    preproc.unlink()
+                except OSError:
+                    pass
+                file_type = _classify_file(str(tier1))
+                if file_type == "image":
+                    result = _preprocess_image_file(tier1)
+                elif file_type == "video":
+                    result = _preprocess_video_file(tier1)
+                elif file_type == "audio":
+                    result = _truncate_audio_file(tier1, max_seconds=60.0)
+                else:
+                    result = tier1
+                if result != tier1 and result == preproc and ok(preproc):
+                    record["regenerated_bytes"] = preproc.stat().st_size
+                    repaired.append(record)
+                    logger.info("Repaired broken preprocessed media: %s", preproc.name)
+                else:
+                    record["reason"] = (
+                        "preprocess returned the original (no transcode needed, or the original's "
+                        "container cannot hold the libx264/aac output — broken sibling was removed)"
+                        if result == tier1
+                        else "regenerated file failed validation"
+                    )
+                    failed.append(record)
+                    logger.warning("Could not repair %s: %s", preproc.name, record["reason"])
+
+        return {
+            "dataset": dataset_name,
+            "dry_run": dry_run,
+            "checked": checked,
+            "repaired": repaired,
+            "failed": failed,
+        }
 
     def _file_referenced(self, rag: MultimodalRAG, sources: list[str]) -> bool:
         """True if the vector store holds a doc referencing one of *sources*.

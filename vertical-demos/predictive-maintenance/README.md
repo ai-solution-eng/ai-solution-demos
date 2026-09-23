@@ -34,8 +34,10 @@ The dataset we are analyzing contains the following data points:
 
 We will be analyzing the dataset first, to clean it and decide which datapoints to drop and which to keep, then we will train our model, and at the end packaging and deploying the model to run it with HPE MLIS. With the inputs of air_temperature_k", process_temperature_k, rotational_speed_rpm, torque_nm and tool_wear_min the model will be able to predict the machine failure and probability.
 
+![Use Case Overview](https://github.com/ai-solution-eng/ai-solution-demos/blob/main/vertical-demos/predictive-maintenance/img/PredictiveMaintenanceDemo.jpg)
+
 **Demo overview video**
-[Demo Video](to be added)
+[Demo Video](https://storage.googleapis.com/ai-solution-engineering-videos/public/predictive-maintenance-demo.mp4)
 
 **Tools and frameworks used:**
 

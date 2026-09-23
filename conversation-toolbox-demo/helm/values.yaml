@@ -1,32 +1,81 @@
-# Owner: Andrew Bydlon
-# Email: andrew.bydlon@hpe.com
-# Prefer: Slack
-
-# Conversation Toolbox — speech-to-speech voice agent toolkit (ASR, LLM,
-# TTS, batch transcription, optional diarization) for PCAI (HPE Ezmeral
-# Unified Analytics). Deploys the web app, an in-cluster Redis for batch
-# job state, optional ARQ workers and a GPU diarization service, all
-# exposed through the PCAI Istio gateway.
-
-# -- Deployment -----------------------------------------------------------------
-deployment:
-  name: conversation-toolbox
-  appName: conversation-toolbox
-  replicaCount: 1
-
-# -- Image -------------------------------------------------------------------------
 image:
-  repository: andrewbydlon/conversation-toolbox
+  repository: ghcr.io/ai-solution-eng/conversation-toolbox
   tag: v4.5.2
   pullPolicy: IfNotPresent
 
-# -- Service exposure ------------------------------------------------------------------
 service:
   type: ClusterIP
   port: 80
   targetPort: 8000
 
-# -- Resources ---------------------------------------------------------------------------
+deployment:
+  name: conversation-toolbox
+  appName: conversation-toolbox
+  replicaCount: 1
+
+redis:
+  external: false
+  url: redis://conversation-toolbox-redis:6379/0
+  # Redis maxmemory controls when Redis starts rejecting writes. Must be
+  # below the container memory limit. Use integer MB (Redis doesn't accept
+  # fractional GB). Batch transcription stores job state + segment metadata
+  # here; segment audio is NOT in Redis (lives on PVC).
+  maxmemory: '1536mb'
+  maxmemoryPolicy: noeviction
+  resources:
+    requests:
+      cpu: '250m'
+      memory: 512Mi
+    limits:
+      cpu: '500m'
+      memory: 2Gi
+
+workers:
+  enabled: true
+  # When autoscaling is enabled, the HPA owns the replica count at runtime;
+  # this value is only the initial deploy count before HPA takes over. Set
+  # to match minReplicas to avoid brief over-provisioning on fresh deploys.
+  replicaCount: 1
+  resources:
+    requests:
+      # Worker is I/O-bound (HTTP to vLLM ASR/TTS). Steady-state memory is
+      # ~117Mi (measured via kubectl top). CPU baseline is ~150-260m due to
+      # the agents SDK + MCP keepalive + exec probes; request sized to
+      # avoid throttling without over-reserving. Memory request is low
+      # because HPA uses memory utilization (70% target = ~716Mi).
+      cpu: '250m'
+      memory: 1Gi
+    limits:
+      # Limit allows real bursts (audio encoding, base64, numpy) without
+      # node over-commit. Memory limit is the OOM safety net for peak
+      # batch load (3 concurrent 1-hr files ≈ 1.5GB + baseline).
+      cpu: '500m'
+      memory: 4Gi
+  # Horizontal Pod Autoscaler. When enabled, replicaCount becomes the
+  # fallback only if autoscaling is disabled. The HPA will override it
+  # at runtime. CPU target is low (40%) because the workload is I/O-
+  # bound (HTTP to vLLM ASR/TTS); memory (70%) is the primary signal
+  # since batch jobs load audio segments into RAM.
+  # NOTE: KEDA on arq:queue depth would be a better fit (scales on
+  # actual backlog), but KEDA is not installed on this cluster. Revisit
+  # if/when KEDA becomes available — a ScaledObject on the
+  # `arq:queue` Redis list length would be a drop-in replacement.
+  autoscaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 3
+    memoryTarget: 70
+    # KEDA scales on actual Redis queue depth (arq:queue list length)
+    # instead of CPU/memory. This is the correct metric for I/O-bound
+    # workloads — "big queue → more pods". Requires KEDA to be installed
+    # on the cluster. When enabled, set `enabled: false` above to avoid
+    # both KEDA and HPA competing for the same Deployment.
+    # Install KEDA:
+    #   helm repo add kedacore https://kedacore.github.io/charts
+    #   helm install keda kedacore/keda -n keda-system --create-namespace
+    keda:
+      enabled: false
+
 resources:
   requests:
     cpu: '2'
@@ -35,7 +84,6 @@ resources:
     cpu: '4'
     memory: 4Gi
 
-# -- Probes ----------------------------------------------------------------------------------
 livenessProbe:
   enabled: true
   path: /health
@@ -56,7 +104,6 @@ readinessProbe:
   failureThreshold: 3
   successThreshold: 1
 
-# -- Environment --------------------------------------------------------------------------------
 env:
 - name: REDIS_URL
   value: redis://conversation-toolbox-redis:6379/0
@@ -69,75 +116,13 @@ env:
 - name: BATCH_USE_BOUNDED_QUEUE
   value: 'true'
 
-# -- Redis (batch job state) ------------------------------------------------------------------------
-# Batch transcription stores job state + segment metadata here; segment
-# audio is NOT in Redis (lives on PVC).
-redis:
-  external: false
-  url: redis://conversation-toolbox-redis:6379/0
-  # maxmemory controls when Redis starts rejecting writes. Must be below
-  # the container memory limit. Use integer MB (Redis doesn't accept
-  # fractional GB).
-  maxmemory: '1536mb'
-  maxmemoryPolicy: noeviction
-  resources:
-    requests:
-      cpu: '250m'
-      memory: 512Mi
-    limits:
-      cpu: '500m'
-      memory: 2Gi
-
-# -- ARQ batch-transcription workers -------------------------------------------------------------------
-workers:
-  enabled: true
-  # When autoscaling is enabled, the HPA owns the replica count at runtime;
-  # this value is only the initial deploy count before HPA takes over. Set
-  # to match minReplicas to avoid brief over-provisioning on fresh deploys.
-  replicaCount: 1
-  resources:
-    requests:
-      # Worker is I/O-bound (HTTP to vLLM ASR/TTS). Steady-state memory is
-      # ~117Mi (measured via kubectl top). CPU baseline is ~150-260m due to
-      # the agents SDK + MCP keepalive + exec probes; request sized to
-      # avoid throttling without over-reserving. Memory request is low
-      # because HPA uses memory utilization (70% target = ~716Mi).
-      cpu: '250m'
-      memory: 1Gi
-    limits:
-      # Limit allows real bursts (audio encoding, base64, numpy) without
-      # node over-commit. Memory limit is the OOM safety net for peak
-      # batch load (3 concurrent 1-hr files = 1.5GB + baseline).
-      cpu: '500m'
-      memory: 4Gi
-  # Horizontal Pod Autoscaler. When enabled, replicaCount becomes the
-  # fallback only if autoscaling is disabled. The HPA will override it
-  # at runtime. CPU target is low (40%) because the workload is I/O-
-  # bound (HTTP to vLLM ASR/TTS); memory (70%) is the primary signal
-  # since batch jobs load audio segments into RAM.
-  # NOTE: KEDA on arq:queue depth would be a better fit (scales on
-  # actual backlog), but KEDA is not installed on this cluster. Revisit
-  # if/when KEDA becomes available — a ScaledObject on the
-  # `arq:queue` Redis list length would be a drop-in replacement.
-  autoscaling:
-    enabled: true
-    minReplicas: 1
-    maxReplicas: 3
-    memoryTarget: 70
-    # KEDA scales on actual Redis queue depth (arq:queue list length)
-    # instead of CPU/memory — "big queue → more pods". Requires KEDA on
-    # the cluster; when enabled, set `enabled: false` above to avoid both
-    # KEDA and HPA competing for the same Deployment.
-    keda:
-      enabled: false
-
-# -- Diarization (optional GPU service) --------------------------------------------------------------------
 diarization:
   enabled: false
   baseUrl: http://conversation-toolbox-diarization:8001
   pipeline: pyannote/speaker-diarization-community-1
   gpuMemoryFraction: '0.10'
-  # Optional: leave empty to let Kubernetes schedule on any node/GPU.
+  # Optional. If empty, the pod is not pinned to a specific node and
+  # CUDA_VISIBLE_DEVICES is not set (the runtime picks the GPU).
   cudaVisibleDevices: ""
   nodeName: ""
   tolerations: []
@@ -165,7 +150,6 @@ diarization:
     timeoutSeconds: 5
     failureThreshold: 3
 
-# -- Voice agent configuration (non-secret; wired via ConfigMap) ------------------------------------------------
 config:
   asrBaseUrl: ""
   hallucinationPatterns: "thank you,thanks,\u043F\u0440\u043E\u0434\u043E\u043B\u0436\
@@ -178,16 +162,25 @@ config:
   vadAggression: '2'
   batchTranscriptionWorkerCount: '8'
 
-# -- Model API keys (sensitive; rendered into a Secret) ------------------------------------------------------------
 secrets:
   asrApiKey: ""
   llmApiKey: ""
   ttsApiKey: ""
-  # Required only when diarization.enabled=true; must own access to the
-  # pyannote/speaker-diarization-community-1 and pyannote/segmentation-3.0 repos.
+  # Required only when diarization.enabled is true (pyannote). Provide a
+  # Hugging Face token with access to the gated speaker-diarization model.
   hfToken: ""
 
-# -- Persistence (RWX project storage) ---------------------------------------------------------------------------------
+ezua:
+  enabled: true
+  domainName: ${DOMAIN_NAME}
+  virtualService:
+    endpoint: conversation-toolbox.${DOMAIN_NAME}
+    istioGateway: istio-system/ezaf-gateway
+    timeout: 660s
+  authorizationPolicy:
+    namespace: istio-system
+    providerName: oauth2-proxy
+
 persistence:
   recordings_dir:
     enabled: true
@@ -214,14 +207,3 @@ persistence:
     existingClaim: ''
     annotations: {}
 
-# -- PCAI (HPE Ezmeral Unified Analytics) integration ---------------------------------------------------------------------
-ezua:
-  enabled: true
-  domainName: ${DOMAIN_NAME}
-  virtualService:
-    endpoint: conversation-toolbox.${DOMAIN_NAME}
-    istioGateway: istio-system/ezaf-gateway
-    timeout: 660s
-  authorizationPolicy:
-    namespace: istio-system
-    providerName: oauth2-proxy
