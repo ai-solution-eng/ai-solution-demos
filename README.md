@@ -27,9 +27,31 @@ These are the following:
 | [Text Document Analysis](text-document-analysis)                | A simple web application in which users can upload text and PDF files, ask or upload a list of questions and get answers for each document in an Excel sheet, after document analysis leveraging an LLM deployed using **MLIS**.           |
 | [Vision Analytics](vision-analytics)                        | A Gradio application using a VLM to analyze images, videos and/or streams. Files can be uploaded from the UI, or read from the filesystem. Relies on **MLIS** for model deployment.           |
 
-The remaining demos are split between two folders:
-- **Vertical_demos**: Demos bound to a specific vertical, or which require provided data to be run (not runnable with your own data).
-- **Archived_demos**: Outdated demos that we no longer support and/or miscelleanous demos that do not fit into the other categories.
+Demos bound to a specific vertical, or which require provided data to be run (not runnable with your own data), live in their own folder:
+
+### [Vertical demos](vertical-demos)
+
+The [vertical demos folder](vertical-demos) contains demos bound to a specific vertical, usually providing their own data.
+
+It contains the following demos:
+
+| Demo | Short Description | Demo Video |
+|---|---|---|
+| [Molecular Aligned Multi-Modal Architecture and Language (Biomed-MAMMAL)](vertical-demos/biomed-mammal) | A **BentoML** inference service for a **biomedical foundation model** which achieves state-of-the-art results over a variety of tasks across the entire **drug discovery** pipeline and diverse **biomedical domains**. | - |
+| [Blood Vessel Geometry Analysis and Reconstruction](vertical-demos/blood-vessel-geometry-analysis-and-reconstruction) | A streamlit application relying on **NVIDIA Vista 3D model** (deployed using **MLIS**) to analyze, reconstruct and render vessels in 3D. | [link](https://storage.googleapis.com/ai-solution-engineering-videos/public/Enhancing%20Healthcare%20with%20AI_%20Blood%20Vessel%20Analysis%20and%203D%20Reconstruction(1).mp4) |
+| [Defence Ops](vertical-demos/defence-ops) | A web application leveraging a VLM (deployed using **MLIS**)to analyze videos, with preloaded defence-related ones provided for example. | [link](https://storage.googleapis.com/ai-solution-engineering-videos/public/DefenceOps.mp4) |
+| [Genome Sequencing](vertical-demos/genome-sequencing) | **Notebooks** leveraging **NVIDIA Parabricks** for genome sequencing. | - |
+| [Hospital Visit Summary](vertical-demos/hospital-visit-summary) | A **streamlit application** that can display patient information regarding their previous visits from a database, and summarize it. Requires deploying an LLM using **MLIS**. | [link](https://storage.googleapis.com/ai-solution-engineering-videos/public/PatientVisitSummariesApp.mp4) |
+| [Lawfirm Co](vertical-demos/lawfirm-co) | An application using RAG and video analytics in the context of legal documents analysis. Requires deploying a VLM and embedding model using **MLIS**. | - |
+| [License Plate Number Detection](vertical-demos/license-plate-number-detection) | An application using an object detection model (YOLO) and an OCR one to extract license plate numbers from videos. Uses **MLIS** for model deployment. | - |
+| [Maintenance Ticket Assistant](vertical-demos/maintenance-ticket-assistant) | An application that can classifies tickets and provide expected resolution steps using a chat model. Also uses OCR to analyze text from network equipment photos for diagnostic purposes. Relies on **MLIS** for model deployment. | - |
+| [Predictive Maintenance](vertical-demos/predictive-maintenance) | A predictive maintenance model trained leveraging **Jupyter Notebook**, tracked in **MLFlow**, packaged with BentoML and deployed via **MLIS**. | [link](https://storage.googleapis.com/ai-solution-engineering-videos/public/predictive-maintenance-demo.mp4) |
+| [Secure Loan Verification Demo](vertical-demos/secure-loan-verification-demo) | A **governed, human-in-the-loop AI workflow** for loan renewal: an agent gathers credit data from five bank systems via a governed **MCP** server and drafts a decision memo; a policy gate escalates large or risky cases to a human approver, and every step is audited. LLM served via **MLIS** or LiteLLM; includes a React portal and approval-email flow. | [link](https://storage.googleapis.com/ai-solution-engineering-videos/public/Slvd%20Demo.mp4) |
+| [Traffic Report](vertical-demos/traffic-report) | A **streamlit** application that uses a VLM and YOLO to detect vehicles in images/videos and provide an analysis of the scenes. Relies on **MLIS** for model deployment. | [link](https://storage.googleapis.com/ai-solution-engineering-videos/public/traffic-report-demo.mp4) |
+| [Water Utility Planner](vertical-demos/water-utility-planner) | A chat assistant in charge of predicting which sewer pipes require inspection and why, requiring XGBoost model training with **Jupyter Notebooks**, tracking with **MLflow**, packaging with BentoML, deployment with **MLIS**, using **Open WebUI** for interaction. | [link](https://storage.googleapis.com/ai-solution-engineering-videos/public/Water%20Utility%20Agentic%20Planner%20-%20Short%20version.mp4) |
+
+Outdated demos that we no longer support, and/or miscelleanous demos that do not fit into the other categories, are gathered under:
+- **Archived_demos**: [archived-demos](archived-demos).
 
 ## Upcoming changes
 
