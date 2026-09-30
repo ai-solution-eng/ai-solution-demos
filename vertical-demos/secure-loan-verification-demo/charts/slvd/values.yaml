@@ -87,6 +87,15 @@ mailpit:
   # meshes (a PeerAuthentication DISABLE is a no-op on permissive meshes).
   mtlsDisable:
     enabled: true
+  # Gateway->mailpit resilience (see templates/destinationrule.yaml):
+  # idleTimeout must stay below the upstream's idle-close to win the race;
+  # retries absorb residual resets on idempotent GETs.
+  destinationRule:
+    enabled: true
+    idleTimeout: "30s"
+  retries:
+    attempts: 2
+    perTryTimeout: "10s"
   resources:
     requests: { cpu: 50m, memory: 64Mi }
     limits: { cpu: 200m, memory: 128Mi }

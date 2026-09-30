@@ -31,7 +31,7 @@ The PCAI UI form may be left COMPLETELY EMPTY (zero-input deploy):
   - SLVD_JWT_SECRET / SLVD_HMAC_SECRET / SLVD_MCP_INTERNAL_TOKEN — GENERATED:
        deterministic sha256 of the release coordinates (stable across upgrades;
        identical across templates). Pin a custom value via engine.env if needed.
-CRITICAL (verified on PCAI, helm 3.16): cluster-wide lookup (namespace "")
+CRITICAL (verified on CS1, helm 3.16): cluster-wide lookup (namespace "")
 returns NIL for Service/Secret/ConfigMap under the import identity while
 NAMESPACE-scoped lookup works. Every lookup below therefore iterates
 candidate namespaces explicitly — NEVER "". Also: `lookup` returns nothing

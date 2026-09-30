@@ -24,7 +24,7 @@ log = logging.getLogger("slvd.mcp")
 
 app = FastAPI(title="credit-memo-mcp", version="0.1.0")
 
-MOCKDATA = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "mockdata", "cases.json"))
+MOCKDATA = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "fixtures", "cases.json"))
 ENGINE_URL = os.environ.get("SLVD_ENGINE_URL", "http://engine:8080")
 INTERNAL_TOKEN = os.environ.get("SLVD_MCP_INTERNAL_TOKEN", "dev-internal")
 

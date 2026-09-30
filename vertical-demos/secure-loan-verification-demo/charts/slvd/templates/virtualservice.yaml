@@ -36,7 +36,11 @@ spec:
   hosts:
     - {{ .Values.ezua.virtualService.mailEndpoint }}
   http:
-    - route:
+    - retries:
+        attempts: {{ .Values.mailpit.retries.attempts }}
+        perTryTimeout: {{ .Values.mailpit.retries.perTryTimeout | quote }}
+        retryOn: connect-failure,refused-stream,reset
+      route:
         - destination:
             host: mailpit.{{ .Values.global.namespace }}.svc.cluster.local
             port:

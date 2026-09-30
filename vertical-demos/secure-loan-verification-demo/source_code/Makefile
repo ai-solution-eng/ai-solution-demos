@@ -4,6 +4,7 @@
 # Path model (robust to where make is invoked from):
 #   SRC  = this directory (source_code/)
 #   ROOT = repo root (parent of source_code/)
+#   Code grouped by field: services/ agent/ data/ testing/ orchestration/ docker/
 # The Docker build CONTEXT is always $(ROOT) so the Dockerfile's
 # `COPY source_code/...` instructions resolve correctly.
 
@@ -42,23 +43,23 @@ help:
 venv:
 	cd $(ROOT) && python3 -m venv venv
 	$(ROOT)/venv/bin/pip install -q -r $(SRC)/requirements.txt
-	cd $(SRC)/portal && npm install --no-audit --no-fund
+	cd $(SRC)/services/portal && npm install --no-audit --no-fund
 
 test-unit:
-	$(PY) -m pytest $(SRC)/engine/tests/ $(SRC)/mcp-server/tests/ -q
+	$(PY) -m pytest $(SRC)/services/engine/tests/ $(SRC)/services/mcp-server/tests/ -q
 
 test-e2e:
-	$(PY) $(SRC)/e2e/run_e2e.py
+	$(PY) $(SRC)/testing/e2e/run_e2e.py
 
 test-security:
-	$(PY) $(SRC)/e2e/security_scan.py
+	$(PY) $(SRC)/testing/e2e/security_scan.py
 
 build:
-	cd $(SRC)/portal && npm run build
+	cd $(SRC)/services/portal && npm run build
 
 build-images:
-	docker build -t $(IMG):$(VER) -f $(SRC)/Dockerfile $(ROOT)
-	docker build -t $(IMG)-portal:$(VER) -f $(SRC)/Dockerfile.portal $(ROOT)
+	docker build -t $(IMG):$(VER) -f $(SRC)/docker/Dockerfile $(ROOT)
+	docker build -t $(IMG)-portal:$(VER) -f $(SRC)/docker/Dockerfile.portal $(ROOT)
 	docker push $(IMG):$(VER)
 	docker push $(IMG)-portal:$(VER)
 
@@ -68,7 +69,7 @@ chart:
 	helm push $(ROOT)/slvd-$(VER).tgz http://127.0.0.1:18080
 
 lint:
-	$(PY) -m ruff check $(SRC)/engine $(SRC)/mcp-server $(SRC)/e2e 2>/dev/null || true
+	$(PY) -m ruff check $(SRC)/services/engine $(SRC)/services/mcp-server $(SRC)/testing/e2e $(SRC)/orchestration 2>/dev/null || true
 	helm lint $(ROOT)/charts/slvd
 	helm template slvd $(ROOT)/charts/slvd > /dev/null
 
@@ -84,7 +85,7 @@ deploy:
 	$(K) wait --for=condition=ready pod -l app.kubernetes.io/part-of=slvd -n $(NS) --timeout=600s
 
 verify:
-	@$(SRC)/e2e/verify_cluster.sh
+	@$(SRC)/testing/e2e/verify_cluster.sh
 
 clean:
 	$(K) delete ezappconfig -n ui -l app.kubernetes.io/part-of=slvd --ignore-not-found
@@ -93,4 +94,4 @@ clean:
 	@echo "cleaned ns $(NS) + slvd EzAppConfig"
 
 demo-run:
-	$(SRC)/e2e/demo_run.sh
+	$(SRC)/testing/e2e/demo_run.sh

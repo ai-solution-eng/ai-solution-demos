@@ -180,8 +180,8 @@ def test_approval_request_single_use():
 
 def _load_case(cid: str) -> dict:
     import json
-    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    with open(os.path.join(root, "mockdata", "cases.json")) as f:
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    with open(os.path.join(root, "data", "fixtures", "cases.json")) as f:
         return json.load(f)["cases"][cid]
 
 

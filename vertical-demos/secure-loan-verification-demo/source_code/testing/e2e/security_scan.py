@@ -13,7 +13,7 @@ import re
 import subprocess
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))  # repo root
 
 # High-signal secret patterns (avoid false positives on keys like "apiKey" field names).
 SECRET_PATTERNS = [
@@ -26,7 +26,7 @@ SECRET_PATTERNS = [
 ALLOWLIST = {
     "IMPLEMENTATION_PLAN.md",  # mentions patterns in prose
     "charts/slvd/ezappconfig.generated.yaml",  # gitignored; holds real values locally (deploy trigger)
-    "e2e/security_scan.py",
+    "testing/e2e/security_scan.py",
     "venv/",
     "node_modules/",
     "dist/",

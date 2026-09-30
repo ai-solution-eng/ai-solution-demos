@@ -16,11 +16,13 @@ import time
 import urllib.request
 import urllib.error
 
-SRC_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # source_code/
-REPO_ROOT = os.path.dirname(SRC_ROOT)                                     # repo root
+SRC_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # source_code/
+REPO_ROOT = os.path.dirname(SRC_ROOT)                                                    # repo root
 sys.path.insert(0, REPO_ROOT)
 sys.path.insert(0, SRC_ROOT)
-sys.path.insert(0, os.path.join(SRC_ROOT, "mcp-server"))
+sys.path.insert(0, os.path.join(SRC_ROOT, "services"))
+sys.path.insert(0, os.path.join(SRC_ROOT, "services", "mcp-server"))
+sys.path.insert(0, os.path.join(SRC_ROOT, "testing"))
 
 import uvicorn  # noqa: E402
 
@@ -193,7 +195,7 @@ def s1_happy(sink, results, label):
     assert snap["run"]["approved_by"] == "Sarah Chen"
     assert snap["run"]["approval_role"] == "Senior Credit Officer"
     _, memo = api(f"/api/runs/{run_id}/memo", token=tok)
-    assert "/official/credit/" in memo["path"], f"S1: memo not in official: {memo['path']}"
+    assert "/official/credit/" in memo["path"].replace("\\", "/"), f"S1: memo not in official: {memo['path']}"
     for needle in ["Acme Industrial Holdings", "CL-77821", "$5,000,000", "76%", "BB",
                    "Revolving credit", "Recommended Decision"]:
         assert needle in memo["memo_md"], f"S1: memo missing {needle!r}"
@@ -257,7 +259,7 @@ def s4_reject(sink, results, label):
     audit_txt = " ".join((a["action"] + " " + (a["detail"] or "")) for a in snap["audit"])
     assert "Rejected by" in audit_txt, f"S4: audit missing rejection: {audit_txt}"
     _, memob = api(f"/api/runs/{run_id}/memo", token=tok)
-    assert "/official/" not in memob.get("path", ""), f"S4: should not publish official: {memob}"
+    assert "/official/" not in memob.get("path", "").replace("\\", "/"), f"S4: should not publish official: {memob}"
     # Resubmit after a brief settle (engine just applied the decision).
     time.sleep(1.0)
     code, b2 = api(f"/api/approvals/{req_id}/resubmit", "POST", None, tok)
@@ -309,7 +311,7 @@ def s7_agent_failure(sink, results, label):
     import engine.workflow as wf
     from engine.security import Identity
     ident = Identity("nick", "Nick Johnson", "Risk Analyst", "E102938")
-    with open(os.path.join(SRC_ROOT, "mockdata", "cases.json")) as f:
+    with open(os.path.join(SRC_ROOT, "data", "fixtures", "cases.json")) as f:
         case = json.load(f)["cases"]["CR-2026-00451"]
     orig = cfg.settings.mcp_base_url
     cfg.settings.mcp_base_url = "http://127.0.0.1:1"  # dead

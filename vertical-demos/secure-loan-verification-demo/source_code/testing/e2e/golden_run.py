@@ -11,8 +11,8 @@ import time
 import urllib.request
 import urllib.error
 
-SRC_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # source_code/
-REPO_ROOT = os.path.dirname(SRC_ROOT)                                     # repo root
+SRC_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # source_code/
+REPO_ROOT = os.path.dirname(SRC_ROOT)                                                    # repo root
 sys.path.insert(0, REPO_ROOT)
 sys.path.insert(0, SRC_ROOT)
 
@@ -96,7 +96,7 @@ def main() -> int:
     checks = {
         "status_completed": run["status"] == "COMPLETED",
         "approved_by": run.get("approved_by") in ("Sarah Chen", "simulation (auto)"),
-        "memo_official": "/official/credit/" in (run.get("memo_official_path") or memo.get("path") or ""),
+        "memo_official": "/official/credit/" in (run.get("memo_official_path") or memo.get("path") or "").replace("\\", "/"),
         "memo_fields": all(n in memo.get("memo_md", "") for n in
                            ["Acme Industrial Holdings", "CL-77821", "$5,000,000", "76%", "BB",
                             "Revolving credit", "Recommended Decision"]),

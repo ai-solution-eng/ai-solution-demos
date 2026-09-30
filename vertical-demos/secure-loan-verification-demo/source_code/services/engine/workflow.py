@@ -39,7 +39,7 @@ def _year() -> int:
 
 
 def _load_case(case_id: str) -> dict | None:
-    path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "mockdata", "cases.json"))
+    path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "fixtures", "cases.json"))
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)["cases"].get(case_id)
 

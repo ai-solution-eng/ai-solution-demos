@@ -114,7 +114,7 @@ data:
   # seed-hermes-config.sh is run by the container command to write
   # $HERMES_HOME/config.yaml + .env before `hermes gateway run`.
   #
-  # PROVEN against hermes v0.19.0 on PCAI. Key layout
+  # PROVEN against hermes v0.19.0 on CS1 (probe13, 2026-09-14). Key layout
   # requirements (a wrong shape breaks the agent's OpenAI client):
   #   * providers.custom MUST carry `name:` + `base_url` + `api_key`.
   #   * The `api:` key is NOT a hermes field — hermes falls back to it as the
