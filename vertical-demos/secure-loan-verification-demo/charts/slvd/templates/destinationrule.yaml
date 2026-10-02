@@ -1,0 +1,35 @@
+{{- if and .Values.ezua.virtualService.mailEndpoint .Values.mailpit.destinationRule.enabled }}
+# Robustness for the gateway -> mailpit path (sidecarless plaintext pod).
+# Symptom it fixes: "upstream connect error or disconnect/reset before
+# headers. reset reason: connection termination" — intermittent, when an
+# idle keep-alive connection is closed by the upstream just as Envoy
+# reuses it. Capping Envoy's per-connection idle timeout BELOW typical
+# upstream idle-close timers makes Envoy retire the connection first; the
+# VirtualService retries below then absorb any remaining race for
+# idempotent requests.
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: slvd-mailpit
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "slvd.labels" . | nindent 4 }}
+    app: mailpit
+spec:
+  host: mailpit.{{ .Values.global.namespace }}.svc.cluster.local
+  trafficPolicy:
+    connectionPool:
+      http:
+        h2UpgradePolicy: DO_NOT_UPGRADE
+        idleTimeout: {{ .Values.mailpit.destinationRule.idleTimeout }}
+        http1MaxPendingRequests: 100
+        http2MaxRequests: 100
+      tcp:
+        connectTimeout: 5s
+        tcpKeepalive:
+          time: 60s
+          interval: 15s
+          probes: 3
+    loadBalancer:
+      simple: ROUND_ROBIN
+{{- end }}

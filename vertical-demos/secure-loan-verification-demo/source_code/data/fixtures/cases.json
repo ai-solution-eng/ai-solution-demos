@@ -1,0 +1,116 @@
+{
+  "cases": {
+    "CR-2026-00451": {
+      "case_id": "CR-2026-00451",
+      "client": "Acme Industrial Holdings",
+      "client_code": "CL-77821",
+      "type": "Renewal Decision Memo",
+      "amount_usd": 5000000,
+      "crm": {
+        "industry": "Industrial Manufacturing",
+        "relationship_years": 7,
+        "beneficial_ownership_update": "pending"
+      },
+      "credit": {
+        "facility": "Revolving credit",
+        "limit_usd": 5000000,
+        "utilization_usd": 3800000,
+        "utilization_pct": 76,
+        "risk_rating": "BB",
+        "covenant_status": "In compliance with covenants"
+      },
+      "transactions": {
+        "delinquencies": 0,
+        "trend": "stable",
+        "history": "Stable transaction history with no delinquencies"
+      },
+      "compliance": {
+        "kyc_status": "pending",
+        "kyc_detail": "beneficial ownership update required",
+        "sanctions": "clear"
+      },
+      "prior_memo": {
+        "conditions": ["Quarterly reporting", "No additional unsecured borrowing"],
+        "open_follow_up": "Collateral valuation update needed"
+      },
+      "expected_decision": "Approve with conditions",
+      "allowed_users": ["nick", "sarah"]
+    },
+    "CR-2026-00452": {
+      "case_id": "CR-2026-00452",
+      "client": "Blue Harbor Logistics",
+      "client_code": "CL-55210",
+      "type": "Renewal Decision Memo",
+      "amount_usd": 2000000,
+      "crm": {
+        "industry": "Logistics",
+        "relationship_years": 3,
+        "beneficial_ownership_update": "clear"
+      },
+      "credit": {
+        "facility": "Term loan",
+        "limit_usd": 2500000,
+        "utilization_usd": 1500000,
+        "utilization_pct": 60,
+        "risk_rating": "BBB",
+        "covenant_status": "In compliance with covenants"
+      },
+      "transactions": {
+        "delinquencies": 0,
+        "trend": "improving",
+        "history": "Improving transaction history with no delinquencies"
+      },
+      "compliance": {
+        "kyc_status": "clear",
+        "kyc_detail": "none",
+        "sanctions": "clear"
+      },
+      "prior_memo": {
+        "conditions": ["Quarterly reporting"],
+        "open_follow_up": "None"
+      },
+      "expected_decision": "Approve",
+      "allowed_users": ["nick", "sarah"]
+    },
+    "CR-2026-00453": {
+      "case_id": "CR-2026-00453",
+      "client": "Cedar Peak Materials",
+      "client_code": "CL-60914",
+      "type": "Renewal Decision Memo",
+      "amount_usd": 2000000,
+      "crm": {
+        "industry": "Building Materials",
+        "relationship_years": 5,
+        "beneficial_ownership_update": "pending"
+      },
+      "credit": {
+        "facility": "Revolving credit",
+        "limit_usd": 2500000,
+        "utilization_usd": 2000000,
+        "utilization_pct": 80,
+        "risk_rating": "B+",
+        "covenant_status": "In compliance with covenants"
+      },
+      "transactions": {
+        "delinquencies": 1,
+        "trend": "stable",
+        "history": "Stable history with one minor delinquency in prior year"
+      },
+      "compliance": {
+        "kyc_status": "pending",
+        "kyc_detail": "ownership structure update required",
+        "sanctions": "clear"
+      },
+      "prior_memo": {
+        "conditions": ["Quarterly reporting"],
+        "open_follow_up": "Covenant compliance certificate due"
+      },
+      "expected_decision": "Approve with conditions",
+      "allowed_users": ["nick", "sarah"]
+    }
+  },
+  "users": {
+    "nick": {"name": "Nick Johnson", "role": "Risk Analyst", "department": "Credit Risk", "employee_id": "E102938"},
+    "sarah": {"name": "Sarah Chen", "role": "Senior Credit Officer", "department": "Credit Risk", "employee_id": "E200145"}
+  }
+}
