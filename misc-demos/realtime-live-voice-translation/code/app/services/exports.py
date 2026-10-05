@@ -1131,39 +1131,45 @@ async def build_export_package_bytes(
     stamp = datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y-%m-%d_%H-%M-%S")
     archive_name = f"meeting_package_{stamp}.zip"
 
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for doc in meeting.documents:
-            name = doc["filename"]
-            if "summary" in name:
-                path = f"summaries/{name}"
-            elif "minutes" in name:
-                path = f"minutes/{name}"
-            elif "transcript" in name:
-                path = f"transcripts/{name}"
-            elif name.endswith(".csv"):
-                path = f"csv/{name}"
-            else:
-                path = name
-            zf.writestr(path, doc["content"])
+    def _build_zip() -> bytes:
+        # ZIP_DEFLATE over the full meeting WAV is CPU-bound and can take
+        # seconds for large recordings; run it off the event loop so live
+        # rooms' partials/translations never stall behind an export click.
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for doc in meeting.documents:
+                name = doc["filename"]
+                if "summary" in name:
+                    path = f"summaries/{name}"
+                elif "minutes" in name:
+                    path = f"minutes/{name}"
+                elif "transcript" in name:
+                    path = f"transcripts/{name}"
+                elif name.endswith(".csv"):
+                    path = f"csv/{name}"
+                else:
+                    path = name
+                zf.writestr(path, doc["content"])
 
-        zf.writestr("audio/meeting_audio.wav", wav_bytes)
+            zf.writestr("audio/meeting_audio.wav", wav_bytes)
 
-        manifest = {
-            "languages": meeting.languages,
-            "segment_count": len(meeting.segments),
-            "chunk_seconds": EXPORT_CHUNK_SECONDS,
-            "overlap_seconds": EXPORT_OVERLAP_SECONDS,
-            "max_asr_concurrency": EXPORT_MAX_ASR_CONCURRENCY,
-            "audio_duration_seconds": round(duration_s, 3),
-            "audio_format": "wav",
-        }
-        zf.writestr("export_manifest.json", json.dumps(manifest, indent=2))
+            manifest = {
+                "languages": meeting.languages,
+                "segment_count": len(meeting.segments),
+                "chunk_seconds": EXPORT_CHUNK_SECONDS,
+                "overlap_seconds": EXPORT_OVERLAP_SECONDS,
+                "max_asr_concurrency": EXPORT_MAX_ASR_CONCURRENCY,
+                "audio_duration_seconds": round(duration_s, 3),
+                "audio_format": "wav",
+            }
+            zf.writestr("export_manifest.json", json.dumps(manifest, indent=2))
 
-    zip_buffer.seek(0)
+        return buffer.getvalue()
+
+    zip_bytes = await asyncio.to_thread(_build_zip)
     if progress_cb is not None:
         await progress_cb(100, "Done", "Meeting package is ready to download.")
-    return zip_buffer.getvalue(), archive_name
+    return zip_bytes, archive_name
 
 
 async def run_export_job(
@@ -1216,7 +1222,7 @@ async def run_export_job(
             artifact_dir = EXPORT_STORAGE_ROOT / build_export_artifact_dir_name(job_id, room_id)
             artifact_dir.mkdir(parents=True, exist_ok=True)
             artifact_file = artifact_dir / archive_name
-            artifact_file.write_bytes(zip_bytes)
+            await asyncio.to_thread(artifact_file.write_bytes, zip_bytes)
             artifact_path = str(artifact_file)
         await update_export_job(
             job_id,

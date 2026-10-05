@@ -39,7 +39,26 @@
     function buildLiveCard(item, { variant, turnNumber, targetLanguage = "", timeSeparator = " - " }) {
         const timeLabel = shared.formatTurnTime(item.ts_ms);
         const original = shared.escapeHtml(item.original || "Awaiting source speech.");
-        const translation = shared.escapeHtml(item.translation || "Awaiting translated output.");
+        // Translation-slot states (hold-last "(previous)" display REVERTED —
+        // with live per-attendee partial translation restored server-side it
+        // appeared constantly and read as broken; user verdict: awful):
+        // - missing translation on a live segment → "Translating…" shimmer
+        //   (brief now that attendee-language partials translate live);
+        // - missing on a FINAL → "Translation unavailable" (honest end state).
+        const translationMissing = !(item.translation || "").trim();
+        const switchPending = typeof shared.isLanguageSwitchPending === "function" && shared.isLanguageSwitchPending();
+        let translationText;
+        let translationClass = "translation";
+        if (translationMissing) {
+            if (!item.is_final || switchPending) {
+                translationText = "Translating…";
+                translationClass = "translation is-pending";
+            } else {
+                translationText = "Translation unavailable for this segment.";
+            }
+        } else {
+            translationText = shared.escapeHtml(item.translation);
+        }
         const route = `${shared.escapeHtml(shared.languageName(item.src))} -> ${shared.escapeHtml(shared.languageName(item.tgt || targetLanguage))}`;
         const suffix = timeLabel ? `${timeSeparator}${shared.escapeHtml(timeLabel)}` : "";
         const status = shared.escapeHtml(shared.statusLabel(item));
@@ -57,7 +76,7 @@
                 <div class="pair-original-label">Original</div>
                 <p class="pair-copy original">${original}</p>
                 <div class="pair-translation-label">Translation</div>
-                <p class="pair-copy translation">${translation}</p>
+                <p class="pair-copy ${translationClass}">${translationText}</p>
             </article>
         `;
     }
@@ -110,7 +129,13 @@
 
         refs.historyCountEl.textContent = `${olderItems.length} earlier turn${olderItems.length === 1 ? "" : "s"}`;
         if (olderItems.length === 0) refs.historyPanelEl.open = false;
-        requestAnimationFrame(() => refs.centerEl.scrollTo({ top: 0 }));
+        // Only auto-scroll when the user is still looking at the live card.
+        // Unconditional scroll-to-top yanked readers back every partial
+        // update (~750ms) while they were reading history.
+        const nearTop = (refs.centerEl.scrollTop || 0) < 80;
+        if (nearTop) {
+            requestAnimationFrame(() => refs.centerEl.scrollTo({ top: 0 }));
+        }
     }
 
     function buildTranscriptText(items, which) {

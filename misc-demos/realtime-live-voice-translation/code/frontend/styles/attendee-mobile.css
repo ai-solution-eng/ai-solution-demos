@@ -286,3 +286,58 @@ body {
 .export-card {
     width: min(480px, calc(100vw - 28px));
 }
+
+/* ---- Live-latency UX additions (see PERFORMANCE_AUDIT.md Tier 1.8) ---- */
+
+.pair .pair-copy.translation.is-pending {
+    opacity: 0.55;
+    animation: translation-pending-shimmer 1.2s linear infinite;
+}
+
+@keyframes translation-pending-shimmer {
+    0%, 100% { opacity: 0.55; }
+    50% { opacity: 0.3; }
+}
+
+.stack {
+    contain: content;
+}
+
+.history-list {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 120px;
+}
+
+/* Hold-last-translation state: muted but readable. */
+.pair .pair-copy.translation.is-held {
+    opacity: 0.45;
+    font-style: italic;
+}
+
+.pair .pair-copy.translation .held-note {
+    display: inline-block;
+    margin-left: 0.5em;
+    font-size: 0.6em;
+    font-style: normal;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    opacity: 0.8;
+}
+
+/* Static (read-only) language chip: attendees follow the presenter's language. */
+.language-trigger-static {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.04);
+    cursor: default;
+    user-select: none;
+}
+
+.language-trigger-static .language-trigger-caret {
+    display: none;
+}

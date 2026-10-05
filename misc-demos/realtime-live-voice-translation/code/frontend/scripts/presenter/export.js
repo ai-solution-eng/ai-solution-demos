@@ -49,6 +49,107 @@
         exportUi.updateExportProgress(refs, progress, stage, detail);
     }
 
+    // ---- Export language chooser (presenter picks package languages) ----
+
+    function exportLanguageModalEls() {
+        return {
+            modal: document.getElementById("exportLanguagesModal"),
+            list: document.getElementById("exportLanguagesList"),
+            confirmBtn: document.getElementById("exportLanguagesConfirmBtn"),
+            cancelBtn: document.getElementById("exportLanguagesCancelBtn")
+        };
+    }
+
+    function languageLabel(code) {
+        const option = shared.LANGUAGE_OPTIONS.find((entry) => entry.code === code);
+        return option ? option.label : (code || "").toUpperCase();
+    }
+
+    async function fetchTouchedLanguages(roomId) {
+        // The room state endpoint reports every language touched during the
+        // meeting; the chooser defaults to all of them pre-selected.
+        const response = await fetch(`${app.HTTP_BASE}/api/rooms/${encodeURIComponent(roomId)}`);
+        if (!response.ok) return [];
+        const state = await response.json().catch(() => ({}));
+        return Array.isArray(state.used_translation_languages)
+            ? state.used_translation_languages.filter((code) => typeof code === "string")
+            : [];
+    }
+
+    function promptExportLanguages(touchedLanguages) {
+        // Returns a Promise resolving to the selected language codes, or
+        // null when cancelled.
+        //
+        // Lists EVERY language the app supports (the model does all
+        // translation at export time, so any of them is fair game) —
+        // languages touched during the meeting sort first and start
+        // CHECKED; untouched ones are offered unchecked. Select all/Clear
+        // mass-toggle the checkboxes.
+        const els = exportLanguageModalEls();
+        const touched = new Set(touchedLanguages || []);
+        const all = [...shared.LANGUAGE_OPTIONS];
+        const ordered = [
+            ...all.filter((language) => touched.has(language.code)),
+            ...all.filter((language) => !touched.has(language.code))
+        ];
+
+        els.list.innerHTML = ordered.map((language) => {
+            const checked = touched.has(language.code) ? " checked" : "";
+            const touchedMark = touched.has(language.code)
+                ? `<span class="export-language-touched">used</span>`
+                : "";
+            return `
+                <label class="export-language-option">
+                    <input type="checkbox" value="${shared.escapeHtml(language.code)}"${checked} />
+                    <span class="export-language-name">
+                        ${shared.escapeHtml(language.label)}
+                        <span class="export-language-native">${shared.escapeHtml(language.nativeLabel)}</span>
+                        <span class="export-language-code">(${shared.escapeHtml(language.code)})</span>
+                        ${touchedMark}
+                    </span>
+                </label>
+            `;
+        }).join("");
+
+        els.modal.hidden = false;
+
+        return new Promise((resolve) => {
+            function cleanup() {
+                els.modal.hidden = true;
+                els.confirmBtn.removeEventListener("click", onConfirm);
+                els.cancelBtn.removeEventListener("click", onCancel);
+                selectAllBtn.removeEventListener("click", onSelectAll);
+                clearBtn.removeEventListener("click", onClear);
+            }
+            function checkedInputs() {
+                return Array.from(els.list.querySelectorAll("input[type=checkbox]"));
+            }
+            function onSelectAll() {
+                checkedInputs().forEach((input) => { input.checked = true; });
+            }
+            function onClear() {
+                checkedInputs().forEach((input) => { input.checked = false; });
+            }
+            function onConfirm() {
+                const selected = checkedInputs()
+                    .filter((input) => input.checked)
+                    .map((input) => input.value);
+                cleanup();
+                resolve(selected);
+            }
+            function onCancel() {
+                cleanup();
+                resolve(null);
+            }
+            const selectAllBtn = document.getElementById("exportLanguagesSelectAllBtn");
+            const clearBtn = document.getElementById("exportLanguagesClearBtn");
+            els.confirmBtn.addEventListener("click", onConfirm);
+            els.cancelBtn.addEventListener("click", onCancel);
+            if (selectAllBtn) selectAllBtn.addEventListener("click", onSelectAll);
+            if (clearBtn) clearBtn.addEventListener("click", onClear);
+        });
+    }
+
     async function fetchGeneratedDocuments() {
         if (!app.state.roomId) {
             throw new Error("No active room is available.");
@@ -153,6 +254,19 @@
                 throw new Error("Pause recording or stop live before downloading the full package.");
             }
             if (downloadPackageOnly || app.state.canDownloadPackage || app.state.recordingSessionId) {
+                // Ask the presenter which languages the package should
+                // include. The chooser lists every supported language;
+                // touched ones are pre-selected. Selection may be empty
+                // (the server then falls back to source+target).
+                const touched = downloadPackageOnly
+                    ? []
+                    : await fetchTouchedLanguages(roomId);
+                const selectedLanguages = await promptExportLanguages(touched);
+                if (selectedLanguages === null) {
+                    app.setStatus("Download cancelled");
+                    return;
+                }
+
                 app.setStatus("Preparing package…");
                 updateExportProgress(6, "Queued", "Export job created. Waiting for the backend to start processing.");
                 const response = await fetch(`${app.HTTP_BASE}/api/rooms/${encodeURIComponent(roomId)}/export-package/start`, {
@@ -160,6 +274,7 @@
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                         target_language: refs.tgtLangEl.value,
+                        export_languages: selectedLanguages,
                         llm: currentLlmConfigPayload(),
                         asr: currentAsrConfigPayload()
                     })

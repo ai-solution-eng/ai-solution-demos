@@ -21,6 +21,39 @@ def safe_json_loads(raw: str | None, default: Any) -> Any:
         return default
 
 
+# Meta-commentary openers that mean the model narrated the TASK instead of
+# translating ("The user wants me to translate..."). Precision-first: only
+# unambiguous narration is flagged — a legitimate spoken sentence ("I'm going
+# to the store", "The user wants a faster checkout") must never match, because
+# a false positive discards a good translation. Covers English and the most
+# common Spanish narration openers (en<->es is the default pair).
+_META_REPLY_PATTERN = re.compile(
+    r"^(?:"
+    r"(?:okay|ok|sure|certainly|alright)[,.!]?\s*(?:here(?:'s| is)\b|let me\b|i['’ ]?(?:ll|will)\s+(?:translate|now|provide|output|give)\b)"
+    r"|here(?:'s| is)\b.*\btranslation"
+    r"|i(?:'ll|’ll| will|'m going to|’m going to| would|'d)\s+(?:translate|now translate|provide|output|return|give)"
+    r"|let me\s+(?:translate|now translate|provide)"
+    r"|as an? (?:ai|assistant|language model)\b"
+    r"|the (?:user|speaker)\s+(?:wants|asked|is asking|requested)\s+me\b"
+    r"|the (?:user|speaker)(?:'s|’s)?\s+(?:request|task|instruction)"
+    r"|the (?:current\s+|active\s+)?segment\s+(?:is|to translate|says|reads)"
+    r"|this (?:segment|sentence)\s+(?:is|says|means|translates)"
+    r"|translation:"
+    r"|el usuario\s+(?:quiere|pide|solicita)"
+    r"|aquí está la traducción"
+    r"|claro[,!.]?\s*(?:aquí|el usuario|voy a)"
+    r"|por supuesto[,!.]?\s*(?:aquí|el usuario|voy a)"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def looks_like_meta_reply(text: str) -> bool:
+    """True when the reply starts with task-narration instead of content."""
+    cleaned = re.sub(r"\s+", " ", (text or "").strip())
+    return bool(cleaned) and bool(_META_REPLY_PATTERN.match(cleaned))
+
+
 def clean_translation(text: str) -> str:
     return re.sub(r"</?[^>]+>", "", text or "").strip()
 

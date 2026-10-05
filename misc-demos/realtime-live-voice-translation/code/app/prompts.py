@@ -9,11 +9,21 @@ def build_translator_system_prompt(src: str, tgt: str) -> str:
     src_name = get_lang_name(src)
     tgt_name = get_lang_name(tgt)
     return (
-        "You are a translation engine.\n"
-        f"Translate from {src_name} to {tgt_name}.\n"
-        f"Return ONLY the {tgt_name} translation between <{tgt}> and </{tgt}>.\n"
-        "Never add explanations, parentheses, or extra text.\n"
-        "Never respond as a helpful assistant.\n"
+        "You are a raw text transformer, not an assistant.\n"
+        f"Task: translate the input text from {src_name} to {tgt_name}.\n"
+        "Output contract: your ENTIRE reply must be exactly the translated "
+        f"{tgt_name} text and nothing else — no preamble (never start with "
+        "\"Okay\", \"Here is\", \"The translation\", \"The user wants\"), no "
+        "reasoning, no commentary, no quotes around the text, no list of "
+        "options.\n"
+        "Never describe the task, never address the user, never explain what "
+        "you are doing. If the input is a sentence, output exactly that "
+        f"sentence in {tgt_name}.\n"
+        "Examples:\n"
+        f'Input: "Hello, how are you?" → Output: (the {tgt_name} sentence '
+        'only)\n'
+        "Violating this contract makes the output unusable for a live "
+        "caption feed.\n"
     )
 
 
@@ -28,15 +38,22 @@ def build_live_translation_prompt(
     context_items = recent_items[-LIVE_CONTEXT_TURNS:] if LIVE_CONTEXT_TURNS > 0 else []
     context_text = build_multilingual_source_text(context_items) or "None."
     return (
-        "You are a real-time translation engine.\n"
-        f"Translate the current active segment from {src_name} to {tgt_name}.\n"
-        "The segment may be incomplete and can be revised as more words arrive.\n"
-        "Use the recent finalized context only to resolve ambiguity.\n"
-        "Translate only the current active segment.\n"
-        "Do not summarize, explain, or answer the speaker.\n"
-        "Return only the translated text with no tags or commentary.\n\n"
-        f"Recent finalized context:\n{context_text}\n\n"
-        f"Current active segment ({src_name}):\n{(current_text or '').strip()}"
+        "You are a raw text transformer, not an assistant. This feeds a LIVE "
+        "caption screen: your reply is displayed verbatim to an audience.\n"
+        f"Task: translate the CURRENT SEGMENT from {src_name} to {tgt_name}.\n"
+        "Output contract: your ENTIRE reply must be exactly the translated "
+        f"{tgt_name} text of the current segment and nothing else — no "
+        "preamble (never start with \"Okay\", \"Here is\", \"The translation\", "
+        "\"The user wants me to\"), no reasoning, no commentary, no quotes "
+        "around the text.\n"
+        "The segment may be incomplete and can be revised as more words "
+        "arrive; translate what is there as-is.\n"
+        "Use the recent finalized context only to resolve pronouns and "
+        "ambiguity — never translate or repeat it.\n"
+        "Do not summarize, explain, or answer the speaker.\n\n"
+        f"Recent finalized context (DO NOT translate or repeat):\n{context_text}\n\n"
+        f"CURRENT SEGMENT to translate ({src_name}):\n{(current_text or '').strip()}\n\n"
+        f"Reply now with ONLY the {tgt_name} translation of the current segment:"
     )
 
 

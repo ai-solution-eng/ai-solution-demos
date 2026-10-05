@@ -102,11 +102,22 @@
         setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
+    // Language-switch pending flag: set by an app while a target-language
+    // switch is in flight, read by the transcript renderer to show
+    // "Translating…" instead of stale-language text. Apps (window.AttendeeApp
+    // / window.PresenterApp) set the flag on their own state; the shared
+    // getter resolves whichever app object is present on the page.
+    function isLanguageSwitchPending() {
+        const appObj = window.AttendeeApp || window.PresenterApp;
+        return !!(appObj && appObj.state && appObj.state.langSwitchPending);
+    }
+
     window.RealtimeTranslationShared = Object.freeze({
         LANGUAGE_OPTIONS,
         escapeHtml,
         extractFilenameFromResponse,
         formatTurnTime,
+        isLanguageSwitchPending,
         isValidRoomCode,
         languageName,
         resolveBackendHttpBase,

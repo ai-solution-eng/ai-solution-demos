@@ -32,12 +32,31 @@ class ExportRequest(BaseModel):
 
 class RoomExportRequest(BaseModel):
     target_language: str = DEFAULT_TARGET_LANGUAGE
+    # Languages the presenter explicitly wants in the package (reports,
+    # minutes, transcript translations). Empty/missing = every language
+    # touched during the meeting (previous behavior).
+    export_languages: list[str] = []
     llm: ExportLlmConfig | None = None
     asr: ExportAsrConfig | None = None
 
 
 class RoomCreateRequest(BaseModel):
     room_id: str | None = None
+    # Presenter RECOVERY CODE: supplied to
+    # POST /api/rooms/{room_id}/presenter-token to reclaim the presenter
+    # token for a room whose cookie was lost.
+    recovery_code: str | None = None
+
+
+class PresenterTokenRecoveryRequest(BaseModel):
+    """Proof-of-ownership for POST /api/rooms/{room_id}/presenter-token.
+
+    EITHER credential suffices: the recovery code (shown once at creation)
+    or the presenter token itself (saved/copied earlier — it IS the
+    credential, so knowing it is proof enough).
+    """
+    recovery_code: str | None = None
+    presenter_token: str | None = None
 
 
 class RecordingControlRequest(BaseModel):

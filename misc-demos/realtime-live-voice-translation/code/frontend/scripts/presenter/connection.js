@@ -11,14 +11,34 @@
         app.log("Connecting to " + app.WS_URL);
 
         app.state.ws.onopen = async () => {
-            const roomId = requestedRoomId || await app.ensureBackendPresenterRoomId();
-            app.state.ws.send(JSON.stringify({
-                type: "join",
-                role: "presenter",
-                room_id: roomId,
-                target_language: refs.tgtLangEl.value,
-                client_session_id: app.state.presenterClientSessionId
-            }));
+            try {
+                const roomId = requestedRoomId || await app.ensureBackendPresenterRoomId();
+                // The JOIN CARRIES the presenter's UI pair: whatever the
+                // presenter selected (or swapped) before connecting is the
+                // pair they intend. Without src/tgt here, a new room boots
+                // with server defaults and the joined-adoption then resets
+                // the UI to them ("Connect changes my languages" bug).
+                app.state.ws.send(JSON.stringify({
+                    type: "join",
+                    role: "presenter",
+                    room_id: roomId,
+                    src: refs.srcLangEl.value,
+                    target_language: refs.tgtLangEl.value,
+                    client_session_id: app.state.presenterClientSessionId,
+                    presenter_token: app.state.presenterToken || ""
+                }));
+            } catch (error) {
+                // Room bootstrap (POST /api/rooms) failed: the join message
+                // was never sent, so without this the connection would sit
+                // open and silent forever ("nothing happens" on Connect).
+                console.error("Presenter join bootstrap failed:", error);
+                app.setStatus("Room setup failed");
+                app.log("Could not prepare the room: " + (error?.message || error));
+                try {
+                    app.state.ws?.close();
+                } catch {
+                }
+            }
         };
 
         app.state.ws.onclose = () => {
@@ -44,6 +64,20 @@
         app.state.ws.onmessage = (event) => {
             try {
                 const msg = JSON.parse(event.data);
+                if (msg.type === "error") {
+                    app.state.joined = false;
+                    app.setStatus("Rejected");
+                    app.log(msg.detail || "The server rejected the connection.");
+                    // Auth rejection → surface the recovery escape hatch.
+                    if ((msg.detail || "").toLowerCase().includes("authentication")) {
+                        app.showReentryPrompt();
+                    }
+                    try {
+                        app.state.ws?.close();
+                    } catch {
+                    }
+                    return;
+                }
                 if (msg.type === "joined") {
                     app.state.joined = true;
                     if (msg.room_id) {
@@ -51,6 +85,14 @@
                         app.setCookie(app.ROOM_COOKIE_NAME, msg.room_id);
                         app.updateRoomBadge();
                         app.setPresenterRoomInputValue(msg.room_id);
+                    }
+                    // Adopt the ROOM's language pair before sending any config:
+                    // the local UI may be stale (e.g. backend defaults after a
+                    // page reload). Without this, sendConfig() below would
+                    // silently flip the room (and every attendee) back to the
+                    // stale UI language.
+                    if (msg.src || msg.tgt) {
+                        app.applyLanguagePair(msg.src || refs.srcLangEl.value, msg.tgt || refs.tgtLangEl.value);
                     }
                     app.setStatus("Connected");
                     refs.startBtn.disabled = false;
@@ -63,6 +105,11 @@
                 }
                 if (msg.type === "room_state") {
                     app.setRoomState(msg);
+                    // Same stale-UI guard on room_state broadcasts: adopt the
+                    // room's language pair whenever the server reports one.
+                    if (msg.src || msg.presenter_tgt) {
+                        app.applyLanguagePair(msg.src || refs.srcLangEl.value, msg.presenter_tgt || msg.tgt || refs.tgtLangEl.value);
+                    }
                     return;
                 }
                 if (msg.type === "snapshot") {

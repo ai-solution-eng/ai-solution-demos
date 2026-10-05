@@ -29,6 +29,19 @@ DEFAULT_ASR_BASE_URL = os.getenv("ASR_BASE_URL", "")
 DEFAULT_ASR_API_KEY = os.getenv("ASR_API_KEY", "")
 DEFAULT_ASR_MODEL = os.getenv("ASR_MODEL", "openai/whisper-large-v3-turbo")
 
+# Presenter authentication (attendees stay unauthenticated by design).
+PRESENTER_AUTH_SECRET = os.getenv("PRESENTER_AUTH_SECRET", "")
+PRESENTER_AUTH_ENABLED = os.getenv("PRESENTER_AUTH_ENABLED", "true").strip().lower() not in {
+    "0", "false", "no", "off",
+}
+
+# Translation LLM output budget. 200 was sized for non-reasoning models; hybrid
+# reasoning models (GLM, Qwen-think) can exhaust it during the thinking phase
+# and return empty content ("Awaiting translated output." bug). 512 leaves
+# headroom for longer sentences in any supported language.
+LLM_MAX_TOKENS = max(128, int(os.getenv("LLM_MAX_TOKENS", "512")))
+LLM_RETRY_MAX_TOKENS = max(LLM_MAX_TOKENS, int(os.getenv("LLM_RETRY_MAX_TOKENS", "1024")))
+
 DEFAULT_LLM_BASE_URL = os.getenv("LLM_BASE_URL", "")
 DEFAULT_LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 DEFAULT_LLM_MODEL = os.getenv("LLM_MODEL", "Qwen/Qwen3-30B-A3B-Instruct-2507-FP8")

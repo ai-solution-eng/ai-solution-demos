@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.audio.vad import _load_vad
 from app.realtime.websocket import router as websocket_router
 from app.routes.exports import router as exports_router
 from app.routes.health import router as health_router
@@ -28,6 +29,16 @@ async def lifespan(_app: FastAPI):
     except Exception as exc:
         logger.warning("DB not ready during startup; skipping cleanup: %s", exc)
     cleanup_task = asyncio.create_task(periodic_cleanup_loop())
+    # Preload Silero VAD off the event loop so the first presenter connection
+    # doesn't pay the torch.hub load (~2.3MB + JIT warm-up) inside the WS
+    # handshake — that stall was visible as a fatal-at-first-join in live
+    # logs. Best-effort: a load failure must not block startup (the lazy
+    # path in the WS handler still retries on first use).
+    try:
+        await asyncio.to_thread(_load_vad)
+        logger.info("Silero VAD preloaded at startup")
+    except Exception as exc:
+        logger.warning("Silero VAD preload failed (will retry lazily on first use): %s", exc)
     try:
         yield
     finally:

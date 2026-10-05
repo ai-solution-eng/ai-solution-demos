@@ -62,10 +62,37 @@
                         </p>
                         <div class="hero-meta">
                             <span id="status" data-tone="warning">Idle</span>
-                            <span class="hero-chip" id="roomCodeChip">Room <span id="roomCode">Preparing…</span></span>
+                            <span class="hero-chip" id="roomCodeChip">Room <span id="roomCode">Preparing…</span><button
+                                    id="copyRoomCodeBtn" type="button" class="chip-copy-btn" title="Copy room code"
+                                    aria-label="Copy room code">⧉</button></span>
                             <button id="newRoomBtn" type="button" class="btn-secondary">New room</button>
                             <button id="copyRoomLinkBtn" type="button" class="btn-secondary">Copy attendee link</button>
                             <button id="copyPhoneLinkBtn" type="button" class="btn-secondary">Copy phone link</button>
+                        </div>
+                        <div id="roomCredentialsNote" class="previous-room-note" hidden>
+                            <span>Room credentials saved (copy them now — they re-enter this room from any browser; never shown on screen):</span>
+                            <div class="credentials-row">
+                                <span class="credential-label">Room token</span>
+                                <button id="copyRoomTokenBtn" type="button" class="btn-secondary">Copy room token</button>
+                            </div>
+                            <div class="credentials-row">
+                                <span class="credential-label">Recovery code</span>
+                                <button id="copyRecoveryCodeBtn" type="button" class="btn-secondary">Copy recovery code</button>
+                            </div>
+                            <!-- Credential VALUES are never rendered (screen-share
+                                 privacy): the <code> displays were removed; the
+                                 copy buttons read cookies/state directly. The
+                                 roomTokenDisplay/recoveryCodeDisplay ids are kept
+                                 as hidden anchors for the app's DOM contract. -->
+                            <code id="roomTokenDisplay" hidden></code>
+                            <code id="recoveryCodeDisplay" hidden></code>
+                        </div>
+                        <div id="reentryNote" class="previous-room-note" hidden>
+                            <span>Locked out of a room? Enter its <strong>recovery code</strong> (or the saved <strong>room token</strong>) to reclaim presenter access:</span>
+                            <div class="credentials-row">
+                                <input id="recoveryCodeInput" placeholder="Recovery code (XXXX-XXXX-XXXX) or room token" autocomplete="off" spellcheck="false" />
+                                <button id="recoverTokenBtn" type="button" class="btn-secondary">Recover access</button>
+                            </div>
                         </div>
                         <div id="previousRoomNote" class="previous-room-note" hidden>
                             <span>Previous room: <strong id="previousRoomCode">-</strong></span>
@@ -248,6 +275,27 @@
             <div class="export-meta">
                 <span id="exportPercent">0%</span>
                 <span id="exportHint">Please keep this page open.</span>
+            </div>
+        </div>
+    </div>
+
+    <div id="exportLanguagesModal" role="dialog" aria-modal="true" aria-labelledby="exportLanguagesTitle" hidden>
+        <div class="record-modal-card export-languages-card">
+            <h4 id="exportLanguagesTitle">Choose package languages</h4>
+            <p class="export-languages-help">
+                Select which languages the reports, minutes and transcript
+                translations should include. Everything is translated at export
+                time, so any supported language can be chosen. Languages used
+                during the meeting are listed first and pre-selected.
+            </p>
+            <div class="export-languages-bulk">
+                <button id="exportLanguagesSelectAllBtn" class="btn-secondary" type="button">Select all</button>
+                <button id="exportLanguagesClearBtn" class="btn-secondary" type="button">Clear</button>
+            </div>
+            <div id="exportLanguagesList" class="export-languages-list"></div>
+            <div class="export-languages-actions">
+                <button id="exportLanguagesCancelBtn" class="btn-secondary" type="button">Cancel</button>
+                <button id="exportLanguagesConfirmBtn" class="btn-primary" type="button">Download package</button>
             </div>
         </div>
     </div>

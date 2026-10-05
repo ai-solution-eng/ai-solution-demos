@@ -127,7 +127,11 @@ async def persist_finalized_segment(
     if not (source_text or "").strip():
         return None
 
-    session_id = await sync_room_persisted_session(room_id)
+    # Cache-hit path only: sync_room_persisted_session would issue a full
+    # session UPDATE on every finalized segment (one needless write per
+    # sentence); ensure_room_persisted_session returns the cached id when the
+    # session row already exists.
+    session_id = await ensure_room_persisted_session(room_id)
     if not session_id:
         return None
 

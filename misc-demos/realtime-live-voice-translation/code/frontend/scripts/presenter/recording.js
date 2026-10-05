@@ -148,6 +148,12 @@
     function queueRecordingChunkUpload(chunk) {
         const uploadTask = Promise.resolve(app.state.recordingUploadQueue).then(async () => {
             if (!chunk || chunk.size === 0) return;
+            // A 409 means the recording session is permanently stale (room
+            // cleared, recording stopped, or a new presenter owns it) — the
+            // client must STOP uploading instead of hammering the endpoint
+            // (a live run produced hundreds of 409s). Abort the queue and
+            // surface the conflict in the presenter log once.
+            if (app.state.recordingUploadAborted) return;
             if (!app.state.roomId) throw new Error("No active room is available.");
             if (!app.state.recordingSessionId) throw new Error("The room recording session is not ready yet.");
 
@@ -162,6 +168,13 @@
                 method: "POST",
                 body: formData
             });
+            if (response.status === 409) {
+                app.state.recordingUploadAborted = true;
+                const detail = await response.text().catch(() => "");
+                app.log("Recording stopped on the server: " + (detail || "conflict") + " — further chunk uploads paused.");
+                app.syncPresenterRecordingUI();
+                return;
+            }
             if (!response.ok) {
                 const detail = await response.text().catch(() => "");
                 throw new Error(detail || `Recording chunk upload failed with status ${response.status}`);
@@ -239,6 +252,7 @@
 
         app.state.recordingUploadQueue = Promise.resolve();
         app.state.recordingUploadError = null;
+        app.state.recordingUploadAborted = false;
 
         const mimeType = getPreferredRecordingMimeType();
         app.state.recordingMimeType = mimeType;
@@ -352,7 +366,13 @@
                 }
             });
 
-            app.state.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            // Request the AudioContext at the pipeline's native 16kHz: the
+            // browser then resamples with a high-quality sinc filter instead
+            // of the worklet's aliasing linear interpolation (which folds
+            // 8-24kHz sibilant energy into the band Whisper relies on).
+            // If a browser ignores the option, the worklet resampler
+            // self-adapts (srcSr = sampleRate) and behavior is unchanged.
+            app.state.audioCtx = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 16000});
             if (app.state.audioCtx.state === "suspended") {
                 await app.state.audioCtx.resume().catch(() => {
                 });

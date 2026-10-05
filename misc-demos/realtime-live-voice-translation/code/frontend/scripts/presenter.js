@@ -68,6 +68,91 @@
         bindCopyButton(refs.copyRoomLinkBtn, "attendee.html", "Copy attendee link", "Link copied");
         bindCopyButton(refs.copyPhoneLinkBtn, "attendee-mobile.html", "Copy phone link", "Phone link copied");
 
+        // Inline ⧉ copy button inside the room-code chip (space-efficient)
+        const copyRoomCodeBtn = document.getElementById("copyRoomCodeBtn");
+        if (copyRoomCodeBtn) {
+            copyRoomCodeBtn.onclick = async (event) => {
+                event.stopPropagation();
+                const roomId = app.state.roomId
+                    || app.getCookie(app.ROOM_COOKIE_NAME) || "";
+                if (!roomId || roomId === "Unassigned") {
+                    alert("No room code yet — the room is still being prepared.");
+                    return;
+                }
+                try {
+                    await navigator.clipboard.writeText(roomId);
+                    copyRoomCodeBtn.classList.add("copied");
+                    copyRoomCodeBtn.textContent = "✓";
+                    setTimeout(() => {
+                        copyRoomCodeBtn.classList.remove("copied");
+                        copyRoomCodeBtn.textContent = "⧉";
+                    }, 1200);
+                } catch (error) {
+                    alert(`Copy failed — select and copy manually:\n\n${roomId}`);
+                }
+            };
+        }
+
+        // Room credentials copy buttons (token + recovery code)
+        const bindValueCopyButton = (buttonId, getValue, defaultLabel, copiedLabel) => {
+            const button = document.getElementById(buttonId);
+            if (!button) return;
+            button.onclick = async () => {
+                const value = getValue();
+                if (!value) {
+                    alert("No value saved yet. Create or reconnect to a room first.");
+                    return;
+                }
+                try {
+                    await navigator.clipboard.writeText(value);
+                    button.textContent = copiedLabel;
+                    setTimeout(() => { button.textContent = defaultLabel; }, 1200);
+                } catch (error) {
+                    alert(`Copy failed — select and copy manually:\n\n${value}`);
+                }
+            };
+        };
+        bindValueCopyButton(
+            "copyRoomTokenBtn",
+            () => app.state.presenterToken || app.getCookie("realtime-voice-presenter-token"),
+            "Copy room token",
+            "Token copied"
+        );
+        bindValueCopyButton(
+            "copyRecoveryCodeBtn",
+            () => app.state.recoveryCode || app.getCookie("realtime-voice-recovery-code"),
+            "Copy recovery code",
+            "Recovery code copied"
+        );
+
+        // Recovery flow: reclaim presenter access with recovery code OR room token
+        const recoverBtn = document.getElementById("recoverTokenBtn");
+        const recoveryInput = document.getElementById("recoveryCodeInput");
+        if (recoverBtn && recoveryInput) {
+            recoverBtn.onclick = async () => {
+                const roomId = (app.getRequestedPresenterRoomId()
+                    || app.state.roomId
+                    || app.getCookie(app.ROOM_COOKIE_NAME) || "").trim().toLowerCase();
+                const credential = recoveryInput.value.trim();
+                if (!roomId) { alert("Enter the room code first (Room code field above)."); return; }
+                if (!credential) { alert("Enter the room's recovery code or the saved room token."); return; }
+                recoverBtn.disabled = true;
+                try {
+                    await app.recoverRoomAccess(roomId, credential);
+                    recoveryInput.value = "";
+                    app.setStatus("Access recovered");
+                    app.log(`Presenter access to room ${roomId} recovered — click Connect to join.`);
+                    const note = document.getElementById("reentryNote");
+                    if (note) note.hidden = true;
+                } catch (error) {
+                    console.error(error);
+                    alert(`Recovery failed: ${error?.message || error}`);
+                } finally {
+                    recoverBtn.disabled = false;
+                }
+            };
+        }
+
         if (refs.newRoomBtn) {
             refs.newRoomBtn.onclick = () => {
                 if (app.state.recordingActive || app.state.recordingState === "recording" || !refs.stopBtn.disabled) {
@@ -142,7 +227,9 @@
 
     app.initializeLanguagePickers();
     app.setPresenterRoomInputValue(decodeURIComponent(app.getCookie(app.ROOM_COOKIE_NAME) || "").trim());
-    app.ensureBackendPresenterRoomId().catch((error) => {
+    app.ensureBackendPresenterRoomId().then(() => {
+        app.showRoomCredentials();
+    }).catch((error) => {
         console.error(error);
         app.setStatus("Error");
     });

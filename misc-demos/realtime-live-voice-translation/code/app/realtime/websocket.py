@@ -28,6 +28,7 @@ from app.realtime.session import build_room_snapshot
 from app.schemas.api import TranscriptItem
 from app.services.clients import make_client
 from app.services.recovery import load_or_recover_room
+from app.utils.auth import verify_presenter_token
 from app.services.persistence import persist_finalized_segment, sync_room_persisted_session
 from app.services.recordings import (
     append_room_recording_transcript_item,
@@ -52,6 +53,7 @@ from app.state.rooms import (
     is_valid_room_id,
     normalize_client_session_id,
     normalize_room_id,
+    remember_room_translation_language,
     serialize_room_state,
 )
 from app.utils.text import looks_sentence_complete, normalize_text
@@ -96,10 +98,28 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.send_json(payload)
 
     async def send_snapshot_to_current_client() -> None:
-        nonlocal attendee_target_language
         if not room_id:
             return
-        target = cfg["tgt"] if role == "presenter" else attendee_target_language
+        # Target-language authority:
+        #   presenter → the room's presenter_tgt (they control it);
+        #   attendee  → their OWN chosen target_language (kept across
+        #               presenter source swaps by design — the attendee
+        #               reads in the language THEY picked).
+        normalized = normalize_room_id(room_id)
+        async with ROOMS_LOCK:
+            room = ROOMS.get(normalized)
+            conn = None
+            if room is not None:
+                conn = next(
+                    (c for c in room.get("connections") or [] if c.get("websocket") is websocket),
+                    None,
+                )
+            if role == "presenter":
+                target = (room.get("presenter_tgt") if room else None) or cfg["tgt"]
+            else:
+                target = (conn or {}).get("target_language") or (
+                    room.get("presenter_tgt") if room else None
+                ) or attendee_target_language
         snapshot = await build_room_snapshot(
             room_id,
             role=role,
@@ -118,13 +138,16 @@ async def websocket_endpoint(websocket: WebSocket):
             if room is None:
                 return
             connections = list(room.get("connections") or [])
+            presenter_target = room.get("presenter_tgt") or cfg["tgt"]
         failed: list[WebSocket] = []
         for connection in connections:
             conn_role = connection.get("role") or "attendee"
+            # Presenter → room presenter_tgt; attendee → their OWN chosen
+            # target (kept across presenter source swaps by design).
             conn_target = (
-                cfg["tgt"]
+                presenter_target
                 if conn_role == "presenter"
-                else connection.get("target_language") or DEFAULT_TARGET_LANGUAGE
+                else connection.get("target_language") or presenter_target
             )
             payload = await build_room_snapshot(
                 normalized,
@@ -149,28 +172,76 @@ async def websocket_endpoint(websocket: WebSocket):
                 return
             connections = list(room.get("connections") or [])
             presenter_tgt = room.get("presenter_tgt") or cfg["tgt"]
-        failed: list[WebSocket] = []
-        for connection in connections:
+
+        # Resolve per-connection targets first, then translate ALL missing
+        # languages in PARALLEL (gather) instead of serially inside the send
+        # loop: with live per-attendee partial translation restored (see
+        # below), a serial loop would re-introduce head-of-line blocking —
+        # one attendee's LLM call delaying every other attendee's segment.
+        #
+        # Target-language authority (final §2u semantics):
+        #   presenter  → the room's presenter_tgt (theirs to control);
+        #   attendee   → their OWN chosen target_language. The attendee's
+        #                choice SURVIVES presenter source swaps on purpose:
+        #                the presenter changing what they speak must not
+        #                change what the attendee reads. The per-connection
+        #                field is updated live by set_target_language and
+        #                synced to the room's presenter_tgt when the
+        #                PRESENTER changes it (so a fresh attendee joining
+        #                mid-room starts in the room's current target).
+        def _target_for(connection: dict[str, Any]) -> str:
             conn_role = connection.get("role") or "attendee"
-            target_language = (
+            return (
                 presenter_tgt
                 if conn_role == "presenter"
                 else connection.get("target_language") or presenter_tgt
             )
-            translation = (segment.get("translations") or {}).get(target_language, "")
+
+        needs_translation: dict[str, str] = {}
+        for connection in connections:
+            target_language = _target_for(connection)
             if target_language == segment.get("src"):
-                translation = segment.get("original") or ""
-            elif (segment.get("original") or "").strip() and not translation:
-                translation = await ensure_room_translation(
+                continue
+            if (segment.get("translations") or {}).get(target_language, "").strip():
+                continue
+            if (segment.get("original") or "").strip():
+                needs_translation[target_language] = segment.get("original") or ""
+
+        async def _translate(target_language: str, original: str) -> tuple[str, str]:
+            try:
+                translated = await ensure_room_translation(
                     normalized,
                     segment_id=segment.get("segment_id") or "",
                     revision=int(segment.get("revision") or 0),
-                    original=segment.get("original") or "",
+                    original=original,
                     src=segment.get("src") or cfg["src"],
                     target_language=target_language,
                     llm_client=llm_client,
                     llm_model=cfg["llm"]["model"],
                 )
+                return target_language, translated
+            except Exception:
+                # A failed per-language translation must not break the
+                # broadcast: ship empty for that language (the client keeps
+                # showing whatever it has) and continue.
+                print(f"Per-language translation failed for {target_language}")
+                traceback.print_exc()
+                return target_language, ""
+
+        if needs_translation:
+            results = await asyncio.gather(
+                *(_translate(lang, original) for lang, original in needs_translation.items())
+            )
+            for lang, translated in results:
+                if translated:
+                    segment.setdefault("translations", {})[lang] = translated
+
+        failed: list[WebSocket] = []
+        for connection in connections:
+            target_language = _target_for(connection)
+            translation = (segment.get("translations") or {}).get(target_language, "")
+            if target_language == segment.get("src"):
+                translation = segment.get("original") or ""
             payload = {
                 "type": "segment",
                 "segment_id": segment.get("segment_id") or "",
@@ -250,7 +321,19 @@ async def websocket_endpoint(websocket: WebSocket):
             return
 
         if not is_final and segment_final_requested.get(segment_id):
-            return
+            # A final was requested while this partial was in flight. If no
+            # final result has actually been emitted yet, promoting this
+            # near-final partial beats suppressing it: with a slow LLM the
+            # suppression path left viewers on "Translating…" for the whole
+            # final round. Track final-emission with a sentinel in the
+            # segment state; a later final snapshot (whose text differs)
+            # still supersedes this one normally.
+            state = emitted_segments.get(segment_id) or {}
+            if not state.get("is_final_emitted"):
+                is_final = True
+                print(f"Promoted in-flight partial to final for {segment_id}")
+            else:
+                return
 
         segment_state = emitted_segments.setdefault(
             segment_id,
@@ -272,6 +355,8 @@ async def websocket_endpoint(websocket: WebSocket):
         segment_state["original"] = original
         segment_state["translation"] = translation
         segment_state["is_final"] = is_final
+        if is_final:
+            segment_state["is_final_emitted"] = True
         status = "final"
         if not is_final:
             status = "listening" if segment_state["revision"] == 1 else "refining"
@@ -288,7 +373,17 @@ async def websocket_endpoint(websocket: WebSocket):
             tgt=tgt,
             translation=translation,
         )
-        await broadcast_segment_to_room(room_segment)
+        # Broadcast failures (including a throw from the inline
+        # ensure_room_translation LLM call for a missing attendee language)
+        # must not unwind emit_segment_update — that would skip recording +
+        # persistence below, silently losing the finalized segment. Log and
+        # continue instead; the segment text is already committed to room
+        # state, so the next snapshot/broadcast repairs the UI.
+        try:
+            await broadcast_segment_to_room(room_segment)
+        except Exception:
+            print("Segment broadcast failed (continuing to persistence)")
+            traceback.print_exc()
 
         if is_final and not previous_is_final and original:
             normalized_room_id = room_id or uuid.uuid4().hex
@@ -308,15 +403,21 @@ async def websocket_endpoint(websocket: WebSocket):
                 room = ROOMS.get(normalize_room_id(normalized_room_id))
                 if room is not None:
                     recorded_for_export = segment_id in (room.get("recording_segment_ids") or set())
-            await persist_finalized_segment(
-                normalized_room_id,
-                segment_id=segment_id,
-                revision=segment_state["revision"],
-                included_in_recording=recorded_for_export,
-                source_text=original,
-                source_language=src,
-                translations_json=dict(room_segment.get("translations") or {}),
-                ts_ms=ts_ms,
+            # Fire-and-forget: the DB write must not gate the next ASR/LLM
+            # cycle (a Postgres hiccup would stall the live path). Errors are
+            # logged inside persist_finalized_segment; a lost write only
+            # affects recovery/history, never the live translation.
+            asyncio.create_task(
+                persist_finalized_segment(
+                    normalized_room_id,
+                    segment_id=segment_id,
+                    revision=segment_state["revision"],
+                    included_in_recording=recorded_for_export,
+                    source_text=original,
+                    source_language=src,
+                    translations_json=dict(room_segment.get("translations") or {}),
+                    ts_ms=ts_ms,
+                )
             )
 
         if is_final and not previous_is_final and original and LIVE_CONTEXT_TURNS > 0:
@@ -336,38 +437,87 @@ async def websocket_endpoint(websocket: WebSocket):
         if snapshot.get("epoch") != session_epoch:
             return
 
+        asr_drop_reason: list[str] = []
+        original = ""
         try:
             original = await transcribe_snapshot(
                 pcm16_sentence=snapshot["pcm16_sentence"],
                 src=snapshot["src"],
                 asr_client=asr_client,
                 asr_model=cfg["asr"]["model"],
+                drop_reason=asr_drop_reason,
             )
         except asyncio.CancelledError:
             raise
         except Exception:
             print("Live transcription failed")
             traceback.print_exc()
+            asr_drop_reason.append("asr_error")
+
+        is_final_snapshot = bool(snapshot.get("is_final"))
+        if snapshot.get("epoch") != session_epoch:
             return
 
-        if snapshot.get("epoch") != session_epoch or not original:
+        if not original:
+            # ASR produced nothing usable. For FINALS this must still close
+            # the segment: previously the card stayed "Awaiting translated
+            # output." with a FINAL chip forever (no error, no log). Close it
+            # with whatever the last partial had so the UI shows an honest
+            # end state; silent/too-short drops are expected (breathing,
+            # clicks) and just finalize empty — the card disappears rather
+            # than lying about a translation that never came.
+            reason = asr_drop_reason[0] if asr_drop_reason else "unknown"
+            if is_final_snapshot:
+                previous_state = emitted_segments.get(snapshot["segment_id"]) or {}
+                prev_original = (previous_state.get("original") or "").strip()
+                prev_translation = (previous_state.get("translation") or "").strip()
+                print(
+                    f"Final ASR empty (reason={reason!r}) for {snapshot['segment_id']}; "
+                    f"closing with previous partial text={bool(prev_original)}"
+                )
+                if prev_original or prev_translation:
+                    await emit_segment_update(
+                        segment_id=snapshot["segment_id"],
+                        src=snapshot["src"],
+                        tgt=snapshot["tgt"],
+                        original=prev_original,
+                        translation=prev_translation,
+                        ts_ms=snapshot["ts_ms"],
+                        is_final=True,
+                    )
+            else:
+                print(f"Partial ASR empty (reason={reason!r}) for {snapshot['segment_id']}")
             return
 
+        # Pre-translate dedupe: if ASR returned the same text as the last
+        # emitted revision of this segment, the LLM re-translation would be
+        # discarded by emit_segment_update's dedupe anyway — skip the call and
+        # reuse the previous translation. Cuts ~30-60% of live LLM calls with
+        # zero accuracy change. Finals always re-translate so the persisted
+        # final text is fresh.
+        previous_state = emitted_segments.get(snapshot["segment_id"]) or {}
         translation = ""
-        try:
-            translation = await translate_live_text(
-                text=original,
-                src=snapshot["src"],
-                tgt=snapshot["tgt"],
-                recent_items=snapshot.get("recent_items") or [],
-                llm_client=llm_client,
-                llm_model=cfg["llm"]["model"],
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            print("Live translation failed")
-            traceback.print_exc()
+        if (
+            not snapshot.get("is_final")
+            and normalize_text(original) == normalize_text(previous_state.get("original", ""))
+            and previous_state.get("translation")
+        ):
+            translation = previous_state["translation"]
+        else:
+            try:
+                translation = await translate_live_text(
+                    text=original,
+                    src=snapshot["src"],
+                    tgt=snapshot["tgt"],
+                    recent_items=snapshot.get("recent_items") or [],
+                    llm_client=llm_client,
+                    llm_model=cfg["llm"]["model"],
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                print("Live translation failed")
+                traceback.print_exc()
 
         if snapshot.get("epoch") != session_epoch:
             return
@@ -402,6 +552,20 @@ async def websocket_endpoint(websocket: WebSocket):
             return
         if is_final:
             segment_final_requested[segment_id] = True
+            # Promote-in-place: when the final is requested while a
+            # speculative partial (queued at VAD end, before the silence
+            # gate) is still pending, convert that queued snapshot to final
+            # instead of queueing a duplicate. Otherwise the slow partial
+            # completes first, is suppressed by segment_final_requested, and
+            # the user stares at "Translating…" until the final's own full
+            # ASR+LLM round finishes — the failure seen live with a slow LLM
+            # (2-6.5s per call). Promotion keeps ONE chain of work whose
+            # result is emitted as the final.
+            if pending_snapshot is not None and pending_snapshot.get("segment_id") == segment_id:
+                pending_snapshot["is_final"] = True
+                print("Final promoted onto queued speculative partial")
+                reset_active_stream_state()
+                return
         pending_snapshot = {
             "epoch": session_epoch,
             "segment_id": segment_id,
@@ -418,6 +582,14 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         while True:
             msg = await websocket.receive()
+            # Low-level receive() RETURNS a disconnect message instead of
+            # raising WebSocketDisconnect — falling through previously left
+            # the handler looping on a dead socket ("Cannot call receive once
+            # a disconnect message has been received" on the NEXT event, and
+            # no "joined" reply for the client that had already hung up).
+            if msg.get("type") == "websocket.disconnect":
+                print("Client disconnected (disconnect message)")
+                return
             if msg.get("text") is not None:
                 try:
                     payload = json.loads(msg["text"])
@@ -431,11 +603,26 @@ async def websocket_endpoint(websocket: WebSocket):
                         client_session_id = normalize_client_session_id(payload.get("client_session_id"))
                     requested_target = str(payload.get("target_language") or cfg["tgt"]).strip().lower()
                     requested_room_id = str(payload.get("room_id") or "").strip().lower()
+                    if role == "presenter" and requested_room_id and not verify_presenter_token(
+                        requested_room_id, payload.get("presenter_token")
+                    ):
+                        # Attendees are unaffected: joining an existing room with
+                        # the room code alone stays open by design. Presenters
+                        # joining an EXISTING room must present the token that
+                        # POST /api/rooms issued at creation time. A join with no
+                        # room id bootstraps a brand-new room and is allowed
+                        # (equivalent to creating a room; it cannot touch one).
+                        await send_json({
+                            "type": "error",
+                            "detail": "Presenter authentication failed. Reopen the presenter page to get a fresh link.",
+                        })
+                        await websocket.close(code=1008)
+                        return
                     if role == "attendee":
                         if not is_valid_room_id(requested_room_id):
                             await send_json({"type": "error", "detail": "Enter a valid presenter room code."})
                             await websocket.close(code=1008)
-                            continue
+                            return
                         try:
                             room = await get_room_or_404(requested_room_id)
                         except HTTPException:
@@ -446,7 +633,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                     "detail": "That room does not exist. Check the presenter room code and try again.",
                                 })
                                 await websocket.close(code=1008)
-                                continue
+                                return
                         room_id = room["room_id"]
                     else:
                         room = None
@@ -457,28 +644,62 @@ async def websocket_endpoint(websocket: WebSocket):
                         else:
                             room_id, room = await get_or_create_room(requested_room_id)
                     if role == "presenter":
-                        cfg["src"] = room.get("src") or cfg["src"]
-                        cfg["tgt"] = room.get("presenter_tgt") or cfg["tgt"]
+                        # The presenter's UI pair WINS at join: the join
+                        # message carries whatever the presenter selected
+                        # (or swapped) before connecting — a new room is
+                        # created with THAT pair, and re-entering an
+                        # existing room intentionally re-asserts it. (The
+                        # old behavior adopted the room's/default pair and
+                        # reset the presenter's UI on every Connect.)
+                        requested_src = str(payload.get("src") or "").strip().lower()
+                        requested_tgt = str(payload.get("target_language") or "").strip().lower()
+                        if requested_src in code_to_language:
+                            room["src"] = requested_src
+                        if requested_tgt in code_to_language:
+                            room["presenter_tgt"] = requested_tgt
+                        cfg["src"] = room["src"]
+                        cfg["tgt"] = room["presenter_tgt"]
                         cfg["asr"].update(room.get("asr") or {})
                         cfg["llm"].update(room.get("llm") or {})
                         attendee_target_language = cfg["tgt"]
+                        has_custom_target = False
+                        remember_room_translation_language(room, cfg["tgt"])
                     else:
+                        # Attendee target resolution (§2u final): an EXPLICIT
+                        # join request (picker choice or ?lang= param) makes
+                        # the language theirs — it survives presenter target
+                        # changes. Without one, they follow the room's
+                        # current presenter_tgt.
+                        requested = str(payload.get("target_language") or "").strip().lower()
+                        has_custom_target = requested in code_to_language
                         attendee_target_language = (
-                            requested_target
-                            if requested_target in code_to_language
+                            requested if has_custom_target
                             else room.get("presenter_tgt") or DEFAULT_TARGET_LANGUAGE
                         )
                     asr_client = make_client(cfg["asr"]["base_url"], cfg["asr"]["api_key"])
                     llm_client = make_client(cfg["llm"]["base_url"], cfg["llm"]["api_key"])
+                    # target_language is the attendee's current view language;
+                    # has_custom_target marks whether THEY chose it (vs
+                    # following the room) — see the config follow-sync.
                     await register_room_connection(
                         room_id,
                         websocket=websocket,
                         role=role,
                         target_language=attendee_target_language,
                         send_lock=send_lock,
+                        has_custom_target=has_custom_target,
                     )
                     if role == "presenter":
                         await sync_room_persisted_session(room_id)
+                    else:
+                        # Register the attendee's chosen language as "touched"
+                        # for the export/report (spec: every language touched
+                        # by any participant is translated at EXPORT time —
+                        # never retro-translated live).
+                        async with ROOMS_LOCK:
+                            join_room = ROOMS.get(room_id)
+                            if join_room is not None:
+                                remember_room_translation_language(join_room, attendee_target_language)
                     await send_json(
                         {
                             "type": "joined",
@@ -499,9 +720,17 @@ async def websocket_endpoint(websocket: WebSocket):
                         continue
                     src = (payload.get("src") or "").strip().lower()
                     tgt = (payload.get("tgt") or "").strip().lower()
-                    if src in code_to_language:
+                    # Guard against a stale presenter UI silently flipping the
+                    # room language: a presenter page that reloaded (or never
+                    # joined this room's session) can carry backend-default
+                    # languages in its form fields. Only apply src/tgt when the
+                    # payload EXPLICITLY carries them (field was present and
+                    # non-empty). Omitted language fields leave the room pair
+                    # untouched. This keeps sendConfig()-on-rejoin from
+                    # reverting a language the presenter set before reloading.
+                    if "src" in payload and src in code_to_language:
                         cfg["src"] = src
-                    if tgt in code_to_language:
+                    if "tgt" in payload and tgt in code_to_language:
                         cfg["tgt"] = tgt
 
                     w = payload.get("asr") or {}
@@ -557,6 +786,20 @@ async def websocket_endpoint(websocket: WebSocket):
                             room["llm"] = dict(cfg["llm"])
                             room["tts"] = dict(cfg["tts"])
                             room["tts_default_voice"] = cfg["tts"].get("voice") or ""
+                            # Register the NEW target as touched for the export
+                            # package (swap en->ja then ja->en = both languages
+                            # available at export time).
+                            remember_room_translation_language(room, cfg["tgt"])
+                            # Attendee targets are ATTENDEE-OWNED from the
+                            # moment of join (final §2x semantics, user):
+                            # the presenter's target choice reaches attendees
+                            # only through the shared link (?lang= param).
+                            # After that, presenter target changes NEVER
+                            # rewrite an attendee's connection — each
+                            # attendee controls their own target for the
+                            # rest of the session. The SOURCE still tracks
+                            # the presenter (room["src"] above governs what
+                            # everyone hears/transcribes).
                             room["updated_at"] = time.time()
 
                     session_epoch += 1
@@ -582,10 +825,12 @@ async def websocket_endpoint(websocket: WebSocket):
                     continue
 
                 if payload.get("type") == "set_target_language":
-                    if role != "attendee" or not room_id:
-                        continue
+                    # Attendee chooses their OWN translation language (§2u):
+                    # the choice is EXPLICIT, so it survives presenter target
+                    # changes (has_custom_target) — even if it coincides with
+                    # the room's current target.
                     requested = str(payload.get("target_language") or "").strip().lower()
-                    if requested not in code_to_language:
+                    if role != "attendee" or not room_id or requested not in code_to_language:
                         continue
                     attendee_target_language = requested
                     async with ROOMS_LOCK:
@@ -594,7 +839,11 @@ async def websocket_endpoint(websocket: WebSocket):
                             for connection in room.get("connections") or []:
                                 if connection.get("websocket") is websocket:
                                     connection["target_language"] = requested
+                                    connection["has_custom_target"] = True
                                     break
+                            # A touched language counts for the export package
+                            # even before any translation is stored.
+                            remember_room_translation_language(room, requested)
                             room["updated_at"] = time.time()
                     await send_snapshot_to_current_client()
                     continue
@@ -686,6 +935,24 @@ async def websocket_endpoint(websocket: WebSocket):
                     print("🟡 Speech ended (VAD). Waiting for tail silence…")
                     saw_end = True
                     silence_after_end_ms = 0
+                    # Speculative partial: start transcribing + translating the
+                    # near-final audio NOW, during the tail-silence window,
+                    # instead of only after it elapses. The final snapshot still
+                    # runs afterwards and corrects anything this got wrong, so
+                    # accuracy is unaffected; viewers see a near-final
+                    # translation ~1-2s earlier. Bypasses the cadence gates on
+                    # purpose. Guard: only when enough audio exists to be worth
+                    # an ASR call.
+                    sentence_ms_now = int(len(sentence_pcm) / SAMPLE_RATE * 1000)
+                    if active_segment_id is not None and sentence_ms_now >= LIVE_MIN_PARTIAL_AUDIO_MS:
+                        queue_snapshot(
+                            segment_id=active_segment_id,
+                            ts_ms=int(active_segment_started_ts or int(time.time() * 1000)),
+                            src=cfg["src"],
+                            tgt=cfg["tgt"],
+                            is_final=False,
+                        )
+                        last_partial_analysis_at = time.monotonic()
 
             if is_speaking:
                 sentence_pcm = np.concatenate([sentence_pcm, pcm_chunk], axis=0)
@@ -718,6 +985,10 @@ async def websocket_endpoint(websocket: WebSocket):
                     segment_id = active_segment_id
                     started_ts = int(active_segment_started_ts or int(time.time() * 1000))
                     if segment_id is not None:
+                        # The stale partial's result would be suppressed by the
+                        # segment_final_requested guard anyway — cancel it so
+                        # the final doesn't queue behind ~1-2.5s of dead ASR+LLM.
+                        await cancel_analysis()
                         queue_snapshot(
                             segment_id=segment_id,
                             ts_ms=started_ts,
@@ -733,11 +1004,19 @@ async def websocket_endpoint(websocket: WebSocket):
                 latest_original = ""
                 if active_segment_id is not None:
                     latest_original = ((emitted_segments.get(active_segment_id) or {}).get("original") or "").strip()
-                required_silence_ms = (
-                    LIVE_INCOMPLETE_FINALIZE_MS
-                    if latest_original and not looks_sentence_complete(latest_original)
-                    else LIVE_COMPLETE_SILENCE_MS
-                )
+                sentence_ms_gate = int(len(sentence_pcm) / SAMPLE_RATE * 1000)
+                # Short utterances (below the partial-audio gate) can never have
+                # emitted a partial, so latest_original is empty and the
+                # incomplete threshold would apply unconditionally — forcing
+                # every "yes/OK/sure" to wait the full incomplete gate for no
+                # reason. Use the complete threshold when no partial text
+                # exists to be wrong about.
+                if not latest_original or sentence_ms_gate < LIVE_MIN_PARTIAL_AUDIO_MS:
+                    required_silence_ms = LIVE_COMPLETE_SILENCE_MS
+                elif not looks_sentence_complete(latest_original):
+                    required_silence_ms = LIVE_INCOMPLETE_FINALIZE_MS
+                else:
+                    required_silence_ms = LIVE_COMPLETE_SILENCE_MS
                 if silence_after_end_ms >= required_silence_ms:
                     sentence_ms = int(len(sentence_pcm) / SAMPLE_RATE * 1000)
                     print(
@@ -749,6 +1028,10 @@ async def websocket_endpoint(websocket: WebSocket):
                     segment_id = active_segment_id
                     started_ts = int(active_segment_started_ts or int(time.time() * 1000))
                     if segment_id is not None:
+                        # The stale partial's result would be suppressed by the
+                        # segment_final_requested guard anyway — cancel it so
+                        # the final doesn't queue behind ~1-2.5s of dead ASR+LLM.
+                        await cancel_analysis()
                         queue_snapshot(
                             segment_id=segment_id,
                             ts_ms=started_ts,

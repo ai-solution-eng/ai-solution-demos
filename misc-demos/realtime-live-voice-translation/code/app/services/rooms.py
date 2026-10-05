@@ -35,12 +35,18 @@ async def register_room_connection(
     role: str,
     target_language: str,
     send_lock: asyncio.Lock,
+    has_custom_target: bool = False,
 ) -> dict[str, Any]:
     normalized, room = await get_or_create_room(room_id)
     connection = {
         "websocket": websocket,
         "role": role,
         "target_language": target_language,
+        # True once the attendee makes an EXPLICIT language choice (picker or
+        # ?lang= param). Explicit choosers keep their language across
+        # presenter target changes; connections without the flag follow the
+        # room's presenter_tgt (see the follow-sync in the config handler).
+        "has_custom_target": bool(has_custom_target),
         "send_lock": send_lock,
     }
     async with ROOMS_LOCK:
@@ -155,7 +161,19 @@ async def update_room_segment(
                     "translations": dict(segment.get("translations") or {}),
                 }
             if revision > int(segment.get("revision") or 0):
-                segment["translations"] = {}
+                # Reset per-language translations only when the segment moves
+                # to its final text. Partial revisions keep the previous
+                # translation as a fallback: attendees see last-good text in
+                # their language instead of triggering a serial LLM call per
+                # attendee per revision inside the broadcast loop.
+                if is_final:
+                    segment["translations"] = {}
+                else:
+                    segment["translations"] = {
+                        lang: text
+                        for lang, text in (segment.get("translations") or {}).items()
+                        if isinstance(text, str) and text.strip()
+                    }
             segment.update(
                 {
                     "revision": revision,

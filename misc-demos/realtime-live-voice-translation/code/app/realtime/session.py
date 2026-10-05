@@ -2,9 +2,12 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
-from app.config import DEFAULT_SOURCE_LANGUAGE, DEFAULT_TARGET_LANGUAGE, code_to_language
+from app.config import (
+    DEFAULT_SOURCE_LANGUAGE,
+    DEFAULT_TARGET_LANGUAGE,
+    code_to_language,
+)
 from app.schemas.api import TranscriptItem
-from app.services.translation import ensure_room_translation
 from app.state.rooms import (
     ROOMS,
     ROOMS_LOCK,
@@ -12,6 +15,7 @@ from app.state.rooms import (
     normalize_room_id,
     room_can_download,
 )
+
 
 
 async def build_room_snapshot(
@@ -54,21 +58,19 @@ async def build_room_snapshot(
     requested_target = (
         requested_target if requested_target in code_to_language else room_copy["presenter_tgt"]
     )
+
+    # Language-switch semantics (user decision): LIVE = new segments only.
+    # On join/switch we do NOT retro-translate history — that would hammer the
+    # model and stall the live conversation. The snapshot ships each history
+    # segment's existing translation when it happens to be in the requested
+    # language; otherwise the ORIGINAL text (the attendee reads past turns in
+    # whatever language they were produced in, or the source). All missing
+    # languages are translated at EXPORT time, when latency doesn't matter.
+    # No LLM calls happen inside snapshot building at all.
     serialized_segments: list[dict[str, Any]] = []
     for segment in room_copy["segments"]:
         translation = segment["translations"].get(requested_target, "")
-        if segment["original"] and requested_target != segment["src"] and not translation:
-            translation = await ensure_room_translation(
-                normalized,
-                segment_id=segment["segment_id"],
-                revision=segment["revision"],
-                original=segment["original"],
-                src=segment["src"],
-                target_language=requested_target,
-                llm_client=llm_client,
-                llm_model=llm_model,
-            )
-        elif requested_target == segment["src"]:
+        if requested_target == segment["src"]:
             translation = segment["original"]
         serialized_segments.append(
             {
@@ -96,3 +98,4 @@ async def build_room_snapshot(
         "can_download_package": room_copy["can_download_package"],
         "segments": serialized_segments,
     }
+

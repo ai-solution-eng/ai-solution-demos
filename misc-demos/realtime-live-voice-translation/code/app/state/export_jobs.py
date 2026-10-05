@@ -109,7 +109,9 @@ async def load_export_job_artifact(job_id: str) -> tuple[str, bytes] | None:
             artifact_path = Path(record.artifact_path)
             if not artifact_path.exists():
                 return None
-            return record.archive_name, artifact_path.read_bytes()
+            # Reading a potentially large ZIP is blocking I/O — keep it off
+            # the event loop (this coroutine runs on it).
+            return record.archive_name, await asyncio.to_thread(artifact_path.read_bytes)
 
     async with EXPORT_JOBS_LOCK:
         job = EXPORT_JOBS.get(job_id)

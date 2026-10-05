@@ -12,6 +12,7 @@ from app.config import (
     DEFAULT_ASR_API_KEY,
     DEFAULT_ASR_BASE_URL,
     DEFAULT_ASR_MODEL,
+    code_to_language,
 )
 from app.schemas.api import ExportLlmConfig, ExportRequest, ExportAsrConfig, RoomExportRequest, TranscriptItem
 from app.services.clients import make_client
@@ -289,11 +290,33 @@ async def start_room_export_package(room_id: str, payload: RoomExportRequest):
         recording_file_path = room.get("recording_file_path") or ""
         resumable_chunk_paths = list(room.get("recording_chunk_paths") or [])
         recording_mime_type = room.get("recording_mime_type") or ""
-        export_languages = (
+        # Presenter-selected languages win; empty/missing = every language
+        # touched during the meeting. Invalid codes are dropped silently so a
+        # stale frontend list can't poison the export.
+        #
+        # NOTE: the selection is NOT intersected with previously-touched
+        # languages — translation happens entirely at export time, so any
+        # app-supported language (code_to_language) is translatable here,
+        # including ones never used live.
+        requested_languages = [
+            (code or "").strip().lower()
+            for code in (payload.export_languages or [])
+            if (code or "").strip().lower() in code_to_language
+        ]
+        available_languages = (
             language_codes_from_room_segments_list(recording_segments)
             if recording_segments
             else room_export_language_codes(room)
         )
+        if requested_languages:
+            # Keep the meeting's source language available for the source
+            # documents, and honor every requested language in order.
+            export_languages = list(dict.fromkeys(
+                [code for code in available_languages if code in requested_languages]
+                + requested_languages
+            ))
+        else:
+            export_languages = available_languages
         room_export_segments = [
             {
                 "segment_id": segment.get("segment_id"),
@@ -400,6 +423,10 @@ async def start_room_export_package(room_id: str, payload: RoomExportRequest):
         job_id = await create_export_job(session_id=persisted_session_id)
     else:
         job_id = await create_export_job()
+    if not export_languages:
+        # Last-resort fallback (presenter selection empty AND room had no
+        # touched languages): at least the source + target pair.
+        export_languages = [DEFAULT_SOURCE_LANGUAGE, payload.target_language]
     asyncio.create_task(
         run_export_job(
             job_id=job_id,
@@ -414,4 +441,4 @@ async def start_room_export_package(room_id: str, payload: RoomExportRequest):
             asr_cfg=asr_cfg,
         )
     )
-    return JSONResponse({"job_id": job_id, "status": "queued"})
+    return JSONResponse({"job_id": job_id, "status": "queued", "languages": export_languages})

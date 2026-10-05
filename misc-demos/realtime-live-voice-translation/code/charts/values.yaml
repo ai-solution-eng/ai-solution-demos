@@ -26,7 +26,27 @@ env:
   # ============================================================
   # ASR hallucination filter patterns (comma-separated)
   # ============================================================
+  # ============================================================
+  # ASR hallucination filter patterns (comma-separated)
+  # ============================================================
   HALLUCINATION_PATTERNS: "you,thank you,thanks,продолжение следует"
+  # ============================================================
+  # Live latency tuning (see PERFORMANCE_AUDIT.md Tier 0).
+  # Conservative defaults that cut the structural speech-end→final delay:
+  # complete-sentence silence gate 1300→1000ms, incomplete 2200→1700ms,
+  # partial cadence 750→500ms, min partial audio 700→500ms.
+  # ============================================================
+  LIVE_SILENCE_THRESHOLD_MS: "1000"
+  LIVE_INCOMPLETE_FINALIZE_MS: "1700"
+  LIVE_PARTIAL_UPDATE_MS: "500"
+  LIVE_MIN_PARTIAL_AUDIO_MS: "500"
+  # ============================================================
+  # Presenter authentication (attendees join with the room code only,
+  # by design). Set PRESENTER_AUTH_SECRET to keep presenter tokens valid
+  # across pod restarts; leave empty for a per-pod random secret.
+  # ============================================================
+  PRESENTER_AUTH_ENABLED: "true"
+  # PRESENTER_AUTH_SECRET: "<random 64-hex string>"
 
 persistence:
   enabled: true
@@ -63,13 +83,13 @@ postgresql:
 images:
   backend:
     repository: "ghcr.io/ai-solution-eng/realtime-voice-translation"
-    pullPolicy: "IfNotPresent"
-    tag: "0.6.4"
+    pullPolicy: "Always"
+    tag: "0.6.10" #"0.6.7"
 
   frontend:
     repository: "ghcr.io/ai-solution-eng/realtime-voice-translation-fe"
-    pullPolicy: "IfNotPresent"
-    tag: "0.6.4"
+    pullPolicy: "Always"
+    tag: "0.6.11" #"0.6.6"
 
 resources:
   backend:

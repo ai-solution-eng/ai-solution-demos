@@ -91,6 +91,8 @@
     const HTTP_BASE = shared.resolveBackendHttpBase();
     const WS_URL = shared.resolveBackendWsUrl(HTTP_BASE);
     const ROOM_COOKIE_NAME = "realtime-voice-room-id";
+    const PRESENTER_TOKEN_COOKIE_NAME = "realtime-voice-presenter-token";
+    const RECOVERY_CODE_COOKIE_NAME = "realtime-voice-recovery-code";
 
     const app = {
         shared,
@@ -121,6 +123,8 @@
             canDownloadPackage: false,
             roomId: "",
             previousRoomId: "",
+            presenterToken: "",
+            recoveryCode: "",
             joined: false
         }
     };
@@ -193,12 +197,73 @@
         const responsePayload = await response.json();
         const createdRoomId = (responsePayload.room_id || "").trim();
         if (!createdRoomId) throw new Error("Room creation did not return a room code.");
+        if (responsePayload.presenter_token) {
+            app.state.presenterToken = String(responsePayload.presenter_token);
+            app.setCookie(PRESENTER_TOKEN_COOKIE_NAME, app.state.presenterToken);
+        }
+        if (responsePayload.recovery_code) {
+            app.state.recoveryCode = String(responsePayload.recovery_code);
+            app.setCookie(RECOVERY_CODE_COOKIE_NAME, app.state.recoveryCode);
+        }
         return createdRoomId;
+    };
+
+    app.showRoomCredentials = function showRoomCredentials() {
+        // Surface that room credentials are SAVED and copyable — WITHOUT
+        // printing them (an accidental screen share must not leak the
+        // presenter token or recovery code). The values live only in
+        // cookies/state and are delivered exclusively through the copy
+        // buttons. The display elements are hidden anchors in the markup;
+        // nothing credential-valued is ever rendered.
+        const note = document.getElementById("roomCredentialsNote");
+        if (!note) return;
+        const token = app.state.presenterToken || app.getCookie(PRESENTER_TOKEN_COOKIE_NAME);
+        const recovery = app.state.recoveryCode || app.getCookie(RECOVERY_CODE_COOKIE_NAME);
+        if (!token && !recovery) return;
+        note.hidden = false;
+    };
+
+    app.showReentryPrompt = function showReentryPrompt() {
+        // Shown when the room state suggests the presenter may need to
+        // reclaim access (join rejected by auth).
+        const note = document.getElementById("reentryNote");
+        if (note) note.hidden = false;
+    };
+
+    app.recoverRoomAccess = async function recoverRoomAccess(roomId, credential) {
+        // Credential: the recovery code OR a previously saved room token —
+        // the server accepts either as proof of ownership.
+        const trimmed = (credential || "").trim();
+        const looksLikeToken = /^[0-9a-f]{40}$/i.test(trimmed);
+        const body = looksLikeToken
+            ? { presenter_token: trimmed }
+            : { recovery_code: trimmed };
+        const response = await fetch(`${HTTP_BASE}/api/rooms/${encodeURIComponent(roomId)}/presenter-token`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body)
+        });
+        if (!response.ok) {
+            const detail = await response.text().catch(() => "");
+            throw new Error(detail || `Recovery failed with status ${response.status}`);
+        }
+        const payload = await response.json();
+        if (!payload.presenter_token) throw new Error("The server did not return a presenter token.");
+        app.state.presenterToken = String(payload.presenter_token);
+        app.state.roomId = roomId;
+        app.setCookie(PRESENTER_TOKEN_COOKIE_NAME, app.state.presenterToken);
+        app.setCookie(ROOM_COOKIE_NAME, roomId);
+        app.updateRoomBadge();
+        return app.state.presenterToken;
     };
 
     app.initializePresenterRoomId = async function initializePresenterRoomId() {
         const existing = decodeURIComponent(app.getCookie(ROOM_COOKIE_NAME) || "").trim();
+        const existingToken = decodeURIComponent(app.getCookie(PRESENTER_TOKEN_COOKIE_NAME) || "").trim();
         const roomId = await app.requestNewRoomId(existing);
+        if (!app.state.presenterToken && existingToken) {
+            app.state.presenterToken = existingToken;
+        }
         app.state.roomId = roomId;
         app.setCookie(ROOM_COOKIE_NAME, roomId);
         app.updateRoomBadge();
@@ -266,31 +331,53 @@
     };
 
     app.loadDefaultsFromBackend = async function loadDefaultsFromBackend() {
-        try {
-            const response = await fetch(`${HTTP_BASE}/defaults`);
-            if (!response.ok) return;
-            const defaults = await response.json();
-
-            if (defaults.src || defaults.tgt) {
-                app.applyLanguagePair(defaults.src || refs.srcLangEl.value, defaults.tgt || refs.tgtLangEl.value);
+        // Fetch the backend defaults from whichever path the current
+        // deployment actually exposes:
+        //   1. /api/defaults  — gateway-safe route (backend with the fix)
+        //   2. /defaults      — direct uvicorn (local dev, old backend)
+        // Both can return HTML depending on deployment state (nginx
+        // try_files fallback / 404 page), so validate the content type and
+        // body before parsing — a routing gap then degrades to a single
+        // clear warning instead of a JSON SyntaxError.
+        const candidates = [`${HTTP_BASE}/api/defaults`, `${HTTP_BASE}/defaults`];
+        let defaults = null;
+        for (const url of candidates) {
+            try {
+                const response = await fetch(url, { cache: "no-store" });
+                if (!response.ok) continue;
+                const contentType = (response.headers.get("content-type") || "").toLowerCase();
+                if (!contentType.includes("application/json")) continue;
+                const body = await response.text();
+                if (!body.trim().startsWith("{")) continue;
+                defaults = JSON.parse(body);
+                if (defaults && typeof defaults === "object") break;
+                defaults = null;
+            } catch {
+                // try the next candidate
             }
-
-            if (defaults.asr?.base_url) refs.asrBaseUrlEl.value = defaults.asr.base_url;
-            if (defaults.asr?.model) refs.asrModelEl.value = defaults.asr.model;
-
-            if (defaults.llm?.base_url) refs.llmBaseUrlEl.value = defaults.llm.base_url;
-            if (defaults.llm?.model) refs.llmModelEl.value = defaults.llm.model;
-
-            if (defaults.tts?.base_url) refs.ttsBaseUrlEl.value = defaults.tts.base_url;
-            if (defaults.tts?.model) refs.ttsModelEl.value = defaults.tts.model;
-            if (defaults.tts?.voice) refs.ttsVoiceEl.value = defaults.tts.voice;
-
-            if (defaults.asr?.has_api_key) refs.asrApiKeyEl.placeholder = "ASR_API_KEY (set on server)";
-            if (defaults.llm?.has_api_key) refs.llmApiKeyEl.placeholder = "LLM_API_KEY (set on server)";
-            if (defaults.tts?.has_api_key) refs.ttsApiKeyEl.placeholder = "TTS_API_KEY (set on server)";
-        } catch (error) {
-            console.warn("Could not load defaults:", error);
         }
+        if (!defaults) {
+            console.warn("Could not load defaults: no JSON response from /api/defaults or /defaults (deployment routing?)");
+            return;
+        }
+
+        if (defaults.src || defaults.tgt) {
+            app.applyLanguagePair(defaults.src || refs.srcLangEl.value, defaults.tgt || refs.tgtLangEl.value);
+        }
+
+        if (defaults.asr?.base_url) refs.asrBaseUrlEl.value = defaults.asr.base_url;
+        if (defaults.asr?.model) refs.asrModelEl.value = defaults.asr.model;
+
+        if (defaults.llm?.base_url) refs.llmBaseUrlEl.value = defaults.llm.base_url;
+        if (defaults.llm?.model) refs.llmModelEl.value = defaults.llm.model;
+
+        if (defaults.tts?.base_url) refs.ttsBaseUrlEl.value = defaults.tts.base_url;
+        if (defaults.tts?.model) refs.ttsModelEl.value = defaults.tts.model;
+        if (defaults.tts?.voice) refs.ttsVoiceEl.value = defaults.tts.voice;
+
+        if (defaults.asr?.has_api_key) refs.asrApiKeyEl.placeholder = "ASR_API_KEY (set on server)";
+        if (defaults.llm?.has_api_key) refs.llmApiKeyEl.placeholder = "LLM_API_KEY (set on server)";
+        if (defaults.tts?.has_api_key) refs.ttsApiKeyEl.placeholder = "TTS_API_KEY (set on server)";
     };
 
     app.sendConfig = function sendConfig() {

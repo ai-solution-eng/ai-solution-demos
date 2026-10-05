@@ -1627,3 +1627,207 @@
         [data-theme="light"] .theme-icon-sun {
             display: none;
         }
+
+        /* ---- Live-latency UX additions (see PERFORMANCE_AUDIT.md Tier 1.8) ---- */
+
+        .pair .pair-copy.translation.is-pending {
+            opacity: 0.55;
+            animation: translation-pending-shimmer 1.2s linear infinite;
+        }
+
+        @keyframes translation-pending-shimmer {
+            0%, 100% { opacity: 0.55; }
+            50% { opacity: 0.3; }
+        }
+
+        .stack {
+            contain: content;
+        }
+
+        .history-list {
+            content-visibility: auto;
+            contain-intrinsic-size: auto 120px;
+        }
+
+        /* Hold-last-translation state: muted but readable, visually distinct
+           from both the pending shimmer and confirmed translations. */
+        .pair .pair-copy.translation.is-held {
+            opacity: 0.45;
+            font-style: italic;
+        }
+
+        .pair .pair-copy.translation .held-note {
+            display: inline-block;
+            margin-left: 0.5em;
+            font-size: 0.6em;
+            font-style: normal;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            opacity: 0.8;
+        }
+
+
+        /* ---- Export language chooser modal (presenter download) ---- */
+        #exportLanguagesModal {
+            position: fixed;
+            inset: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(6px);
+            background: rgba(2, 6, 10, 0.78);
+            z-index: 350;
+        }
+
+        #exportLanguagesModal[hidden] {
+            display: none;
+        }
+
+        #exportLanguagesModal:not([hidden]) {
+            display: flex;
+        }
+
+        .export-languages-card {
+            max-width: 460px;
+            width: min(460px, calc(100vw - 32px));
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .export-languages-help {
+            font-size: 0.85rem;
+            opacity: 0.75;
+            margin: 8px 0 14px;
+        }
+
+        .export-languages-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 16px;
+            max-height: 40vh;
+            overflow-y: auto;
+        }
+
+        .export-language-option {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 10px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            cursor: pointer;
+        }
+
+        .export-language-option:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .export-language-option input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+        }
+
+        .export-language-code {
+            opacity: 0.55;
+            font-size: 0.8em;
+        }
+
+        .export-languages-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+
+
+        .export-languages-bulk {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+
+        .export-languages-bulk .btn-secondary {
+            padding: 5px 12px;
+            font-size: 0.8rem;
+        }
+
+        .export-language-name {
+            display: flex;
+            align-items: baseline;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .export-language-native {
+            opacity: 0.6;
+            font-size: 0.85em;
+        }
+
+        .export-language-touched {
+            font-size: 0.65em;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            padding: 2px 6px;
+            border-radius: 999px;
+            background: rgba(34, 197, 94, 0.15);
+            color: #22c55e;
+        }
+
+        /* ---- Room credentials display (token + recovery code) ---- */
+        .credentials-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 6px;
+            flex-wrap: wrap;
+        }
+
+        .credentials-row code {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 0.85rem;
+            padding: 4px 10px;
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            user-select: all;
+            word-break: break-all;
+        }
+
+        #recoveryCodeInput {
+            flex: 1 1 180px;
+            max-width: 240px;
+        }
+
+        /* ---- Inline copy button inside the room-code chip ---- */
+        .chip-copy-btn {
+            background: none;
+            border: none;
+            color: inherit;
+            font-size: 0.95rem;
+            line-height: 1;
+            padding: 2px 4px;
+            margin-left: 8px;
+            cursor: pointer;
+            opacity: 0.65;
+            border-radius: 4px;
+            transition: opacity 0.15s ease, background 0.15s ease;
+        }
+
+        .chip-copy-btn:hover {
+            opacity: 1;
+            background: rgba(255, 255, 255, 0.12);
+        }
+
+        .chip-copy-btn.copied {
+            opacity: 1;
+            color: #4ade80;
+        }
+
+        .credential-label {
+            font-size: 0.85rem;
+            font-weight: 600;
+            opacity: 0.85;
+            min-width: 110px;
+        }
