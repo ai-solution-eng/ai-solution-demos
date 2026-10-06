@@ -128,6 +128,15 @@
         renderLanguagePicker("src");
         renderLanguagePicker("tgt");
 
+        // Persist the CURRENT pair so a page reload restores what the
+        // presenter actually used (the in-memory userSelected flag dies
+        // with the page; the cookie survives). Only meaningful pairs are
+        // saved — the boot defaults come back anyway if nothing was chosen.
+        try {
+            document.cookie = `realtime-voice-lang-pair=${encodeURIComponent(`${refs.srcLangEl.value}|${refs.tgtLangEl.value}`)}; expires=${new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toUTCString()}; path=/; SameSite=Lax`;
+        } catch {
+        }
+
         if (emit) {
             languagePickers[emitRole].input.dispatchEvent(new Event("change", { bubbles: true }));
         }
@@ -156,6 +165,12 @@
                 nextTgt = code;
             }
         }
+
+        // A PICKER CLICK is the presenter's deliberate selection: mark both
+        // sides user-selected so late-arriving /api/defaults cannot clobber
+        // them (the defaults race that reset the pair to en/es on Connect).
+        refs.srcLangEl.dataset.userSelected = "true";
+        refs.tgtLangEl.dataset.userSelected = "true";
 
         applyLanguagePair(nextSrc, nextTgt, { emit: true, emitRole: role });
         closeLanguagePicker(role, { focusTrigger: true });

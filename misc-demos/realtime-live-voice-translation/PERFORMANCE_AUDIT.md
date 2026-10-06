@@ -339,7 +339,29 @@ No per-connection stale reads remain (grep-verified). The join-time `target_lang
 
 **Correction 2 (user, definitive):** the picker showed French while the server kept translating to English — chip/connection divergence. Root cause found: the attendee's picker change is only SENT to the server when the WebSocket is OPEN at that instant (`attendee.js` guard); if the socket is down/reconnecting, the choice was applied LOCALLY and silently lost — picker=fr, server connection=en. And because snapshots only fire on join/switch/boundary (NOT on speech), nothing repaired the chip. **Fix, two halves:** (1) choices made while the socket is down are buffered (`pendingTargetLanguage`) and flushed to the server on the next `joined`; (2) every SEGMENT message now re-adopts `msg.tgt` (the server's truth about this connection) into the picker with notify:false — the picker can never drift from what is actually being delivered; the ONLY way it changes is the attendee's own picker action (or a buffered flush after reconnect). Invariant: chip == server connection target, always.
 
-### 2y. Connect resets the presenter pair + attendee picker default-leak (user report, sixteenth round)
+### 2zb. The race survived 0.6.14 — the RELOAD hole (user screenshots, eighteenth round)
+
+**Screenshots:** es>en picked (Stop enabled = session was live), then en>es after the next Connect. The §2za in-memory `userSelected` flag **dies with the page**: any reload (Safari tab reload, incognito reopen, deploy refresh) resets the pickers to MARKUP defaults (en/es), and §2y's join-carries-UI then faithfully flips the room to en/es. §2za's guard never got a chance — the flag was gone before `/api/defaults` even arrived.
+
+**Fix — persist the presenter's pair (durable):** `applyLanguagePair` now writes `realtime-voice-lang-pair=<src>|<tgt>` (7-day cookie) on every change; boot restores it BEFORE any other picker write AND marks both fields userSelected — so a reloaded page re-asserts the presenter's last deliberate pair, immune to both markup defaults and late `/api/defaults`.
+
+**Verified:** reload+connect without re-pick → restores es>en ✓; reload+re-pick ja>en → new pick wins ✓; fresh incognito (no cookie) → en/es defaults populate ✓. Files: `presenter/languages.js` (cookie write in applyLanguagePair), `presenter.js` (boot restore + userSelected marks). Frontend-only.
+
+**Reported:** incognito tab, pick en>ja → Connect flips to en>es; same with fr>de. "This makes me think there are enforced values."
+
+**Root cause — not enforcement, a RACE:** `loadDefaultsFromBackend()` (fire-and-forget at boot) applies the server's env defaults (`SOURCE_LANGUAGE`/`TARGET_LANGUAGE` = en/es) via `applyLanguagePair` when the response lands. In a cold incognito tab that fetch takes seconds — after the presenter has ALREADY picked jp>en — and stomps both pickers. Connect then faithfully carries the clobbered en/es. Both test runs match exactly (user's "sp" = es).
+
+**WHY IT "STILL HAPPENED" (deploy-state root cause):** the §2za fix lives in the WORKING TREE ONLY — it is NOT in commit 188e528 ("realtime translation improvements", the commit the 0.6.10/0.6.11 images were built from; verified: `git show 188e528:.../languages.js` contains zero `userSelected`). The running frontend therefore still clobbers the pair. The fix requires: commit the working tree → rebuild/re-push the 0.6.x images (or a 0.6.12) → redeploy → hard refresh.
+
+**Fix:** deliberate selection is now sticky. Picker clicks (`selectLanguage`) and the Swap button mark both hidden inputs `dataset.userSelected = "true"`; `loadDefaultsFromBackend` adopts defaults ONLY for untouched sides (model/URL fields keep the empty-means-adoptable guard). Untouched pickers still populate from server defaults — the §2r feature is preserved.
+
+**Verified:** three timelines — deliberate jp>en survives late defaults (join carries ja>en); fr>de survives (fr>de); untouched pickers still adopt en>es.
+
+**Request:** keep only the room-code chip; clicking ⧉ copies the full credential block (Room number / Room token / Recovery code, one per line); delete the credentials panel (labels + two buttons).
+
+**Feature-loss audit:** none — all three values still copyable (now in ONE click), re-entry panel + auto-open-on-auth-rejection untouched, values still never rendered (the panel's removal STRENGTHENS the screen-share privacy posture), cookies/state persistence kept as the copy source. The re-entry panel accepts recovery code OR token as before.
+
+**Implementation:** `index.html` — panel markup removed; `presenter.js` — ⧉ builds the block from state/cookies (missing lines gracefully omitted), panel button bindings deleted; `presenter/core.js` — `showRoomCredentials` is now a no-op (call-site compatibility). Clipboard format verified to match the user's requested output byte-for-byte.
 
 **Bug 1 — "Connect changes the presenter source/target to some default":** the join message carried NO src, so a fresh room booted with server defaults (en/es) and the joined-adoption then reset the presenter's UI to them — the pair the presenter had picked (e.g. jp→en) never reached the server before the join clobbered the UI. **Fix:** the join now carries `src` + `target_language` from the presenter's UI, and the server adopts the pair at join (creating the room with it, or re-asserting the presenter's intent on re-entry). The joined/room_state/snapshot UI-adoption stays for stale-tab safety but now echoes back what the presenter just asserted.
 

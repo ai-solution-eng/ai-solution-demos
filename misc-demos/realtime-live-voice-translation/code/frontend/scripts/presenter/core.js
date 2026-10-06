@@ -209,18 +209,9 @@
     };
 
     app.showRoomCredentials = function showRoomCredentials() {
-        // Surface that room credentials are SAVED and copyable — WITHOUT
-        // printing them (an accidental screen share must not leak the
-        // presenter token or recovery code). The values live only in
-        // cookies/state and are delivered exclusively through the copy
-        // buttons. The display elements are hidden anchors in the markup;
-        // nothing credential-valued is ever rendered.
-        const note = document.getElementById("roomCredentialsNote");
-        if (!note) return;
-        const token = app.state.presenterToken || app.getCookie(PRESENTER_TOKEN_COOKIE_NAME);
-        const recovery = app.state.recoveryCode || app.getCookie(RECOVERY_CODE_COOKIE_NAME);
-        if (!token && !recovery) return;
-        note.hidden = false;
+        // The credentials PANEL no longer exists (the chip's ⧉ copies the
+        // full block instead). Kept as a no-op for call-site compatibility;
+        // the values live only in cookies/state.
     };
 
     app.showReentryPrompt = function showReentryPrompt() {
@@ -361,8 +352,20 @@
             return;
         }
 
-        if (defaults.src || defaults.tgt) {
-            app.applyLanguagePair(defaults.src || refs.srcLangEl.value, defaults.tgt || refs.tgtLangEl.value);
+        // Apply the server defaults ONLY to fields the presenter has not
+        // touched yet. The language pair is the presenter's deliberate
+        // selection: if they already picked/swap'd before this late-arriving
+        // response (cold incognito fetches can take seconds), re-applying
+        // the env defaults would clobber their choice — and the next Connect
+        // would then join with the clobbered en/es pair. Model/URL fields
+        // keep the simpler guard: a placeholder-empty field is adoptable,
+        // but a non-empty one means the presenter typed something.
+        const srcTouched = refs.srcLangEl.dataset.userSelected === "true";
+        const tgtTouched = refs.tgtLangEl.dataset.userSelected === "true";
+        if (!srcTouched && defaults.src) refs.srcLangEl.value = defaults.src;
+        if (!tgtTouched && defaults.tgt) refs.tgtLangEl.value = defaults.tgt;
+        if ((!srcTouched || !tgtTouched)) {
+            app.applyLanguagePair(refs.srcLangEl.value, refs.tgtLangEl.value);
         }
 
         if (defaults.asr?.base_url) refs.asrBaseUrlEl.value = defaults.asr.base_url;

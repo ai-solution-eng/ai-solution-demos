@@ -68,7 +68,10 @@
         bindCopyButton(refs.copyRoomLinkBtn, "attendee.html", "Copy attendee link", "Link copied");
         bindCopyButton(refs.copyPhoneLinkBtn, "attendee-mobile.html", "Copy phone link", "Phone link copied");
 
-        // Inline ⧉ copy button inside the room-code chip (space-efficient)
+        // Inline ⧉ copy button inside the room-code chip: copies the FULL
+        // credential block (room code + token + recovery code) in one click —
+        // everything needed to re-enter the room from any browser. Values are
+        // never displayed on screen; they live in cookies/state only.
         const copyRoomCodeBtn = document.getElementById("copyRoomCodeBtn");
         if (copyRoomCodeBtn) {
             copyRoomCodeBtn.onclick = async (event) => {
@@ -79,8 +82,15 @@
                     alert("No room code yet — the room is still being prepared.");
                     return;
                 }
+                const token = app.state.presenterToken || app.getCookie("realtime-voice-presenter-token") || "";
+                const recovery = app.state.recoveryCode || app.getCookie("realtime-voice-recovery-code") || "";
+                const block = [
+                    `Room number: ${roomId}`,
+                    token ? `Room token: ${token}` : null,
+                    recovery ? `Recovery code: ${recovery}` : null
+                ].filter(Boolean).join("\n");
                 try {
-                    await navigator.clipboard.writeText(roomId);
+                    await navigator.clipboard.writeText(block);
                     copyRoomCodeBtn.classList.add("copied");
                     copyRoomCodeBtn.textContent = "✓";
                     setTimeout(() => {
@@ -88,43 +98,14 @@
                         copyRoomCodeBtn.textContent = "⧉";
                     }, 1200);
                 } catch (error) {
-                    alert(`Copy failed — select and copy manually:\n\n${roomId}`);
+                    alert(`Copy failed — copy manually:\n\n${block}`);
                 }
             };
         }
 
-        // Room credentials copy buttons (token + recovery code)
-        const bindValueCopyButton = (buttonId, getValue, defaultLabel, copiedLabel) => {
-            const button = document.getElementById(buttonId);
-            if (!button) return;
-            button.onclick = async () => {
-                const value = getValue();
-                if (!value) {
-                    alert("No value saved yet. Create or reconnect to a room first.");
-                    return;
-                }
-                try {
-                    await navigator.clipboard.writeText(value);
-                    button.textContent = copiedLabel;
-                    setTimeout(() => { button.textContent = defaultLabel; }, 1200);
-                } catch (error) {
-                    alert(`Copy failed — select and copy manually:\n\n${value}`);
-                }
-            };
-        };
-        bindValueCopyButton(
-            "copyRoomTokenBtn",
-            () => app.state.presenterToken || app.getCookie("realtime-voice-presenter-token"),
-            "Copy room token",
-            "Token copied"
-        );
-        bindValueCopyButton(
-            "copyRecoveryCodeBtn",
-            () => app.state.recoveryCode || app.getCookie("realtime-voice-recovery-code"),
-            "Copy recovery code",
-            "Recovery code copied"
-        );
-
+        // The credentials panel is gone (privacy + space): the chip's ⧉ is
+        // the single copy surface — it copies the room code, token, and
+        // recovery code together as one block.
         // Recovery flow: reclaim presenter access with recovery code OR room token
         const recoverBtn = document.getElementById("recoverTokenBtn");
         const recoveryInput = document.getElementById("recoveryCodeInput");
@@ -189,6 +170,10 @@
         refs.llmModelEl.onchange = () => app.sendConfig();
         refs.llmApiKeyEl.onchange = () => app.sendConfig();
         refs.swapBtn.onclick = () => {
+            // A deliberate presenter action: protect the pair from the
+            // late-arriving /api/defaults (the Connect-resets-languages race).
+            refs.srcLangEl.dataset.userSelected = "true";
+            refs.tgtLangEl.dataset.userSelected = "true";
             app.applyLanguagePair(refs.tgtLangEl.value, refs.srcLangEl.value, { emit: true, emitRole: "src" });
         };
     }
@@ -227,6 +212,21 @@
 
     app.initializeLanguagePickers();
     app.setPresenterRoomInputValue(decodeURIComponent(app.getCookie(app.ROOM_COOKIE_NAME) || "").trim());
+    // Restore the presenter's LAST used pair (cookie) BEFORE anything else
+    // can write the pickers: a reload wipes the in-memory selection, and
+    // without this the UI falls back to markup defaults (en/es) — which the
+    // join then faithfully sends, flipping the room ("Connect resets my
+    // languages"). The cookie pair IS the presenter's last deliberate state.
+    const savedPair = decodeURIComponent(app.getCookie("realtime-voice-lang-pair") || "");
+    const [savedSrc, savedTgt] = savedPair.split("|");
+    if (savedSrc && savedTgt) {
+        app.applyLanguagePair(savedSrc, savedTgt);
+        // The restored pair IS a deliberate selection (persisted from the
+        // presenter's last pick): protect it from the late-arriving
+        // /api/defaults exactly like a fresh picker click would be.
+        refs.srcLangEl.dataset.userSelected = "true";
+        refs.tgtLangEl.dataset.userSelected = "true";
+    }
     app.ensureBackendPresenterRoomId().then(() => {
         app.showRoomCredentials();
     }).catch((error) => {

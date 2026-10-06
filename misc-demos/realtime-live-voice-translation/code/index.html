@@ -69,24 +69,6 @@
                             <button id="copyRoomLinkBtn" type="button" class="btn-secondary">Copy attendee link</button>
                             <button id="copyPhoneLinkBtn" type="button" class="btn-secondary">Copy phone link</button>
                         </div>
-                        <div id="roomCredentialsNote" class="previous-room-note" hidden>
-                            <span>Room credentials saved (copy them now — they re-enter this room from any browser; never shown on screen):</span>
-                            <div class="credentials-row">
-                                <span class="credential-label">Room token</span>
-                                <button id="copyRoomTokenBtn" type="button" class="btn-secondary">Copy room token</button>
-                            </div>
-                            <div class="credentials-row">
-                                <span class="credential-label">Recovery code</span>
-                                <button id="copyRecoveryCodeBtn" type="button" class="btn-secondary">Copy recovery code</button>
-                            </div>
-                            <!-- Credential VALUES are never rendered (screen-share
-                                 privacy): the <code> displays were removed; the
-                                 copy buttons read cookies/state directly. The
-                                 roomTokenDisplay/recoveryCodeDisplay ids are kept
-                                 as hidden anchors for the app's DOM contract. -->
-                            <code id="roomTokenDisplay" hidden></code>
-                            <code id="recoveryCodeDisplay" hidden></code>
-                        </div>
                         <div id="reentryNote" class="previous-room-note" hidden>
                             <span>Locked out of a room? Enter its <strong>recovery code</strong> (or the saved <strong>room token</strong>) to reclaim presenter access:</span>
                             <div class="credentials-row">

@@ -84,12 +84,12 @@ images:
   backend:
     repository: "ghcr.io/ai-solution-eng/realtime-voice-translation"
     pullPolicy: "Always"
-    tag: "0.6.10" #"0.6.7"
+    tag: "0.7.0"
 
   frontend:
     repository: "ghcr.io/ai-solution-eng/realtime-voice-translation-fe"
     pullPolicy: "Always"
-    tag: "0.6.11" #"0.6.6"
+    tag: "0.7.0"
 
 resources:
   backend:
