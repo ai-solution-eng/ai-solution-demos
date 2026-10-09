@@ -1,11 +1,72 @@
-replicaCount: 1
-image:
-  repository: ghcr.io/ai-solution-eng/multimodal-rag-mcp
-  tag: v4.0.7
-  pullPolicy: IfNotPresent
+# ============================================================================
+# Multimodal RAG — helm/ chart values (rag-mcp-server: 1 API replica + MCP sidecar,
+# 1 Qdrant StatefulSet).  Full guide: documentation/DEPLOYMENT.md.
+# Owner: Andrew Bydlon
+# Email: andrew.bydlon@hpe.com
+# ### REQUIRED ### — key material lives in Secrets you own, NOT in values
+# (build from helm/local/secrets.template.yaml; missing Secret = CreateContainerError;
+# every key the Secret carries overrides the values seeds below it).
+# 1. modelSecrets.existingSecret — the broad secret: MODEL_*_API_KEY per enabled
+# role, optionally MODEL_*_URL / S3_* / REDIS_PASSWORD (one object, everything)
+# 2. models.embedder.url — reachable embedder endpoint (startup ABORTS if
+# unreachable) unless the Secret carries MODEL_EMBEDDER_URL
+# 3. security.existingSecret — RAG_API_KEY + MEDIA_TOKEN_SECRET (or inline, or
+# empty = auto-generated on first install) — helm/ROTATION.md
+# 4. ezua.virtualService.endpoint — RENDER FAILS without it while ezua.enabled
+# ### OPTIONAL ### — major tuning setups (copy the shape from the pointer)
+# SSO / identity stack, ORDERED (→): security.oidc.* / oidc.sso.* / ssoGate /
+# accessSelfMint / trustProxyIdentity — DEPLOYMENT.md §5b "Enabling the SSO stack"
+# Multi-user keys + access store (///): mcp.apiKeyClients / mcp.datasetAcls /
+# security.accessStore — DEPLOYMENT.md §2
+# MCP API-key gate: mcp.apiKey.existingSecret (pre-create the Secret) — §2 + §5b
+# Network zone (ingress allowlist, default off): networkPolicy.* —
+# values-examples/values-hardened-g2.yaml (overlay)
+# Metrics: metrics.serviceMonitor (+ bearer Secret when security.metricsAuth) — §2
+# Storage: s3.* / backups.* / watchedSources.* (each source REQUIRES dataset + >=1 prefix) — §2 + §7b
+# Optional model roles: models.reranker / vlm / asr (url "" disables) — §2
+# RAG pipeline: rag.ocr / rag.contextual / rag.rrfDefault — §2
+# ============================================================================
+
+# ============================================================================
+# Image / Deployment
+# ============================================================================
+
 deployment:
   name: rag-mcp-server
   appName: rag-mcp-server
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/ai-solution-eng/multimodal-rag-mcp
+  tag: v5.7.0
+  pullPolicy: IfNotPresent
+
+qdrant:
+  image:
+    repository: qdrant/qdrant
+    tag: v1.19.0
+    pullPolicy: IfNotPresent
+  grpcPort: 6334
+  httpPort: 6333
+  telemetryDisabled: true
+
+redis:
+  enabled: false
+  password: ''
+
+# ============================================================================
+# Resources
+# ============================================================================
+
+resources:
+  app:
+    requests: {cpu: 2, memory: 2Gi}
+    limits: {cpu: 4, memory: 8Gi}
+  qdrant:
+    requests: {cpu: '4', memory: 16Gi}
+    limits: {cpu: '8', memory: 32Gi}
+
 persistence:
   data:
     size: 50Gi
@@ -16,6 +77,11 @@ persistence:
     storageClass: gl4f-filesystem
     accessMode: ReadWriteMany
     mountReadOnly: true
+
+# ============================================================================
+# Secrets
+# ============================================================================
+
 models:
   embedder:
     name: RamManavalan/Qwen3-VL-Embedding-8B-FP8
@@ -29,9 +95,8 @@ models:
       code_chunk_overlap: 512
       tokenizer_name: Qwen/Qwen3-VL-Embedding-8B
       tokenizer_type: HuggingFace
-      # Same-embedder alias for the dataset fingerprint guard: datasets indexed
-      # under this id keep working after the FP8 swap (vectors agree to >=0.95 cosine).
-      # Requires an image with alias support — v4.0.0 rejects unknown extra keys.
+      # Fingerprint-guard alias: datasets indexed under the old id survive the
+      # FP8 swap (>=0.95 cosine); requires an alias-capable image (v4.0.0 rejects unknown extra keys).
       alias: Qwen/Qwen3-VL-Embedding-8B
   reranker:
     name: Qwen/Qwen3-VL-Reranker-8B
@@ -46,100 +111,98 @@ models:
     name: CohereLabs/cohere-transcribe-03-2026
     url: ''
     extra: {}
+# SECRET-FIRST + STICKY: the value stored in `<deployment.name>-model-keys`
+# wins on every upgrade — these entries only SEED it (reseed = delete the
+# Secret, then upgrade; out-of-band kubectl edits hot-reload live <=15s).
+# MODEL_*_URL keys added to that Secret are sticky too and override the
+# ConfigMap URLs.
 modelSecrets:
+  # Broadest-secret mode (build from helm/local/secrets.template.yaml): a
+  # Secret you own carrying MODEL_*_API_KEY (+ optional MODEL_*_URL, S3_*,
+  # REDIS_PASSWORD) — hard-wired (missing = CreateContainerConfigError);
+  # every key it carries overrides the seeds, keys it omits keep them.
+  existingSecret: ''
   embedderApiKey: ''
   rerankerApiKey: ''
   vlmApiKey: ''
   asrApiKey: ''
-s3:
-  endpointUrl: http://minio.minio.svc.cluster.local:9000
-  accessKeyId: ''
-  secretAccessKey: ''
+
+# ============================================================================
+# App Defaults
+# ============================================================================
+
 rag:
   ocr: false
   captionWithAsr: true
   captionWithVlm: true
   remote: false
   dedupThreshold: 0.995
-qdrant:
-  image:
-    repository: qdrant/qdrant
-    tag: v1.19.0
-    pullPolicy: IfNotPresent
-  grpcPort: 6334
-  httpPort: 6333
-  telemetryDisabled: true
+  # Ingest-time contextual retrieval: false = NEW datasets stamp
+  # contextual:false (zero behaviour change); true = they stamp contextual:true
+  # (an explicit body "contextual" always wins; existing datasets untouched —
+  # PATCH or Recreate).  Cost: one small LLM call per real-text chunk —
+  # preview via POST /api/admin/datasets/{name}/contextual-preview first.
+  contextual: false
+  # Weighted-RRF create-time default (RAG_RRF_DEFAULT): when enabled, NEW
+  # datasets stamp dense/sparse[/k] (existing untouched; a body "rrf" object
+  # on POST /api/datasets always wins).  Disabled = inherit the global 1.0/1.0.
+  rrfDefault:
+    enabled: false
+    dense: 1.0
+    sparse: 1.0
+    k: 2
+  # Unlock TTL bound (RAG_UNLOCK_MAX_TTL): caps explicit unlock TTLs at
+  # 60..N s (default 86400 = the 24h cap).  0 = NO-EXPIRY unlocks (the
+  # /access page's "No expiry (0)" option becomes meaningful).
+  unlockMaxTtl: 86400
+
 mcp:
   enabled: true
   port: 9090
-  # OPTIONAL API-key auth for the MCP endpoints (fleet decision 2026-09,
-  # fleet pattern: K8S-MCP). When existingSecret is set, the chart wires
-  # RAG_API_KEYS from that Secret's key and every /mcp request needs a valid
-  # key (X-API-Key or Bearer). Leave empty for gateway-fronted deployments —
-  # the server then runs open (with a loud startup warning). Comma-separated
-  # keys all authenticate: that is the rotation mechanism — append the new
-  # key, move clients over, drop the old one, no downtime. The fleet-universal
-  # MCP_API_KEYS env is honored too (either var authenticates).
+  # OPTIONAL MCP API-key auth (fleet decision, K8S-MCP pattern): with
+  # existingSecret set, RAG_API_KEYS wires from that Secret's key and every
+  # /mcp request needs a valid key (X-API-Key or Bearer).  Empty = the MCP
+  # side runs open with a loud startup warning (the REST side stays
+  # fail-closed).  Comma-separated keys ALL authenticate — rotation: append
+  # the new key, move clients, drop the old (no downtime).  The fleet-
+  # universal MCP_API_KEYS env is honored too (either var authenticates).
   apiKey:
     existingSecret: ""
     existingSecretKey: api-keys
-  # D15 (OPT-IN) multi-user API keys → dataset ACLs. Leave BOTH empty for the
-  # default single-key behaviour (nothing rendered, nothing enforced — the
-  # default chart render stays byte-identical). Enabling changes the auth
-  # model:
-  #   apiKeyClients: "alice:s3cr3t-a;bob:s3cr3t-b"   (name:key pairs,
-  #     ';'-separated; keys must not contain ':' or ';') — mints per-user keys
-  #     accepted by the REST and MCP surfaces alongside the deployment keys.
-  #   datasetAcls: "alice:reports,notes;bob:*"       (name:dataset[,dataset…];
-  #     '*' = all datasets) — binds each name to its datasets. A registry key
-  #     with NO matching ACL entry gets NO datasets (fail-closed). The plain
-  #     deployment keys (security.apiKey / the MCP key set) keep FULL (admin)
-  #     access. ACL'd keys cannot reach /api/admin/* nor create datasets
-  #     (unless granted '*').
-  # These values are KEY MATERIAL: pass them from a Secret pipeline
-  # (--set-string), never commit real keys into a values file.
+  # (OPT-IN) per-user API keys → dataset ACLs; BOTH empty = single-key
+  # behaviour, nothing rendered (default render byte-identical).
+  # apiKeyClients: "alice:s3cr3t-a;bob:s3cr3t-b"  (name:key pairs ';'-joined;
+  # no ':'/';' inside keys) — per-user keys on REST + MCP.
+  # datasetAcls: "alice:reports,notes;bob:*"  (name:datasets; '*' = all).
+  # NO matching ACL entry = NO datasets (fail-closed); ACL'd keys cannot
+  # reach /api/admin/* nor create datasets unless granted '*'; the plain
+  # deployment keys keep FULL (admin) access.
+  # read-only grants: "name:ds1:ro,ds2:rw" — bare token = rw (default); ":ro" read-only; "*:ro" read-only-all. Env syntax only — the Admin UI sends {name, mode} objects.
+  # KEY MATERIAL: pass from a Secret pipeline (--set-string), never commit.
   apiKeyClients: ""
   datasetAcls: ""
-service:
-  api:
-    type: ClusterIP
-    port: 80
-  mcp:
-    type: ClusterIP
-resources:
-  app:
-    requests:
-      memory: 2Gi
-      cpu: 2
-    limits:
-      memory: 8Gi
-      cpu: 4
-  qdrant:
-    requests:
-      memory: 16Gi
-      cpu: '4'
-    limits:
-      memory: 32Gi
-      cpu: '8'
+
+# Extra env vars for BOTH containers — pass-through for the env-only knobs:
+# MEMORY_DATASET ( anonymous grant), RAG_MEMORY_PASSWORD, RAG_WEBHOOK_*,
+# INGEST_ALLOW_S3_BUCKETS, HTTPS_PROXY/NO_PROXY (hosted-trial egress), etc.
 extraEnv: {}
+# extraEnv:
+# MEMORY_DATASET: "team-memory"
+# extraEnv:
+# MEMORY_DATASET: "team-memory"
+
+# ============================================================================
+# Security
+# ============================================================================
+
 security:
-  # REST API-key (RAG_API_KEY) + media-token HMAC secret (MEDIA_TOKEN_SECRET,
-  # 64 hex): the chart ships NO key material (P0-7, 2026-09 — the previously
-  # committed default literals were removed from the delivery path; the values
-  # themselves are private and were NOT rotated). Sourcing precedence —
-  #   1. security.existingSecret: a Secret you own provides both keys
-  #      (existingSecretApiKey / existingSecretMediaTokenKey names below)
-  #   2. inline value here (kept for back-compat with existing values files)
-  #   3. the value already stored in the release Secret — reused on upgrade,
-  #      so upgrading never rotates a secret under a running deployment
-  #   4. fresh auto-generation on first install
-  # Retrieve an auto-generated key: kubectl -n <ns> get secret \
-  #   <deployment.name>-model-keys -o jsonpath='{.data.RAG_API_KEY}' | base64 -d
-  # Rotation is OPTIONAL and operator-initiated — read helm/ROTATION.md first.
+  # REST API key + media-token HMAC secret — sourcing order:
+  # existingSecret > inline > stored release value > auto-generated first
+  # install (retrieve: kubectl -n <ns> get secret <deployment.name>-model-keys
+  # -o jsonpath='{.data.RAG_API_KEY}' | base64 -d).  Rotation: helm/ROTATION.md.
   apiKey: ''
   mediaTokenSecret: ''
-  # Optional Secret (you manage it) providing both keys; when set the chart
-  # renders neither key into its own Secret.
+  # Optional Secret you manage providing both keys (chart then renders neither).
   existingSecret: ''
   existingSecretApiKey: RAG_API_KEY
   existingSecretMediaTokenKey: MEDIA_TOKEN_SECRET
@@ -154,32 +217,154 @@ security:
   pwMaxFailures: 10
   pwFailWindow: 300
   trustProxyIdentity: true
-  # Gate the /metrics exposition behind an API key (env RAG_METRICS_AUTH).
-  # false (default) = public in-cluster exposition, unchanged behaviour.
-  # true = every scrape must present X-RAG-Api-Key / X-API-Key / a Bearer key
-  # (RAG_API_KEY plus the MCP key set MCP_API_KEYS / RAG_API_KEYS are all
-  # accepted); the ServiceMonitor then needs metrics.serviceMonitorBearerSecret.
+  # self-service dataset selection (env RAG_ACCESS_STORE; chart default
+  # true, ratified -24): registry-key users manage their own dataset
+  # set on /access (passwords saved per identity under /data/access — the
+  # shared PVC).  Effective access = operator ACL ∪ selections; useful only
+  # with mcp.apiKeyClients.  false = operator-managed ACLs only (RAG_DATASET_ACLS).
+  accessStore: true
+  # ceiling: comma-separated datasets that can never be self-selected
+  # (env RAG_ACCESS_DENY_SELECT).  Read per request — no restart.
+  accessDenySelect: ''
+  # SSO self-mint (env RAG_ACCESS_SELF_MINT, read per request).  Chart
+  # default true — the same default-on, explicit-opt-out posture as
+  # accessStore: an SSO-authenticated identity (verified  Bearer JWT, a
+  # SSO cookie, or a  trusted-proxy header) mints/rotates a long-lived key
+  # for ITS OWN registry identity from the Access page, no admin round-trip.
+  # Guarantees: the key carries EXACTLY the identity's existing access (never
+  # creates or widens grants); an API-key caller can never mint (the
+  # invariant); env-authoritative and blocked names are refused; shown exactly
+  # once.  Inert by construction without an SSO identity source
+  # (security.oidc.enabled, or trustProxyIdentity on G2) or with the access
+  # store off.  false = the pre- inert behaviour (mint 409s, flag false).
+  accessSelfMint: true
+  # Fallback memory dataset (env RAG_MEMORY_DEFAULT) for callers with no
+  # personal ★ binding; empty = unset (MEMORY_DATASET remains the fallback).
+  memoryDefault: ''
+  # Gate /metrics behind an API key (env RAG_METRICS_AUTH).  true = every
+  # scrape presents X-RAG-Api-Key / X-API-Key / Bearer (RAG_API_KEY + the MCP
+  # key set all accepted); pair with metrics.serviceMonitorBearerSecret.
+  # false (default) = public in-cluster exposition, unchanged.
   metricsAuth: false
-redis:
-  enabled: false
-  password: ''
+  # OIDC JWT as a SECOND credential for the same per-user registry
+  # identity (env RAG_OIDC_*).  false (default) = disabled, byte-identical
+  # render.  true = a verified Bearer JWT (RS256 against the realm JWKS;
+  # iss / aud-as-azp / exp validated) resolves to the SAME identity as the
+  # user's minted API key (join = identityClaim, default preferred_username,
+  # fallback sub; an overlay entry may pin "oidc": "<alias>").  API keys stay
+  # sufficient alone and valid indefinitely; JWT-only sign-in WORKS (fail-
+  # closed zero-dataset identity → self-select via the  access store).
+  # JWT identities are NEVER admin (realm groups are UA roles, not RAG
+  # grants); ACL grants apply to key and JWT alike; rotations are independent;
+  # a "blocked": true overlay entry kills the JWT path (401);  precedence
+  # unchanged (an explicit X-API-Key outranks a co-forwarded Bearer).  Issuer
+  # REQUIRED when enabled (loud startup warning without it) — recommend
+  # https://keycloak.<your-domain>/realms/UA.  Audience = the token's azp
+  # claim ("ua" on PCAI G2).
+  oidc:
+    enabled: false
+    issuer: ''
+    audience: ua
+    # Claim carrying the registry identity name (fallback: `sub`).
+    identityClaim: preferred_username
+    # Optional explicit JWKS URL; empty = <issuer>/protocol/openid-connect/certs
+    # (the Keycloak/UA-realm location; no OIDC discovery in v1).
+    jwksUrl: ''
+    jwksRefreshSeconds: 3600
+    observedTtl: 86400
+    fetchTimeoutSeconds: 3
+    clockSkewSeconds: 60
+    # browser SSO (the Open WebUI pattern): the app is an OIDC CLIENT —
+    # /oauth/login → realm → /oauth/oidc/callback plants an HttpOnly session
+    # cookie (invisible to page JS); sessions resolve through the SAME
+    # registry identity.  Requires oidc.enabled + the client secret + the
+    # callback URL registered via scripts/configure-oidc-rag.sh.  clientSecret
+    # is KEY MATERIAL — prefer clientExistingSecret.
+    sso:
+      enabled: false
+      clientId: ua
+      clientSecret: ''
+      # Secret carrying the client secret (key clientSecretKey) — preferred.
+      clientExistingSecret: ''
+      clientExistingSecretKey: clientSecret
+      # Callback URL registered in the client: https://<endpoint>/oauth/oidc/callback
+      redirectUri: ''
+      # In-cluster discovery URL (plain HTTP; the external issuer stays CLAIM-COMPARED only).
+      providerUrl: ''
+      scopes: 'openid profile email'
+      cookieName: pcai-sso
+      cookieMaxAgeSeconds: 43200
+      cookieSecure: true
+  # identity gate on the served HTML pages (env RAG_SSO_GATE, read per
+  # request — flip without a restart).  true = /, /manage and /access require
+  # an authenticated identity (SSO cookie / Bearer JWT / API key); anonymous
+  # visitors get the minimal 401 "Sign in required" page (an /oauth/login link
+  # when SSO is enabled).  Probes/health, /oauth/* and media bytes stay exempt.
+  # Meaningful ONLY with oidc.enabled or API keys — an empty deployment gates
+  # to nothing.  false (default) = byte-identical public pages.
+  ssoGate: false
+
 metrics:
   serviceMonitor: false
   interval: 30s
-  # When security.metricsAuth is on, name a Secret whose <key> holds a valid
-  # API key; the ServiceMonitor presents it as the scrape bearer token
-  # (prometheus-operator: endpoints[].bearerTokenSecret).  Empty = no token
-  # on the scrape (only valid while metricsAuth stays off).
+  # With metricsAuth on: a Secret whose <key> holds a valid API key, presented
+  # as the scrape bearer (prometheus-operator bearerTokenSecret).  Empty = no
+  # token (only valid while metricsAuth is off).
   serviceMonitorBearerSecret: ''
   serviceMonitorBearerSecretKey: RAG_API_KEY
+
+# ============================================================================
+# S3 Related
+# ============================================================================
+
+s3:
+  endpointUrl: http://minio.minio.svc.cluster.local:9000
+  accessKeyId: ''
+  secretAccessKey: ''
+
 backups:
   enabled: false
   schedule: 0 3 * * *
   bucket: ''
   retentionDays: 0
+# Watched S3 sources (opt-in reconciler CronJob): each tick POSTs every
+# source's prefixes to POST /api/datasets/{name}/batch-urls with sync=true
+# (new/changed ingest, deleted prune, unchanged skip via the per-dataset
+# ETag/Size state).  Disabled by default — renders nothing.  Render-time
+# validation: prefixes must be s3:// DIRECTORY URLs (single-object and http(s)
+# rejected); every source needs a dataset + >=1 prefix; `type:` reserved
+# (unknown types rejected in v1).
+watchedSources:
+  enabled: false
+  schedule: '*/30 * * * *'
+  sources: []
+  # sources:
+  # - dataset: reports
+  # prefixes:
+  # - s3://mm-rag-drop/reports/
+
+# ============================================================================
+# PCAI Networking
+# ============================================================================
+
+service:
+  api:
+    type: ClusterIP
+    port: 80
+  mcp:
+    type: ClusterIP
+
+  # sources:
+  # - dataset: reports
+  # prefixes:
+  # - s3://mm-rag-drop/reports/
 ezua:
   enabled: true
   virtualService:
+    # false unrenders the VS (no browser path) while ezua.enabled keeps
+    # driving every other gate (kyverno, deployment).  (Template note: gate
+    # DIRECTLY on this key — Sprig default() treats explicit false as empty.)
+    enabled: true
     endpoint: rag-mcp-server.${DOMAIN_NAME}
     istioGateway: istio-system/ezaf-gateway
     timeout: 300s
@@ -188,3 +373,26 @@ ezua:
     enabled: true
     namespace: istio-system
     providerName: oauth2-proxy
+
+# Ingress allowlist (kubernetes.io/metadata.name ns selectors): once enabled,
+# anything unmatched is DENIED (egress unrestricted).  Covers the API (8000)
+# and MCP (mcp.port) ports.
+networkPolicy:
+  enabled: false
+  sameNamespace: true
+  # Client namespaces allowed to call IN-CLUSTER: the LLM-gateway relay ns
+  # first, then agentic frontends (hardened-G2 example).  Add the Prometheus
+  # scrape ns — an unlisted ServiceMonitor ns dies SILENTLY (check targets).
+  authorizedClients:
+    namespaces: []
+  # The ezaf-gateway (browser) path stays ON so the VS routes keep working.
+  allowEzafGatewayIngress: true
+  ingressGatewayNamespace: istio-system
+  # LIVE-VERIFIED (G2): edge pods carry app=istio-ingressgateway (ezaf-gateway
+  # is the Gateway CR name, not a pod label) — do not "fix" this back.
+  ingressGatewayLabels:
+    app: istio-ingressgateway
+  # Node-originated kubelet probes / port-forward.  NEVER 0.0.0.0/0 with an
+  # empty probeExceptCidrs (the render fails).
+  probeCidrs: []
+  probeExceptCidrs: []

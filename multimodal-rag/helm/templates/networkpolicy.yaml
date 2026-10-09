@@ -1,0 +1,112 @@
+{{- if .Values.networkPolicy.enabled }}
+# NetworkPolicy — the MCP network zone. ADDITIVE and OFF by default
+# (networkPolicy.enabled, default false): the DEFAULT render is byte-identical
+# to the baseline. Once enabled, this policy DEFAULT-DENIES all ingress to the
+# app pod and admits ONLY the listed sources — a real posture, not a no-op.
+#
+# SCOPE (fleet contract, pcai-fleet-lib docs): this policy governs INGRESS —
+# who may call this service. Egress is intentionally NOT restricted: the API
+# reaches AAD/OneLake/S3 and pulls embedding models by DNS name; a wrong
+# egress baseline would break ingest silently.
+#
+# SELECTOR: matches the rag-mcp-server API/MCP pod only (app:
+# {{ .Values.deployment.appName }}). The co-deployed Qdrant StatefulSet
+# carries a different label (app: {{ .Values.deployment.name }}-qdrant) and is
+# deliberately NOT selected — it stays reachable from the API pod regardless
+# of this policy.
+#
+# USER-FACING CHART (rag-mcp-server): the ezaf-gateway rule is ENABLED by
+# default (allowEzafGatewayIngress: true) — the VirtualService routes browser
+# traffic (/, /mcp, batch-upload) and must keep working unchanged.
+#
+# PORTS: the Service listens on 80 (API) / mcp.port (MCP) but the CONTAINER
+# listens on 8000 / mcp.port — NetworkPolicy matches POD ports, so the rules
+# below carry the container ports (8000 named `http`, and mcp.port named
+# `mcp`), exactly what the containers declare. Prometheus scrapes the
+# ServiceMonitor from `monitoring` on the API path — an unlisted scrape ns
+# dies SILENTLY (check Prometheus targets after enabling).
+#
+# Kubelet probes / kubectl port-forward originate at the NODE: no
+# pod/namespace selector can match them, so the probe relief is an ipBlock
+# allowance (probeCidrs) with the pod CIDR carved back out
+# (probeExceptCidrs) so cross-namespace pod traffic stays governed by the
+# rules above. NEVER 0.0.0.0/0 with an empty probeExceptCidrs — harden that
+# in your values before enabling (hollow posture).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Values.deployment.name }}-netpol
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.deployment.appName }}
+    "hpe-ezua/type": vendor-service
+    "hpe-ezua/app": {{ .Chart.Name }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ .Values.deployment.appName }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # (i) Same-namespace callers (registry scraping / co-deployed ops tooling).
+    {{- if .Values.networkPolicy.sameNamespace }}
+    - from:
+        - podSelector: {}
+      ports:
+        - port: http
+          protocol: TCP
+        - port: mcp
+          protocol: TCP
+    {{- end }}
+    # (ii) The MCP network zone: authorized client namespaces — the callers
+    #      listed in networkPolicy.authorizedClients.namespaces (the LLM
+    #      gateway's relay namespace, agentic frontends' namespaces, ...).
+    #      ⚠️ L3 trust: an allowed namespace admits ANY pod in it (workload
+    #      identity requires mesh injection + a workload AuthorizationPolicy —
+    #      see pcai-fleet-lib's documented L7 upgrade path).
+    {{- with .Values.networkPolicy.authorizedClients.namespaces }}
+    - from:
+        {{- range . }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . | quote }}
+        {{- end }}
+      ports:
+        - port: http
+          protocol: TCP
+        - port: mcp
+          protocol: TCP
+    {{- end }}
+    # (iii) ezaf-gateway pods — the ezua VirtualService path (browser traffic).
+    #       LIVE-VERIFIED (G2 inventory §3): the edge pods carry
+    #       app=istio-ingressgateway (ezaf-gateway is the Gateway CR NAME).
+    {{- if .Values.networkPolicy.allowEzafGatewayIngress }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressGatewayNamespace }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.ingressGatewayLabels | nindent 14 }}
+      ports:
+        - port: http
+          protocol: TCP
+        - port: mcp
+          protocol: TCP
+    {{- end }}
+    # (iv) Node-originated kubelet health probes + `kubectl port-forward`.
+    {{- range .Values.networkPolicy.probeCidrs }}
+    - from:
+        - ipBlock:
+            cidr: {{ . | quote }}
+            {{- with $.Values.networkPolicy.probeExceptCidrs }}
+            except:
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
+      ports:
+        - port: http
+          protocol: TCP
+        - port: mcp
+          protocol: TCP
+    {{- end }}
+{{- end }}

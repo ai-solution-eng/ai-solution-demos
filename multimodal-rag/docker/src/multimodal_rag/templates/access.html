@@ -1,0 +1,1589 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" type="image/png" href="/favicon.png">
+<title>Multimodal RAG — Access</title>
+<script>
+  // D23 bookmark compatibility: /access is now the SPA's Access TAB.
+  // The SPA shell lives at / (index.html) with tabs #datasets/#access/
+  // #admin/#stats — anyone landing on the legacy /access URL is sent
+  // straight to /#access before anything renders. The server may still
+  // serve this file (older deployments); the redirect is unconditional.
+  // (The /manage URL is NOT redirected: it keeps its meaning as the
+  // operator manage view inside the SPA shell — see the D23 report.)
+  location.replace('/#access');
+</script>
+<script>
+  (function() {
+    var t = localStorage.getItem('theme') || 'light';
+    if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+  })();
+</script>
+<style>
+  :root, [data-theme="light"] {
+    --bg: #f4f6f9;
+    --surface: #ffffff;
+    --surface-2: #eef0f5;
+    --border: #d1d5db;
+    --text: #1f2937;
+    --text-muted: #6b7280;
+    --accent: #01a982;
+    --accent-hover: #02c99a;
+    --green: #059669;
+    --red: #dc2626;
+    --yellow: #d97706;
+    --radius: 6px;
+  }
+  [data-theme="dark"] {
+    --bg: #0b0e14;
+    --surface: #161a24;
+    --surface-2: #1e2432;
+    --border: #2a3142;
+    --text: #e0e4ed;
+    --text-muted: #8891a8;
+    --accent: #01a982;
+    --accent-hover: #02c99a;
+    --green: #34d399;
+    --red: #f87171;
+    --yellow: #fbbf24;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    padding: 24px;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  .hpe-header {
+    display: flex; align-items: center; margin-bottom: 28px; padding-bottom: 20px; border-bottom: 1px solid var(--border);
+  }
+  .hpe-header-left {
+    display: flex; align-items: center; gap: 20px;
+  }
+  .hpe-brand {
+    display: flex; flex-direction: column;
+  }
+  .hpe-brand-name {
+    font-size: 0.7rem; font-weight: 500; color: var(--text-muted); text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1px;
+  }
+  .hpe-brand-title {
+    font-size: 1.3rem; font-weight: 600; color: var(--text);
+  }
+  .hpe-brand-sub {
+    font-size: 0.8rem; color: var(--text-muted); margin-top: 2px;
+  }
+  .header-links {
+    margin-left: auto; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: flex-end;
+  }
+  .nav-link { color: var(--text-muted); font-size: .85rem; text-decoration: none; }
+  .nav-link:hover { color: var(--accent); }
+  .nav-link.current { color: var(--accent); font-weight: 600; }
+
+  h2 { font-size: 1.1rem; font-weight: 500; margin-bottom: 12px; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+  .card-header {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+
+  label { display: block; font-size: 0.85rem; font-weight: 500; margin-bottom: 6px; color: var(--text-muted); }
+  input, select {
+    width: 100%; padding: 10px 12px; border-radius: 4px;
+    border: 1px solid var(--border); background: var(--surface-2);
+    color: var(--text); font-size: 0.9rem; font-family: inherit;
+  }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
+  .check-row {
+    display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+    font-weight: 400; font-size: .85rem; margin-bottom: 0;
+  }
+  .check-row input[type="checkbox"] { width: auto; cursor: pointer; }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 18px; border-radius: 4px; border: none;
+    font-size: 0.85rem; font-weight: 500; cursor: pointer; transition: all .15s;
+  }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  .btn-outline:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-sm { padding: 5px 12px; font-size: .8rem; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+  .form-group { margin-bottom: 14px; }
+  .inline-code {
+    background: var(--surface-2); padding: 2px 6px; border-radius: 4px;
+    font-family: 'SF Mono', 'Fira Code', monospace; font-size: .8rem;
+  }
+  .muted { color: var(--text-muted); font-size: .8rem; }
+  .badge-admin {
+    display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 10px;
+    background: rgba(1, 169, 130, .12); color: var(--accent); font-size: .7rem;
+    font-weight: 600; text-transform: uppercase; letter-spacing: 1px; vertical-align: middle;
+  }
+  .client-item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 14px; border: 1px solid var(--border); border-radius: 4px;
+    margin-bottom: 8px; gap: 10px; flex-wrap: wrap;
+  }
+  .client-item:hover { background: var(--surface-2); }
+  .client-name { font-weight: 500; }
+  .client-meta { font-size: .78rem; color: var(--text-muted); }
+  .client-datasets { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+  .ds-chip {
+    display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: .72rem;
+    border: 1px solid var(--border); color: var(--text-muted);
+  }
+  .ds-chip.wild { border-color: var(--accent); color: var(--accent); }
+  .grant-form { display: none; width: 100%; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
+  .grant-form.open { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+  .grant-form > div { flex: 1; min-width: 200px; }
+  /* D26 ro/rw grants: searchable checkbox dropdown inside the grant form */
+  .grant-picker { width: 100%; }
+  .grant-picker .gp-search { padding: 6px 10px; font-size: .8rem; }
+  .gp-list {
+    max-height: 220px; overflow-y: auto; margin-top: 6px;
+    border: 1px solid var(--border); border-radius: 4px; background: var(--surface);
+  }
+  .gp-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px; border-bottom: 1px solid var(--border); font-size: .85rem;
+  }
+  .gp-row:last-child { border-bottom: none; }
+  .gp-row.gp-head { background: var(--surface-2); font-weight: 500; }
+  .gp-row input[type="checkbox"] { width: auto; margin: 0; }
+  .gp-row .gp-name { margin-bottom: 0; flex: 1; word-break: break-all; cursor: pointer; font-weight: inherit; color: var(--text); font-size: inherit; }
+  .gp-badge { font-size: .75rem; flex-shrink: 0; }
+  .gp-empty { padding: 14px 10px; color: var(--text-muted); font-size: .85rem; }
+  .gp-hint { margin-top: 4px; font-size: .72rem; color: var(--text-muted); }
+  .gp-toggle { display: inline-flex; gap: 2px; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; flex-shrink: 0; }
+  .gp-toggle button {
+    border: none; background: transparent; color: var(--text-muted);
+    font-family: inherit; font-size: .72rem; line-height: 1.4; padding: 2px 8px; cursor: pointer;
+  }
+  .gp-toggle button.on { background: var(--accent); color: #fff; }
+  .gp-toggle button:not(.on):hover { color: var(--text); }
+  .ds-chip.ro { opacity: .65; border-style: dashed; }
+  .src-tag { font-size: .7rem; padding: 1px 6px; border-radius: 8px; border: 1px solid var(--border); color: var(--text-muted); }
+  .key-reveal {
+    font-family: 'SF Mono', 'Fira Code', monospace; background: var(--surface-2);
+    padding: 8px 12px; border-radius: 4px; word-break: break-all; margin-top: 8px;
+    border: 1px solid var(--yellow); font-size: .85rem;
+  }
+  .error-text {
+    display: none; color: var(--red); font-size: .85rem;
+    margin-top: 12px; padding: 8px 12px;
+    border: 1px solid var(--red); border-radius: 4px;
+    background: rgba(220, 38, 38, .06);
+  }
+  .error-text.show { display: block; }
+
+  .dataset-item {
+    display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px 8px;
+    padding: 12px 16px; border: 1px solid var(--border); border-radius: 4px;
+    margin-bottom: 8px; transition: background .15s;
+  }
+  .dataset-item:hover { background: var(--surface-2); }
+  .dataset-item.unlock-open { border-color: var(--accent); }
+  .dataset-info { flex: 1; min-width: 200px; }
+  .dataset-name { font-weight: 500; word-break: break-all; }
+  .dataset-meta { font-size: .8rem; color: var(--text-muted); }
+  .dataset-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+
+  .star {
+    background: none; border: none; cursor: pointer; padding: 4px 6px;
+    font-size: 1.1rem; line-height: 1; color: var(--text-muted);
+    transition: transform .15s;
+  }
+  .star.starred { color: var(--yellow); }
+  .star:hover { transform: scale(1.15); }
+
+  .unlock-form {
+    display: none; flex-basis: 100%;
+    margin-top: 10px; padding-top: 12px; border-top: 1px dashed var(--border);
+    gap: 10px; align-items: flex-end; flex-wrap: wrap;
+  }
+  .unlock-form.open { display: flex; }
+  .unlock-form label { margin-bottom: 4px; }
+  .unlock-form .unlock-pw { flex: 1 1 220px; }
+  .unlock-form .unlock-pw input { width: 100%; }
+  .unlock-form .unlock-ttl { flex: 0 0 170px; }
+  .unlock-form .unlock-ttl select { width: 100%; }
+  .unlock-form .btn { flex: 0 0 auto; }
+  .row-error { flex-basis: 100%; color: var(--red); font-size: .8rem; display: none; }
+  .row-error.show { display: block; }
+
+  .toast {
+    position: fixed; bottom: 24px; right: 24px; padding: 12px 20px;
+    border-radius: var(--radius); background: var(--surface); border: 1px solid var(--border);
+    box-shadow: 0 8px 24px rgba(0,0,0,.4); font-size: .9rem;
+    opacity: 0; transform: translateY(12px); transition: all .3s; z-index: 1000;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.success { border-color: var(--accent); }
+  .toast.error { border-color: var(--red); }
+
+  .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .6s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .empty-state { text-align: center; padding: 40px 20px; color: var(--text-muted); }
+
+  .theme-toggle {
+    display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;
+    font-size: .75rem; color: var(--text-muted);
+  }
+  .theme-toggle-track {
+    position: relative; width: 36px; height: 20px; border-radius: 10px;
+    background: var(--border); transition: background .2s; flex-shrink: 0;
+  }
+  .theme-toggle-thumb {
+    position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+    border-radius: 50%; background: var(--accent); transition: transform .2s;
+    box-shadow: 0 1px 3px rgba(0,0,0,.25);
+  }
+  [data-theme="dark"] .theme-toggle-track { background: var(--accent); }
+  [data-theme="dark"] .theme-toggle-thumb { transform: translateX(16px); background: #fff; }
+</style>
+</head>
+<body>
+
+<div class="hpe-header">
+  <div class="hpe-header-left">
+    <svg xmlns="http://www.w3.org/2000/svg" width="240" height="160" viewBox="0 0 432 288" style="flex-shrink:0">
+      <path fill="#01a982" d="M126.617,109.327v15.861h55.218v-15.861H126.617z M178.384,121.737h-48.316v-8.959h48.316V121.737z"/>
+      <path fill="var(--text)" d="M136.668,158.173v1.93h-7.843v4.849h7.132v1.878h-7.132v5.279h7.843v1.929h-10.051v-15.864H136.668z
+        M142.123,174.037h-2.157v-11.676h2.03v2.184c0.837-1.473,2.183-2.438,3.909-2.438c2.716,0,4.315,1.776,4.315,4.442v7.487h-2.158
+        V166.6c0-1.547-0.812-2.462-2.614-2.462c-1.548,0-2.868,1.041-3.325,2.438V174.037z M159.051,174.291c-2.919,0-4.086-1.271-4.086-3.579
+        v-6.446h-2.462v-1.904h2.462v-3.02h2.157v3.02h3.325v1.904h-3.325v6.244c0,1.396,0.787,1.775,2.133,1.775c0.354,0,0.71-0.049,1.015-0.152
+        h0.177v1.904C160.117,174.163,159.659,174.291,159.051,174.291z M168.541,174.291c-3.883,0-6.345-2.284-6.345-5.965
+        c0-3.655,2.285-6.219,5.635-6.219c3.451,0,5.203,2.312,5.203,5.737v1.143h-8.604c0.305,2.282,1.929,3.35,4.137,3.35
+        c1.371,0,2.412-0.229,3.427-0.964h0.228v1.853C171.182,174.012,169.836,174.291,168.541,174.291z M164.456,167.285h6.472
+        c-0.077-2.131-1.193-3.273-3.071-3.273S164.735,165.383,164.456,167.285z M182.474,164.569c-0.305-0.15-0.762-0.254-1.243-0.254
+        c-1.372,0-2.463,0.967-2.919,2.538v7.184h-2.157v-11.676h2.03v2.514c0.686-1.904,1.929-2.691,3.325-2.691
+        c0.507,0,0.964,0.077,1.142,0.178v2.208H182.474z M186.965,172.133v6.193h-2.157v-15.965h2.03v2.006
+        c0.686-1.194,2.03-2.26,3.832-2.26c3.528,0,5.381,2.792,5.381,5.965c0,3.249-1.854,6.091-5.381,6.091
+        C188.996,174.163,187.676,173.25,186.965,172.133z M193.843,168.072c0-2.36-1.319-3.935-3.68-3.935c-1.395,0-2.512,0.737-3.197,2.006
+        v4.011c0.686,1.243,1.802,2.005,3.197,2.005C192.523,172.159,193.843,170.534,193.843,168.072z M205.619,164.569
+        c-0.305-0.15-0.762-0.254-1.244-0.254c-1.371,0-2.462,0.967-2.918,2.538v7.184h-2.157v-11.676h2.03v2.514
+        c0.685,1.904,1.929,2.691,3.324,2.691c0.508,0,0.965,0.077,1.143,0.178v2.208H205.619z M209.297,161.194
+        c-0.813,0-1.548-0.686-1.548-1.523c0-0.837,0.735-1.498,1.548-1.498c0.837,0,1.548,0.661,1.548,1.498
+        C210.845,160.509,210.135,161.194,209.297,161.194z M210.363,174.037h-2.157v-11.676h2.157V174.037z M213.865,171.27h0.204
+        c0.964,0.787,2.386,1.193,3.73,1.193c1.269,0,2.386-0.481,2.386-1.521c0-1.041-0.939-1.271-2.791-1.878
+        c-1.65-0.56-3.504-1.144-3.504-3.352c0-2.31,1.878-3.604,4.291-3.604c1.37,0,2.589,0.279,3.603,0.965v1.98h-0.228
+        c-0.914-0.686-2.005-1.117-3.351-1.117c-1.37,0-2.132,0.609-2.132,1.473c0,0.964,0.812,1.219,2.716,1.801
+        c1.699,0.56,3.579,1.219,3.579,3.427c0,2.412-1.981,3.655-4.543,3.655c-1.549,0-3.097-0.38-3.96-1.065V171.27z
+        M231.147,174.291c-3.883,0-6.345-2.284-6.345-5.965c0-3.655,2.284-6.219,5.635-6.219c3.453,0,5.204,2.312,5.204,5.737v1.143h-8.605
+        c0.305,2.282,1.929,3.35,4.139,3.35c1.369,0,2.41-0.229,3.426-0.964h0.228v1.853C233.787,174.012,232.442,174.291,231.147,174.291z
+        M227.062,167.285h6.473c-0.076-2.131-1.193-3.273-3.071-3.273C228.585,164.012,227.341,165.383,227.062,167.285z M139.942,135.543
+        v15.863h-3.452v-6.574h-6.421v6.574h-3.451v-15.863h3.451v6.269h6.421v-6.269H139.942z M149.306,151.686c-4.366,0-6.701-2.361-6.701-6.168
+        c0-3.807,2.436-6.32,5.964-6.32c3.807,0,5.711,2.386,5.711,5.965v1.344h-8.122c0.253,1.956,1.802,2.462,3.324,2.462
+        c1.372,0,2.437-0.177,3.555-0.784h0.38v2.486C152.402,151.406,150.778,151.686,149.306,151.686z M146.133,144.325h4.747
+        c-0.102-1.777-0.863-2.564-2.259-2.564C147.428,141.761,146.361,142.32,146.133,144.325z M158.339,151.406l-2.488-11.522v-0.406h3.198
+        l1.346,7.259l0.33,2.334l0.457-2.334l1.624-7.259h3.63l1.6,7.259l0.482,2.334l0.381-2.334l1.345-7.259h3.046v0.406l-2.513,11.522h-4.417
+        l-1.421-6.37l-0.406-2.386l-0.406,2.386l-1.396,6.37H158.339z M179.378,151.686c-2.538,0-3.807-1.167-3.807-3.884v-12.258h3.452v12.03
+        c0,0.838,0.355,1.117,1.167,1.117c0.254,0,0.661-0.076,0.914-0.151h0.051v2.867C180.774,151.534,180.038,151.686,179.378,151.686z
+        M188.87,151.686c-4.366,0-6.701-2.361-6.701-6.168c0-3.807,2.437-6.32,5.965-6.32c3.808,0,5.71,2.386,5.71,5.965v1.344h-8.122
+        c0.254,1.956,1.802,2.462,3.325,2.462c1.37,0,2.437-0.177,3.553-0.784h0.381v2.486C191.965,151.406,190.341,151.686,188.87,151.686z
+        M185.696,144.325h4.746c-0.101-1.777-0.862-2.564-2.258-2.564C186.991,141.761,185.925,142.32,185.696,144.325z M205.542,147.066
+        v-4.747h-5.051v4.594c0,1.219,0.406,1.776,1.549,1.776c0.33,0,0.761-0.102,0.989-0.202h0.331v2.842
+        c-0.458,0.152-1.143,0.355-2.158,0.355c-2.918,0-4.162-1.396-4.162-4.619v-4.747h-2.056v-2.842h2.056v-2.894h3.452v2.894h5.051
+        v-2.894h3.452v2.894h2.868v2.842h-2.868v4.594c0,1.219,0.406,1.776,1.548,1.776c0.33,0,0.762-0.102,0.99-0.202h0.33v2.842
+        c-0.457,0.152-1.142,0.355-2.157,0.355C206.787,151.686,205.542,150.289,205.542,147.066z M222.011,146.507v4.899h-3.425v-15.863h6.167
+        c3.503,0,5.812,1.929,5.812,5.507c0,3.527-2.31,5.456-5.812,5.456H222.011z M224.475,138.462h-2.464v5.127h2.464
+        c1.749,0,2.588-1.041,2.588-2.538C227.062,139.502,226.224,138.462,224.475,138.462z M239.345,149.63
+        c-0.71,1.32-2.005,1.904-3.604,1.904c-2.208,0-4.036-1.271-4.036-3.631c0-2.359,1.599-3.73,4.62-3.73c0.989,0,1.979,0.101,2.919,0.279
+        v-0.686c0-1.269-0.889-1.827-2.666-1.827c-1.32,0-2.411,0.279-3.324,0.735h-0.382v-2.589c0.915-0.481,2.539-0.888,4.112-0.888
+        c3.732,0,5.661,1.701,5.661,4.645v7.563h-3.301V149.63z M239.244,147.676v-1.523c-0.585-0.177-1.345-0.228-1.956-0.228
+        c-1.395,0-2.106,0.533-2.106,1.623c0,1.091,0.712,1.522,1.751,1.522C237.976,149.07,238.913,148.564,239.244,147.676z
+        M245.18,145.468c0-3.858,2.716-6.27,6.246-6.27c1.445,0,2.562,0.331,3.323,0.838v2.995h-0.355c-0.735-0.558-1.547-0.812-2.588-0.812
+        c-1.702,0-3.071,1.192-3.071,3.249c0,2.03,1.369,3.197,3.071,3.197c1.041,0,1.853-0.254,2.588-0.812h0.355v2.995
+        c-0.761,0.506-1.878,0.837-3.323,0.837C247.896,151.686,245.18,149.3,245.18,145.468z M260.864,145.619v5.787h-3.451v-15.863h3.451
+        v9.035l0.812-1.217l3.173-3.883h3.655v0.406l-4.416,5l4.416,6.115v0.407h-3.883l-2.945-4.366L260.864,145.619z M276.953,149.63
+        c-0.71,1.32-2.005,1.904-3.604,1.904c-2.208,0-4.036-1.271-4.036-3.631c0-2.359,1.599-3.73,4.62-3.73c0.989,0,1.979,0.101,2.919,0.279
+        v-0.686c0-1.269-0.889-1.827-2.665-1.827c-1.319,0-2.412,0.279-3.324,0.735h-0.381v-2.589c0.913-0.481,2.537-0.888,4.11-0.888
+        c3.732,0,5.661,1.701,5.661,4.645v7.563h-3.301V149.63z M276.853,147.676v-1.523c-0.585-0.177-1.345-0.228-1.954-0.228
+        c-1.396,0-2.106,0.533-2.106,1.623c0,1.091,0.71,1.522,1.751,1.522S276.521,148.564,276.853,147.676z M286.698,141.889
+        c0.636-1.777,1.98-2.539,3.35-2.539c0.459,0,0.839,0.127,0.991,0.203v3.274h-0.355c-0.354-0.177-0.71-0.28-1.193-0.28
+        c-1.371,0-2.36,0.635-2.64,1.98v6.878h-3.451v-11.929h3.299V141.889z M301.013,149.731c-0.787,1.243-2.032,1.954-3.579,1.954
+        c-3.249,0-5.254-2.615-5.254-6.218c0-3.63,2.005-6.27,5.254-6.27c1.446,0,2.64,0.635,3.427,1.726v-5.38h3.451v15.863h-3.299V149.731z
+        M300.86,147.523v-4.163c-0.635-0.914-1.498-1.346-2.487-1.346c-1.573,0-2.639,1.218-2.639,3.453c0,2.208,1.065,3.4,2.639,3.4
+        C299.362,148.868,300.226,148.437,300.86,147.523z"/>
+    </svg>
+    <div class="hpe-brand">
+      <div class="hpe-brand-name">Hewlett Packard Enterprise</div>
+      <div class="hpe-brand-title">Multimodal RAG</div>
+      <div class="hpe-brand-sub">Access — manage what your API key can reach</div>
+    </div>
+  </div>
+  <div class="header-links">
+    <a class="nav-link" href="/">Datasets</a>
+    <a class="nav-link" href="/manage">Manage</a>
+    <a class="nav-link current" href="/access">Access</a>
+    <button class="btn btn-outline btn-sm" id="signout-btn" onclick="signOut()" title="Forget the stored key on this device and reload to the sign-in state">Sign out</button>
+    <div class="theme-toggle" onclick="toggleTheme()" title="Toggle dark/light mode">
+      <span id="theme-label">Light</span>
+      <div class="theme-toggle-track">
+        <div class="theme-toggle-thumb"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Boot state: validating a saved key before showing either view -->
+<div id="boot-view" style="display:none">
+  <div class="empty-state" style="padding:80px 20px">
+    <span class="spinner"></span>
+    <div class="muted" style="margin-top:12px">Checking saved key…</div>
+  </div>
+</div>
+
+<!-- Login card -->
+<div class="card" id="login-card" style="max-width:520px;margin:48px auto">
+  <h2>Sign in with your API key</h2>
+  <p class="muted" style="margin-bottom:16px;font-size:.85rem">
+    Paste the per-user registry key issued to you (e.g. <span class="inline-code">alice-key</span>).
+    It stays in this browser and is sent only as the <span class="inline-code">X-RAG-Api-Key</span> header.
+    This page manages your personal access only — it never creates, deletes, uploads, or searches.
+  </p>
+  <form id="login-form" autocomplete="off">
+    <div class="form-group">
+      <label for="key-input">API key</label>
+      <input type="password" id="key-input" autocomplete="off" spellcheck="false" placeholder="Paste your registry key">
+    </div>
+    <div class="form-group">
+      <label class="check-row" title="Stores the key in this browser's localStorage until you sign out. Leave unchecked to keep it for this tab session only.">
+        Remember on this device <input type="checkbox" id="remember-check">
+      </label>
+    </div>
+    <div class="error-text" id="login-error"></div>
+    <button type="submit" class="btn btn-primary" id="connect-btn">Connect</button>
+  </form>
+  <div id="sso-section" style="display:none;margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+      <div style="flex:1;height:1px;background:var(--border)"></div>
+      <span class="muted" style="font-size:.75rem">or</span>
+      <div style="flex:1;height:1px;background:var(--border)"></div>
+    </div>
+    <a class="btn btn-outline" id="sso-login-btn" href="/oauth/login" style="display:block;text-align:center;text-decoration:none">
+      Sign in with SSO
+    </a>
+    <p class="muted" style="margin:8px 0 0;font-size:.75rem" id="sso-hint">
+      Uses your platform single sign-on (HPE SSO). The session stays in an HttpOnly cookie — page scripts never see the token.
+    </p>
+  </div>
+</div>
+
+<!-- Access view: the datasets this key can see -->
+<div id="access-view" style="display:none">
+  <!-- D25 SSO self-mint — shown/hidden entirely by probeSelfMint(); visible
+       only for non-admin SSO sessions whose whoami flags carry self_mint.
+       It always reflects the SSO identity's own key, never the pasted one. -->
+  <div class="card" id="selfmint-card" style="display:none">
+    <div class="card-header">
+      <h2 style="margin-bottom:0">Your API key</h2>
+    </div>
+    <p class="muted" id="selfmint-explainer" style="margin-bottom:12px;font-size:.85rem">
+      Mint a long-lived API key for your identity — use it in MCP clients (opencode, Open WebUI) or any REST caller. It carries exactly your access (grants + selections) and never expires.
+    </p>
+    <div id="selfmint-body"></div>
+  </div>
+  <div class="card">
+    <div class="card-header">
+      <h2 style="margin-bottom:0">Your datasets</h2>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input type="text" id="ds-filter" placeholder="Filter datasets by name…" style="width:220px;font-size:.8rem;padding:6px 10px" oninput="renderList()">
+        <button class="btn btn-outline btn-sm" onclick="refreshDatasets()">Refresh</button>
+      </div>
+    </div>
+    <div id="acl-note" class="muted" style="display:none;margin-bottom:10px"></div>
+    <div id="dataset-list"><div class="empty-state">No datasets are visible to this key.</div></div>
+    <div id="memory-hint" class="muted" style="margin-top:12px">
+      ★ marks the dataset your MCP client uses for long-term memory (server-side per-key binding when the access store is on; browser preference otherwise).
+    </div>
+  </div>
+  <div class="muted" style="margin:0 4px">
+    Checked datasets are usable by your API key on BOTH surfaces (MCP tools and REST) — protected ones need their password once, at selection. Unlocks apply to the REST API surface keyed to YOUR key; MCP sessions maintain their own per-session unlock cache on top.
+  </div>
+</div>
+
+<!-- Admin panel: per-user key minting + grants (admin key only) -->
+<div id="admin-view" style="display:none">
+  <div class="card">
+    <div class="card-header">
+      <h2 style="margin-bottom:0">User keys <span class="badge-admin">admin</span></h2>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="text" id="client-filter" placeholder="Filter by name…" style="width:180px;font-size:.8rem;padding:6px 10px" oninput="renderClients()">
+        <button class="btn btn-outline btn-sm" onclick="loadClients()">Refresh</button>
+        <button class="btn btn-primary btn-sm" onclick="openMintForm()">Mint key…</button>
+      </div>
+    </div>
+    <div id="mint-form" style="display:none;margin-bottom:14px;padding:14px;border:1px solid var(--border);border-radius:4px;background:var(--surface-2)">
+      <form id="mint-form-el" onsubmit="submitMint(event)">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+          <div style="flex:1;min-width:160px">
+            <label for="mint-name">User name</label>
+            <input type="text" id="mint-name" placeholder="e.g. alice" autocomplete="off" required>
+          </div>
+          <div style="flex:2;min-width:240px">
+            <label for="mint-datasets">Datasets (comma-separated, <code>*</code> = all, empty = none yet)</label>
+            <input type="text" id="mint-datasets" placeholder="e.g. reports, notes (ro) — or * for everything" autocomplete="off">
+          </div>
+          <button type="submit" class="btn btn-primary btn-sm" id="mint-submit">Mint</button>
+          <button type="button" class="btn btn-outline btn-sm" onclick="closeMintForm()">Cancel</button>
+        </div>
+      </form>
+      <div id="mint-result" class="muted" style="margin-top:10px;display:none"></div>
+    </div>
+    <div id="client-list"><div class="empty-state">Loading…</div></div>
+    <div class="muted" style="margin-top:10px">
+      Keys are re-read on every request — grants apply immediately, no restart. Env-registry entries (<code>RAG_API_KEY_CLIENTS</code>) are shown but edited only in the env.
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+// =======================================================================
+// Access — per-user API-key self-service (D15 registry keys).
+//
+// The ONLY key this page ever uses is the one the user typed. There is no
+// meta[name="rag-api-key"] injection on this page (that is the admin
+// dashboard's model) and none is ever read here.
+//
+// Storage contract (exact keys):
+//   sessionStorage['rag-access-key']   — the key for this tab session
+//   localStorage['rag-access-key']     — the key, ONLY when "Remember" is set
+//   localStorage['rag-memory-dataset'] — the starred memory dataset name
+//
+// Dataset passwords are NEVER stored or logged: they live only in the open
+// unlock form's input until submitted and are dropped from the DOM on
+// success or failure (re-render).
+// =======================================================================
+
+const SS_KEY = 'rag-access-key';
+const LS_KEY = 'rag-access-key';
+const LS_MEMORY = 'rag-memory-dataset';
+const API_TIMEOUT_MS = 30000;
+
+let datasets = [];          // as returned by GET /api/datasets (order preserved)
+let openUnlockRow = null;   // dataset name whose inline unlock form is open
+let unlockError = null;     // { name, message } — inline error for that form
+let openSelectRow = null;   // dataset name whose inline SELECT form is open
+let selectError = null;     // { name, message } — inline error for select forms
+let serverMemory = '';      // server-side ★ binding (D16; empty = none/local)
+
+// -----------------------------------------------------------------------
+// Storage helpers
+// -----------------------------------------------------------------------
+
+function getStoredKey() {
+  return sessionStorage.getItem(SS_KEY) || localStorage.getItem(LS_KEY) || '';
+}
+
+function storeKey(key, remember) {
+  clearKey();
+  sessionStorage.setItem(SS_KEY, key);
+  if (remember) localStorage.setItem(LS_KEY, key);
+}
+
+function clearKey() {
+  sessionStorage.removeItem(SS_KEY);
+  localStorage.removeItem(LS_KEY);
+}
+
+function starredDataset() {
+  // D16: the server-side binding wins when the access store is on (it is
+  // what MCP memory tools honor); localStorage is the store-off fallback.
+  if (accessStoreOn) return serverMemory || '';
+  return localStorage.getItem(LS_MEMORY) || '';
+}
+
+// -----------------------------------------------------------------------
+// API wrapper — the key ALWAYS comes from storage, never from the page
+// -----------------------------------------------------------------------
+
+async function api(method, path, body, timeoutMs) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs || API_TIMEOUT_MS);
+  const opts = { method, headers: {}, signal: controller.signal };
+  const key = getStoredKey();
+  if (key) opts.headers['X-RAG-Api-Key'] = key;
+  if (body !== undefined) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  }
+  try {
+    const res = await fetch(path, opts);
+    clearTimeout(timeout);
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try {
+        const err = await res.json();
+        if (err && typeof err.detail === 'string') detail = err.detail;
+        else if (err && err.detail) detail = JSON.stringify(err.detail);
+        else if (err && typeof err.message === 'string') detail = err.message;
+      } catch { /* non-JSON error body — keep the HTTP status */ }
+      const e = new Error(detail);
+      e.status = res.status;
+      throw e;
+    }
+    return res.json();
+  } catch (e) {
+    clearTimeout(timeout);
+    if (e.name === 'AbortError') {
+      const t = new Error('Request timed out');
+      t.status = 0;
+      throw t;
+    }
+    throw e;
+  }
+}
+
+function escHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = String(s ?? '');
+  // textContent→innerHTML escapes & < > but NOT quotes; results are
+  // interpolated into double-quoted attributes (href="…", src="…",
+  // onclick="…"), so quotes must be escaped too or a crafted dataset
+  // value can break out of the attribute (stored XSS).
+  return d.innerHTML
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function toast(msg, type = 'success') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast ' + type;
+  setTimeout(() => el.classList.add('show'), 10);
+  setTimeout(() => el.classList.remove('show'), 3500);
+}
+
+// -----------------------------------------------------------------------
+// Theme (same markup/behaviour as the dashboard)
+// -----------------------------------------------------------------------
+
+function applyTheme(theme) {
+  if (theme === 'dark') {
+    document.documentElement.setAttribute('data-theme', 'dark');
+    document.getElementById('theme-label').textContent = 'Dark';
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+    document.getElementById('theme-label').textContent = 'Light';
+  }
+  localStorage.setItem('theme', theme || 'light');
+}
+
+function toggleTheme() {
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  applyTheme(isDark ? 'light' : 'dark');
+}
+
+// -----------------------------------------------------------------------
+// Views
+// -----------------------------------------------------------------------
+// showView lives in the admin section below (it owns the isAdmin state).
+
+function showBoot() { showView('boot'); }
+function showLogin() { showView('login'); }
+function showAccess() { showView('access'); }
+
+function showLoginError(message) {
+  const el = document.getElementById('login-error');
+  el.textContent = message;   // textContent — no escaping needed
+  el.classList.add('show');
+}
+
+function clearLoginError() {
+  const el = document.getElementById('login-error');
+  el.textContent = '';
+  el.classList.remove('show');
+}
+
+// The key was rejected (or stopped being valid): forget it everywhere and
+// return to the sign-in card with the pinned inline error.
+function handleAuthRejected() {
+  clearKey();
+  datasets = [];
+  openUnlockRow = null;
+  unlockError = null;
+  openSelectRow = null;
+  selectError = null;
+  selections = {};
+  accessStoreOn = false;
+  serverMemory = '';
+  showLogin();
+  showLoginError('API key rejected by the server');
+}
+
+// -----------------------------------------------------------------------
+// Dataset list
+// -----------------------------------------------------------------------
+
+// D16 self-service state (GET /api/access/selections): present only when
+// the deployment enables the access store; empty otherwise.
+let selections = {};        // dataset name → {selected_at, source, has_password}
+let accessStoreOn = false;  // RAG_ACCESS_STORE enabled (server-side ★ + checkboxes)
+
+async function loadDatasets() {
+  // Throws on failure — callers decide between auth-rejected and toast.
+  const container = document.getElementById('dataset-list');
+  container.innerHTML = '<div style="text-align:center;padding:20px"><span class="spinner"></span></div>';
+  const body = await api('GET', '/api/datasets?catalog=1');  // 2026-10: world + public-available + excluded
+  datasets = Array.isArray(body && body.datasets) ? body.datasets : [];
+  const hidden = Number(body && body.acl_hidden) || 0;
+  const note = document.getElementById('acl-note');
+  if (hidden > 0) {
+    note.textContent = `${hidden} dataset(s) hidden by this key's access policy`;
+    note.style.display = 'block';
+  } else {
+    note.style.display = 'none';
+  }
+  // D16: fetch the identity's selection state (409/404 = store off → skip).
+  try {
+    const sel = await api('GET', '/api/access/selections');
+    accessStoreOn = !!(sel && sel.enabled);
+    selections = (sel && sel.selections) || {};
+    serverMemory = (sel && sel.memory_dataset) || '';
+  } catch (e) {
+    accessStoreOn = false;
+    selections = {};
+  }
+  renderList();
+}
+
+async function refreshDatasets() {
+  try {
+    await loadDatasets();
+  } catch (e) {
+    if (e.status === 401 || e.status === 403) { handleAuthRejected(); return; }
+    toast(e.message, 'error');
+  }
+}
+
+function renderRow(d) {
+  const name = String(d.name || '');
+  const count = Number(d.document_count) || 0;
+  const hasPw = !!d.has_password;
+  const isOpen = hasPw && !!d.unlocked;
+  const starred = starredDataset() === name;
+  const open = openUnlockRow === name;
+  const selEntry = selections[name] || null;
+  const aclGranted = d.acl_granted === true;
+  const excluded = d.excluded === true;
+  // 2026-10: the user's checkbox set is authoritative — an excluded
+  // dataset renders UNCHECKED even when the operator grant stands
+  // underneath (re-selecting is then password-free).
+  const isSelected = (!!selEntry || aclGranted) && !excluded;
+  const pwSaved = !!(selEntry && selEntry.has_password);
+
+  // Lock state per spec: unlocked → 🔓 unlocked, locked → 🔒 locked,
+  // no password → no lock icon at all.  The checkbox state reads:
+  //   ✓ granted  — reachable via your key's operator/admin grants
+  //   ✓ selected — you added it yourself (protected: password saved)
+  const lockState = hasPw ? (isOpen ? '🔓 unlocked' : '🔒 locked') : '';
+  const selState = accessStoreOn && isSelected
+    ? (aclGranted && !selEntry ? ' · ✓ granted' : ' · ✓ selected' + (hasPw ? (pwSaved ? ' 🔑' : '') : ''))
+    : '';
+  const exclState = excluded ? ' · 🚫 excluded (re-select to include)' : '';
+  // D16 public/global marker (2026-10): an admin-flagged GLOBAL dataset —
+  // every user may self-select it WITHOUT a password.  Distinct from a
+  // merely password-less dataset (which only its ACL grants reach).
+  const publicState = d.public === true ? ' · 🌐 global (password-free selection for everyone)' : '';
+  const meta = `${count} document${count === 1 ? '' : 's'}${lockState ? ' · ' + lockState : ''}${selState}${publicState}${exclState}`;
+
+  // D16 checkbox column (access store on): PRE-CHECKED when the dataset is
+  // already reachable (operator/admin grant or self-selection) — a user
+  // never has to "select" what is already theirs.  Protected + unchecked →
+  // the checkbox click opens the select form (password = proof).
+  let checkbox = '';
+  if (accessStoreOn) {
+    const checked = isSelected ? ' checked' : '';
+    const title = isSelected
+      ? (aclGranted ? 'Included in your key\u2019s datasets (uncheck to exclude — your checked set is authoritative)'
+                    : 'Selected by you (click to remove)')
+      : (hasPw ? 'Select (will ask for the dataset password)' : 'Select for your key');
+    checkbox = `<input type="checkbox" class="sel-check" data-name="${escHtml(name)}"${checked} onchange="onSelectToggle(this)" title="${title}" aria-label="Select ${escHtml(name)}">`;
+  }
+
+  // Row action depends strictly on state.
+  let action;
+  if (!accessStoreOn) {
+    // Phase-1 behaviour: unlock/lock manage the TTL cache only.
+    if (!hasPw) {
+      action = '<span class="muted">public</span>';
+    } else if (isOpen) {
+      action = '<button class="btn btn-outline btn-sm" onclick="lockDataset(this)">Lock</button>';
+    } else {
+      action = '<button class="btn btn-outline btn-sm" onclick="openUnlockForm(this)">Unlock…</button>';
+    }
+  } else {
+    // Store on.  The state matrix:
+    //   granted/selected + public       → nothing needed
+    //   granted/selected + pw + unlocked→ Lock
+    //   granted + pw + locked + no pw saved → "Add password…" (memory-ready)
+    //   granted + pw + locked + pw saved   → Unlock… (transient TTL) — but
+    //       the saved password already covers reads; Unlock is for REST TTL
+    //   self-selected + pw + locked     → Unlock… (saved pw covers reads)
+    //   unselected + pw                 → Select… (password = proof)
+    //   unselected + public             → unchecked (nothing to do)
+    if (isSelected) {
+      if (!hasPw) {
+        action = '<span class="muted">selected</span>';
+      } else if (isOpen) {
+        action = '<button class="btn btn-outline btn-sm" onclick="lockDataset(this)">Lock</button>';
+      } else if (aclGranted && !pwSaved) {
+        action = '<button class="btn btn-outline btn-sm" onclick="openSelectForm(this)">Add password…</button>';
+      } else {
+        action = '<button class="btn btn-outline btn-sm" onclick="openUnlockForm(this)">Unlock…</button>';
+      }
+    } else if (hasPw) {
+      action = '<button class="btn btn-outline btn-sm" onclick="openSelectForm(this)">Select…</button>';
+    } else {
+      action = '<span class="muted">unchecked</span>';
+    }
+  }
+
+  const star = `<button class="star${starred ? ' starred' : ''}" onclick="toggleStar(this)" title="Use as memory dataset" aria-label="Use as memory dataset">${starred ? '★' : '☆'}</button>`;
+
+  // The dataset name travels ONLY via the row's data-name attribute (escaped
+  // here); handlers read it back decoded via closest('.dataset-item').
+  let formHtml = '';
+  const selectErr = selectError && selectError.name === name ? selectError.message : '';
+  const unlockErr = unlockError && unlockError.name === name ? unlockError.message : '';
+  if (hasPw && (open || openSelectRow === name)) {
+    const isSelect = openSelectRow === name;
+    const submitLabel = isSelect ? (aclGranted ? 'Save password' : 'Select') : 'Unlock';
+    formHtml = `
+      <form class="unlock-form${(open || isSelect) ? ' open' : ''}" onsubmit="${isSelect ? 'submitSelect(event, this)' : 'submitUnlock(event, this)'}">
+        <label class="unlock-pw">${isSelect && aclGranted ? 'Dataset password (saved for your key — password-free reads & memory)' : 'Password'}
+          <input type="password" name="pw" placeholder="Dataset password" autocomplete="new-password" aria-label="Dataset password">
+        </label>
+        ${isSelect ? '' : `
+        <label class="unlock-ttl">Unlock for
+          <select name="ttl" aria-label="Unlock duration">
+            <option value="1800">30 minutes</option>
+            <option value="3600">1 hour</option>
+            <option value="21600">6 hours</option>
+            <option value="86400" selected>24 hours</option>
+            <option value="0" data-no-expiry>No expiry (0)</option>
+          </select>
+        </label>`}
+        <button type="submit" class="btn btn-primary btn-sm">${submitLabel}</button>
+        <div class="row-error${(isSelect ? selectErr : unlockErr) ? ' show' : ''}">${escHtml(isSelect ? selectErr : unlockErr)}</div>
+      </form>`;
+  }
+
+  return `
+    <div class="dataset-item${open || openSelectRow === name ? ' unlock-open' : ''}" data-name="${escHtml(name)}">
+      <div class="dataset-info">
+        <div class="dataset-name">${escHtml(name)}</div>
+        <div class="dataset-meta">${meta}</div>
+      </div>
+      <div class="dataset-actions">${checkbox}${star}${action}</div>
+      ${formHtml}
+    </div>`;
+}
+
+function renderList() {
+  const container = document.getElementById('dataset-list');
+  const q = (document.getElementById('ds-filter').value || '').trim().toLowerCase();
+  // Rows render in the order the server returned (ACL-filtered server-side).
+  const rows = datasets.filter(d => !q || String(d.name || '').toLowerCase().includes(q));
+  if (!rows.length) {
+    container.innerHTML = `<div class="empty-state">${datasets.length === 0
+      ? 'No datasets are visible to this key.'
+      : 'No datasets match the current filter.'}</div>`;
+    return;
+  }
+  container.innerHTML = rows.map(renderRow).join('');
+  applyTtlPolicy();   // freshly rendered forms must respect the server's TTL bound
+}
+
+function rowNameFrom(el) {
+  const item = el.closest('.dataset-item');
+  return item ? item.dataset.name : null;
+}
+
+// Find a rendered row by its (decoded) dataset name. Iterates the DOM rather
+// than building a [data-name="…"] CSS selector: attribute selectors do not
+// decode HTML entities, so an escHtml-ed name containing a quote would never
+// match its own rendered attribute.
+function findRow(name) {
+  const items = document.querySelectorAll('#dataset-list .dataset-item');
+  for (const item of items) {
+    if (item.dataset.name === name) return item;
+  }
+  return null;
+}
+
+// -----------------------------------------------------------------------
+// Connect / sign out
+// -----------------------------------------------------------------------
+
+async function connect(event) {
+  event.preventDefault();
+  const input = document.getElementById('key-input');
+  const key = input.value.trim();
+  clearLoginError();
+  if (!key) { showLoginError('Enter your API key'); return; }
+  // Store first, then validate with a real API call; a rejection clears the
+  // stored copy again so no half-validated key is left behind.
+  storeKey(key, document.getElementById('remember-check').checked);
+  const btn = document.getElementById('connect-btn');
+  btn.disabled = true;
+  try {
+    await loadDatasets();
+    input.value = '';
+    await probeAdmin();   // sets isAdmin and shows access (+ admin panel if admin)
+  } catch (e) {
+    if (e.status === 401 || e.status === 403) {
+      handleAuthRejected();
+    } else {
+      // Transient/network failure: the key was NOT rejected — keep it stored
+      // so a reload retries, but show the error on the login card.
+      showLoginError(e.message || 'Could not reach the server');
+    }
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function signOut() {
+  clearKey();                 // sessionStorage + localStorage key entries
+  window.location.reload();   // back at /access with no key → login state
+}
+
+// =======================================================================
+// D25 SSO self-mint — the SSO identity's own long-lived API key, offered
+// on this page too.
+//
+// This page's governing credential is ALWAYS the pasted key (sent as
+// X-RAG-Api-Key), so the card is gated on a separate header-less whoami
+// probe: GET /api/oidc-session with NO key header returns authenticated
+// only when an SSO session (cookie / forwarded JWT envelope) exists. The
+// card shows when that SSO session carries flags.self_mint AND the user
+// is not an admin (probeAdmin governs — they have the admin panel). The
+// edge case "SSO cookie present AND pasted key governing" is accepted:
+// minting only ever touches the SSO identity's own key, never the pasted
+// one. A pasted-key-only browser (no SSO) never sees the card; the flag's
+// absence keeps pre-D25 deployments unchanged.
+//
+// D25 REST pair (SSO identity required; API-key callers get 403, knob off
+// 409 — the card hides silently on 409/403/404 rather than sticking):
+//   GET  /api/access/key      → {enabled, source, identity, has_key,
+//                                key_masked, datasets, created, oidc, blocked}
+//   POST /api/access/mint-key → {status, name, key (FULL, shown once),
+//                                rotated, created, message} — body
+//                                {"rotate": true} replaces an existing key.
+// =======================================================================
+
+let selfmintState = null;   // GET /api/access/key result, cached per identity
+
+function hideSelfMintCard() {
+  const card = document.getElementById('selfmint-card');
+  if (card) card.style.display = 'none';
+}
+
+async function fetchSelfMintState() {
+  if (selfmintState !== null) return selfmintState;
+  try {
+    selfmintState = await api('GET', '/api/access/key') || {};
+  } catch (e) {
+    if (e.status === 401) { handleAuthRejected(); selfmintState = { _off: true }; }
+    else selfmintState = { _off: true };       // 409/403/404/network → hidden
+  }
+  return selfmintState;
+}
+
+async function probeSelfMint() {
+  const card = document.getElementById('selfmint-card');
+  if (!card) return;
+  if (isAdmin) { hideSelfMintCard(); return; }
+  // SSO session present? The header-less whoami is the only signal this
+  // page has (its own api() always rides the pasted key).
+  let ssoOn = false;
+  try {
+    const r = await fetch('/api/oidc-session', { credentials: 'same-origin' });
+    if (r.ok) {
+      const s = await r.json();
+      ssoOn = !!(s && s.authenticated && s.flags && s.flags.self_mint === true);
+    }
+  } catch (e) { /* whoami unreachable — keep the card hidden */ }
+  if (!ssoOn) { hideSelfMintCard(); return; }
+  const st = await fetchSelfMintState();
+  if (st._off) { hideSelfMintCard(); return; }
+  card.style.display = 'block';
+  const body = document.getElementById('selfmint-body');
+  if (!body) return;
+  if (st.has_key) {
+    const created = st.created ? new Date(st.created).toLocaleDateString() : '';
+    body.innerHTML =
+      '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">' +
+      '<span class="client-meta" style="font-family:\'SF Mono\',\'Fira Code\',monospace">' + escHtml(st.key_masked || '') + '</span>' +
+      (st.oidc ? ' <span class="src-tag" style="color:var(--accent);border-color:var(--accent)">oidc:' + escHtml(st.oidc) + '</span>' : '') +
+      (st.blocked ? ' <span class="src-tag" style="color:var(--red);border-color:var(--red)">blocked</span>' : '') +
+      (created ? ' <span class="muted">created ' + escHtml(created) + '</span>' : '') +
+      '</div>' +
+      '<div class="muted" style="margin-bottom:10px">Carries ' + (Array.isArray(st.datasets) ? st.datasets.length : 0) +
+      ' granted dataset(s) — minting again would not change the grants.</div>' +
+      '<button class="btn btn-outline btn-sm" onclick="selfmintRotate()">Rotate…</button>' +
+      '<div class="muted" style="margin-top:8px;font-size:.78rem">Rotation replaces this key — the previous one stops authenticating immediately.</div>';
+  } else {
+    body.innerHTML =
+      '<button class="btn btn-primary btn-sm" onclick="selfmintMint(false)">Mint my key</button>';
+  }
+}
+
+// POST /api/access/mint-key and swap the button row for the copy-once
+// reveal — the same .key-reveal presentation the admin mint uses.
+async function selfmintMint(rotate) {
+  try {
+    const res = await api('POST', '/api/access/mint-key', rotate ? { rotate: true } : {});
+    selfmintState = null;                       // has_key/masked/created changed
+    const body = document.getElementById('selfmint-body');
+    if (body) {
+      body.innerHTML =
+        '<div class="muted" style="margin-bottom:4px">' + escHtml(res.message || (rotate ? 'Key rotated.' : 'Key minted.')) +
+        ' Shown only once — copy it now:</div>' +
+        '<div class="key-reveal" id="selfmint-key">' + escHtml(res.key || '') + '</div>' +
+        '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">' +
+        '<button class="btn btn-outline btn-sm" onclick="copySelfMintKey()">Copy key</button>' +
+        '<button class="btn btn-outline btn-sm" onclick="selfmintUseHere()">Use in this browser</button>' +
+        '<button class="btn btn-outline btn-sm" onclick="selfmintDone()">Done — I saved it</button>' +
+        '</div>';
+    }
+    toast(res.message || (rotate ? 'Key rotated' : 'Key minted'));
+  } catch (e) {
+    if (e.status === 409 || e.status === 403 || e.status === 404) {
+      hideSelfMintCard();                       // not offered to this session
+      return;
+    }
+    if (e.status === 401) { handleAuthRejected(); return; }
+    toast(e.message || 'Mint failed', 'error');
+  }
+}
+
+function copySelfMintKey() {
+  const key = document.getElementById('selfmint-key');
+  if (!key) return;
+  navigator.clipboard.writeText(key.textContent)
+    .then(() => toast('Key copied to clipboard'))
+    .catch(() => toast('Copy failed — select the key manually', 'error'));
+}
+
+function selfmintUseHere() {
+  const key = document.getElementById('selfmint-key');
+  if (!key) return;
+  storeKey(key.textContent, false);   // this page's key model: reload governs
+  location.reload();
+}
+
+async function selfmintDone() {
+  selfmintState = null;             // has_key/masked/created may have changed
+  await probeSelfMint();            // collapses back to the has-key view
+}
+
+async function selfmintRotate() {
+  if (!confirm('Replace your API key? The previous key stops authenticating immediately.')) return;
+  await selfmintMint(true);
+}
+
+// -----------------------------------------------------------------------
+// Unlock / Lock
+// -----------------------------------------------------------------------
+
+function openUnlockForm(btn) {
+  const name = rowNameFrom(btn);
+  if (!name) return;
+  openUnlockRow = name;
+  openSelectRow = null;
+  unlockError = null;
+  selectError = null;
+  renderList();
+  const item = findRow(name);
+  if (item) {
+    const pw = item.querySelector('input[name="pw"]');
+    if (pw) pw.focus();
+  }
+}
+
+function openSelectForm(btn) {
+  const name = rowNameFrom(btn);
+  if (!name) return;
+  openSelectRow = name;
+  openUnlockRow = null;
+  selectError = null;
+  unlockError = null;
+  renderList();
+  const item = findRow(name);
+  if (item) {
+    const pw = item.querySelector('input[name="pw"]');
+    if (pw) pw.focus();
+  }
+}
+
+// D16 checkbox toggle: check → select (public: immediately; protected:
+// open the password form), uncheck → deselect (with confirm — it also
+// drops the saved password).
+function onSelectToggle(box) {
+  const name = box.dataset.name;
+  if (!name) { box.checked = !box.checked; return; }
+  const row = datasets.find(x => String(x.name) === name);
+  const aclGranted = !!(row && row.acl_granted);
+  const wasChecked = !!selections[name];
+  if (!box.checked) {
+    // 2026-10: unchecking ALWAYS works — for a self-selection it removes
+    // the selection (and saved password); for an operator-granted or
+    // public dataset it records an EXCLUSION that hides it until
+    // re-selected. The user's checked set is their world.
+    if (!wasChecked && pwSaved) return;  // nothing to remove
+    if (pwSaved && !confirm(`Remove '${name}' from your key's datasets? The saved password is dropped too.`)) {
+      box.checked = true;
+      return;
+    }
+    deselectDataset(name);
+    return;
+  }
+  if (wasChecked) return;
+  // Checking an ACL-granted protected dataset = offering the password
+  // (saves it for password-free reads + memory). Checking an unchecked
+  // public dataset = plain self-selection.
+  if (row && row.has_password) {
+    openSelectRow = name;
+    openUnlockRow = null;
+    selectError = null;
+    renderList();
+  } else {
+    selectDataset(name, null, box);
+  }
+}
+
+async function selectDataset(name, password, checkbox) {
+  try {
+    const res = await api('POST', `/api/datasets/${encodeURIComponent(name)}/select`,
+      password ? { password: password } : undefined);
+    toast(res.message || `Dataset '${name}' selected`);
+    openSelectRow = null;
+    selectError = null;
+    await refreshDatasets();
+  } catch (e) {
+    if (e.status === 401) { handleAuthRejected(); return; }
+    if (e.status === 403 && !password) {
+      // Store off / admin key (409 surfaces as 403-less path below) — the
+      // checkbox was optimistic; revert it and surface the reason.
+    }
+    selectError = { name, message: e.message || 'Select failed' };
+    openSelectRow = name;
+    if (checkbox) checkbox.checked = false;
+    renderList();
+  }
+}
+
+async function submitSelect(event, form) {
+  event.preventDefault();
+  const name = rowNameFrom(form);
+  if (!name) return;
+  const pwInput = form.querySelector('input[name="pw"]');
+  const password = pwInput ? pwInput.value : '';
+  if (!password) {
+    selectError = { name, message: 'Enter the dataset password' };
+    renderList();
+    return;
+  }
+  try {
+    const res = await api('POST', `/api/datasets/${encodeURIComponent(name)}/select`, { password: password });
+    toast(res.message || `Dataset '${name}' selected`);
+    openSelectRow = null;
+    selectError = null;
+    await refreshDatasets();
+  } catch (e) {
+    if (e.status === 401) { handleAuthRejected(); return; }
+    selectError = {
+      name,
+      message: e.status === 403 ? (e.message || 'Incorrect password') : (e.message || 'Select failed'),
+    };
+    renderList();   // form stays open; the typed password is dropped from the DOM
+  }
+}
+
+async function deselectDataset(name) {
+  try {
+    const res = await api('POST', `/api/datasets/${encodeURIComponent(name)}/deselect`);
+    toast(res.message || `Dataset '${name}' removed from your datasets (re-select any time)`);
+    if (serverMemory === name) serverMemory = '';
+    await refreshDatasets();
+  } catch (e) {
+    if (e.status === 401) { handleAuthRejected(); return; }
+    toast(e.message || 'Deselect failed', 'error');
+    await refreshDatasets();
+  }
+}
+
+function humanTtl(secs) {
+  if (secs % 3600 === 0) { const h = secs / 3600; return `${h} hour${h === 1 ? '' : 's'}`; }
+  if (secs % 60 === 0) { const m = secs / 60; return `${m} minute${m === 1 ? '' : 's'}`; }
+  return `${secs} seconds`;
+}
+
+function unlockToast(name, ttl, res) {
+  if (ttl === 0) return `Dataset '${name}' unlocked — no expiry`;
+  if (res && res.message) return String(res.message);
+  const secs = Number(res && res.ttl_seconds) || ttl;
+  return `Dataset '${name}' unlocked for ${humanTtl(secs)}`;
+}
+
+// The server injects its configured unlock-TTL bound (RAG_UNLOCK_MAX_TTL;
+// see the /access route).  "No expiry (0)" is only offered when the
+// deployment opted in (bound === 0) — otherwise the option is disabled with
+// a tooltip, matching the server's rejection of ttl=0.
+function noExpiryEnabled() {
+  const m = document.querySelector('meta[name="rag-unlock-ttl-max"]');
+  const val = m ? parseInt(m.content, 10) : NaN;
+  return Number.isFinite(val) && val === 0;
+}
+
+function applyTtlPolicy() {
+  const allowed = noExpiryEnabled();
+  document.querySelectorAll('select[name="ttl"] option[value="0"]').forEach(opt => {
+    opt.disabled = !allowed;
+    opt.title = allowed ? '' : 'Disabled: this deployment caps unlock TTLs (RAG_UNLOCK_MAX_TTL)';
+    if (!allowed && opt.selected) {
+      // A stale selection can only exist in the static template — swap to
+      // the bounded default so the form never submits a doomed ttl=0.
+      opt.selected = false;
+      const def = opt.parentElement.querySelector('option[value="86400"]');
+      if (def) def.selected = true;
+    }
+  });
+}
+
+async function submitUnlock(event, form) {
+  event.preventDefault();
+  const name = rowNameFrom(form);
+  if (!name) return;
+  const pwInput = form.querySelector('input[name="pw"]');
+  const ttlSelect = form.querySelector('select[name="ttl"]');
+  const password = pwInput ? pwInput.value : '';
+  const parsed = parseInt(ttlSelect ? ttlSelect.value : '86400', 10);
+  const ttl = Number.isFinite(parsed) ? parsed : 86400;
+  if (!password) {
+    unlockError = { name, message: 'Enter the dataset password' };
+    renderList();
+    return;
+  }
+  const submitBtn = form.querySelector('button[type="submit"]');
+  if (submitBtn) submitBtn.disabled = true;
+  try {
+    const res = await api('POST', `/api/datasets/${encodeURIComponent(name)}/unlock`, { password: password, ttl: ttl });
+    openUnlockRow = null;
+    unlockError = null;
+    toast(unlockToast(name, ttl, res));
+    await refreshDatasets();   // re-render the row from the server's lock state
+  } catch (e) {
+    if (e.status === 401) { handleAuthRejected(); return; }
+    // 403 → wrong password (the key itself is fine — never log out here).
+    // 429 → throttled; 400/404 → the server's detail, verbatim and inline.
+    unlockError = {
+      name,
+      message: e.status === 403 ? 'Incorrect password' : (e.message || 'Unlock failed'),
+    };
+    renderList();   // form stays open; the typed password is dropped from the DOM
+  }
+}
+
+async function lockDataset(btn) {
+  const name = rowNameFrom(btn);
+  if (!name) return;
+  btn.disabled = true;
+  try {
+    const res = await api('POST', `/api/datasets/${encodeURIComponent(name)}/lock`);
+    if (openUnlockRow === name) openUnlockRow = null;
+    unlockError = null;
+    toast((res && res.message) || `Dataset '${name}' locked`);
+    await refreshDatasets();
+  } catch (e) {
+    btn.disabled = false;
+    if (e.status === 401) { handleAuthRejected(); return; }
+    toast(e.message, 'error');
+  }
+}
+
+// -----------------------------------------------------------------------
+// Memory-dataset star (single-select; server-side under the access store,
+// localStorage fallback otherwise)
+// -----------------------------------------------------------------------
+
+async function toggleStar(btn) {
+  const name = rowNameFrom(btn);
+  if (!name) return;
+  // Only ONE dataset starred at a time: clicking a star moves it.
+  if (accessStoreOn) {
+    const binding = (serverMemory === name) ? null : name;
+    try {
+      const res = await api('POST', '/api/access/memory-dataset',
+        binding ? { dataset: binding } : {});
+      serverMemory = res.memory_dataset || '';
+      toast(res.message || (binding ? `★ '${name}' bound as your memory dataset` : 'Memory binding cleared'));
+    } catch (e) {
+      if (e.status === 401) { handleAuthRejected(); return; }
+      toast(e.message || 'Memory binding failed', 'error');
+    }
+    renderList();
+    return;
+  }
+  if (serverMemory === name) localStorage.removeItem(LS_MEMORY);
+  else localStorage.setItem(LS_MEMORY, name);
+  renderList();
+}
+
+// -----------------------------------------------------------------------
+// Admin panel: per-user key minting + grants (admin key only, D17).
+// Probed once after sign-in: GET /api/admin/clients 200 → admin; 403 →
+// the panel never renders (a registry key just gets their personal view).
+// -----------------------------------------------------------------------
+
+let isAdmin = false;
+let clients = [];
+
+function showView(which) {
+  document.getElementById('boot-view').style.display = which === 'boot' ? 'block' : 'none';
+  document.getElementById('login-card').style.display = which === 'login' ? 'block' : 'none';
+  document.getElementById('access-view').style.display = which === 'access' ? 'block' : 'none';
+  document.getElementById('admin-view').style.display = (which === 'access' && isAdmin) ? 'block' : 'none';
+  // Sign out lives in the header on every view: it always just clears both
+  // storage keys and reloads (a no-op when nothing is stored).
+  document.getElementById('signout-btn').style.display = 'inline-flex';
+}
+
+async function probeAdmin() {
+  // A 200 means the key carries admin semantics; 403/409/404 → not admin
+  // (or the overlay is disabled) — the panel stays hidden either way.
+  try {
+    const res = await api('GET', '/api/admin/clients');
+    isAdmin = true;
+    clients = Array.isArray(res.clients) ? res.clients : [];
+  } catch (e) {
+    isAdmin = false;
+    clients = [];
+  }
+  showView('access');
+  probeSelfMint();   // D25: non-admin SSO sessions get the self-mint card
+}
+
+function renderClients() {
+  const container = document.getElementById('client-list');
+  if (!isAdmin) { container.innerHTML = ''; return; }
+  const q = (document.getElementById('client-filter').value || '').trim().toLowerCase();
+  const rows = clients.filter(c => !q || String(c.name).toLowerCase().includes(q));
+  if (!rows.length) {
+    container.innerHTML = '<div class="empty-state">' +
+      (clients.length === 0
+        ? 'No per-user keys yet — mint the first one.'
+        : 'No clients match the filter.') + '</div>';
+    return;
+  }
+  container.innerHTML = rows.map(c => {
+    const chips = clientGrantsOf(c).map(g =>
+      '<span class="ds-chip' + (g.name === '*' ? ' wild' : '') + (g.mode === 'ro' ? ' ro' : '') + '">' +
+      escHtml(g.name + (g.mode === 'ro' ? ' (ro)' : '')) + '</span>'
+    ).join('') || '<span class="muted">no datasets granted</span>';
+    const src = '<span class="src-tag">' + escHtml(c.source || 'overlay') + '</span>';
+    const edit = c.source === 'env'
+      ? '<span class="muted" title="Defined in RAG_API_KEY_CLIENTS — edit it in the env">env-managed</span>'
+      : '<button class="btn btn-outline btn-sm" onclick="toggleGrant(this)" data-name="' + escHtml(c.name) + '">Grants…</button>' +
+        '<button class="btn btn-outline btn-sm" onclick="revokeClient(this)" data-name="' + escHtml(c.name) + '">Revoke</button>';
+    return '<div class="client-item" data-cname="' + escHtml(c.name) + '">' +
+      '<div style="flex:1">' +
+      '<div class="client-name">' + escHtml(c.name) + ' ' + src + ' <span class="client-meta">' + escHtml(c.key_masked || '') + '</span></div>' +
+      '<div class="client-datasets">' + chips + '</div>' +
+      '</div>' +
+      '<div class="dataset-actions">' + edit + '</div>' +
+      '<form class="grant-form" onsubmit="submitGrant(event, this)">' +
+      '<div class="grant-picker" data-cname="' + escHtml(c.name) + '">' +
+      '<label>Grants (search, tick a dataset, choose ro/rw — * = all)</label>' +
+      '<input type="text" class="gp-search" placeholder="Filter datasets…" oninput="filterGrantPicker(this)" autocomplete="off">' +
+      '<div class="gp-list">' + buildGrantPickerRows(c) + '</div>' +
+      '<div class="gp-hint">ro = read-only · rw = read-write · unchecked rows revoke</div>' +
+      '</div>' +
+      '<button type="submit" class="btn btn-primary btn-sm">Save</button>' +
+      '<button type="button" class="btn btn-outline btn-sm" onclick="toggleGrant(this)">Cancel</button>' +
+      '<div class="row-error" id="gerr-' + escHtml(c.name) + '"></div>' +
+      '</form>' +
+      '</div>';
+  }).join('');
+}
+
+// D26 read-only grants: normalise a client row to {name, mode} entries.
+// New rows carry c.grants = [{name, mode}]; legacy rows only have the flat
+// c.datasets string list (all rw). '*' stays a plain string (rw-all).
+function clientGrantsOf(c) {
+  if (Array.isArray(c.grants)) return c.grants;
+  return (c.datasets || []).map(d => ({ name: d, mode: 'rw' }));
+}
+
+// Build the dropdown body of the grant picker: a pinned "All datasets (*)"
+// row plus one row per cluster dataset. Each row is a checkbox + name +
+// public/password badges + a ro/rw segmented toggle. Missing/odd entries
+// in the cluster list are skipped; if nothing loaded yet, say so instead.
+function buildGrantPickerRows(c) {
+  if (!datasets.length) {
+    return '<div class="gp-empty">No datasets visible — load the Datasets tab first</div>';
+  }
+  const granted = {};
+  clientGrantsOf(c).forEach(g => {
+    if (g && g.name) granted[g.name] = (g.mode === 'ro' ? 'ro' : 'rw');
+  });
+  const row = (name, mode, label) => {
+    const isWild = name === '*';
+    return '<div class="gp-row' + (isWild ? ' gp-head' : '') + '" data-ds="' + escHtml(name) + '">' +
+      '<input type="checkbox" class="gp-chk" data-ds="' + escHtml(name) + '"' +
+      (granted[name] ? ' checked' : '') + '>' +
+      '<label class="gp-name">' + escHtml(label) + '</label>' +
+      '<span class="gp-toggle">' +
+      '<button type="button" class="' + (mode === 'ro' ? 'on' : '') + '" data-mode="ro" onclick="setGrantMode(this)">ro</button>' +
+      '<button type="button" class="' + (mode !== 'ro' ? 'on' : '') + '" data-mode="rw" onclick="setGrantMode(this)">rw</button>' +
+      '</span>' +
+      '</div>';
+  };
+  let html = row('*', granted['*'] || 'rw', 'All datasets (*)');
+  datasets.forEach(d => {
+    if (!d || !d.name) return;
+    const badges = (d.public ? '<span class="gp-badge" title="Public dataset">🌐</span>' : '') +
+      (d.has_password ? '<span class="gp-badge" title="Password-protected">🔒</span>' : '');
+    html += '<div class="gp-row" data-ds="' + escHtml(d.name) + '">' +
+      '<input type="checkbox" class="gp-chk" data-ds="' + escHtml(d.name) + '"' + (granted[d.name] ? ' checked' : '') + '>' +
+      '<label class="gp-name">' + escHtml(d.name) + '</label>' + badges +
+      '<span class="gp-toggle">' +
+      '<button type="button" class="' + (granted[d.name] === 'ro' ? 'on' : '') + '" data-mode="ro" onclick="setGrantMode(this)">ro</button>' +
+      '<button type="button" class="' + (granted[d.name] !== 'ro' ? 'on' : '') + '" data-mode="rw" onclick="setGrantMode(this)">rw</button>' +
+      '</span>' +
+      '</div>';
+  });
+  return html;
+}
+
+// ro/rw segmented toggle inside a picker row: exactly one side lit.
+function setGrantMode(btn) {
+  const toggle = btn.closest('.gp-toggle');
+  if (!toggle) return;
+  toggle.querySelectorAll('button').forEach(b =>
+    b.classList.toggle('on', b === btn));
+}
+
+// Case-insensitive substring filter over the picker rows (name in data-ds).
+function filterGrantPicker(input) {
+  const picker = input.closest('.grant-picker');
+  if (!picker) return;
+  const q = (input.value || '').trim().toLowerCase();
+  const list = picker.querySelector('.gp-list');
+  if (!list) return;
+  list.querySelectorAll('.gp-row').forEach(rowEl => {
+    const name = (rowEl.dataset.ds || '').toLowerCase();
+    // The pinned '*' row always stays visible so the filter can't strand it.
+    rowEl.style.display = (!q || name === '*' || name.includes(q)) ? '' : 'none';
+  });
+}
+
+// D26: collect the picker state into the wire shape. Granted entries go out
+// as {name, mode} objects; the ONLY plain string is an rw-mode '*' wildcard
+// (wire-compatible with the legacy list). '*' checked with ro = ro-all
+// ({name:'*',mode:'ro'}); '*' unchecked (or its mode never mattered) revokes
+// the wildcard. A ticked dataset's mode always serialises — ro/rw is data.
+function collectGrantDatasets(picker) {
+  const out = [];
+  const wildRow = picker.querySelector('.gp-row[data-ds="*"]');
+  const wildChk = wildRow && wildRow.querySelector('.gp-chk:checked');
+  if (wildChk) {
+    const wildBtn = wildRow.querySelector('.gp-toggle button.on');
+    out.push(wildBtn && wildBtn.dataset.mode === 'ro' ? { name: '*', mode: 'ro' } : '*');
+  }
+  picker.querySelectorAll('.gp-chk:checked').forEach(chk => {
+    if (chk.dataset.ds === '*') return;
+    const rowEl = chk.closest('.gp-row');
+    const modeBtn = rowEl.querySelector('.gp-toggle button.on');
+    out.push({ name: chk.dataset.ds, mode: (modeBtn && modeBtn.dataset.mode === 'ro') ? 'ro' : 'rw' });
+  });
+  return out;
+}
+
+async function loadClients() {
+  if (!isAdmin) return;
+  try {
+    const res = await api('GET', '/api/admin/clients');
+    clients = Array.isArray(res.clients) ? res.clients : [];
+    renderClients();
+  } catch (e) {
+    if (e.status === 401) { handleAuthRejected(); return; }
+    if (e.status === 403) { isAdmin = false; showView('access'); return; }
+    toast(e.message || 'Could not load clients', 'error');
+  }
+}
+
+function openMintForm() {
+  document.getElementById('mint-form').style.display = 'block';
+  document.getElementById('mint-result').style.display = 'none';
+  document.getElementById('mint-name').focus();
+}
+
+function closeMintForm() {
+  document.getElementById('mint-form').style.display = 'none';
+  document.getElementById('mint-form-el').reset();
+}
+
+async function submitMint(event) {
+  event.preventDefault();
+  const name = document.getElementById('mint-name').value.trim();
+  const datasets = document.getElementById('mint-datasets').value
+    .split(',').map(s => s.trim()).filter(Boolean);
+  if (!name) return;
+  const btn = document.getElementById('mint-submit');
+  btn.disabled = true;
+  try {
+    const res = await api('POST', '/api/admin/clients', { name: name, datasets: datasets });
+    // The mint response carries the FULL key exactly once — show it with a
+    // copy affordance and make the user actively dismiss it.
+    const box = document.getElementById('mint-result');
+    box.style.display = 'block';
+    box.innerHTML =
+      '<div>' + escHtml(res.message || 'Client minted.') + ' Hand the key to the user — it is shown <b>only once</b>:</div>' +
+      '<div class="key-reveal" id="minted-key">' + escHtml(res.key) + '</div>' +
+      '<div style="margin-top:6px"><button class="btn btn-outline btn-sm" onclick="copyMintedKey()">Copy key</button> ' +
+      '<button class="btn btn-outline btn-sm" onclick="dismissMinted()">Done — I saved it</button></div>';
+    toast(res.message || "Client '" + name + "' minted");
+    await loadClients();
+  } catch (e) {
+    if (e.status === 401) { handleAuthRejected(); return; }
+    toast(e.message || 'Mint failed', 'error');
+  }
+  btn.disabled = false;
+}
+
+function copyMintedKey() {
+  const key = document.getElementById('minted-key');
+  if (!key) return;
+  navigator.clipboard.writeText(key.textContent)
+    .then(() => toast('Key copied to clipboard'))
+    .catch(() => toast('Copy failed — select the key manually', 'error'));
+}
+
+function dismissMinted() {
+  const box = document.getElementById('mint-result');
+  box.style.display = 'none';
+  box.innerHTML = '';
+  closeMintForm();
+}
+
+function toggleGrant(btn) {
+  const name = btn.dataset.name;
+  const item = btn.closest('.client-item');
+  if (!item) return;
+  const form = item.querySelector('.grant-form');
+  if (form) form.classList.toggle('open');
+}
+
+async function submitGrant(event, form) {
+  event.preventDefault();
+  const item = form.closest('.client-item');
+  const name = item ? item.dataset.cname : null;
+  if (!name) return;
+  const picker = form.querySelector('.grant-picker');
+  const ds = picker ? collectGrantDatasets(picker) : [];
+  const errEl = document.getElementById('gerr-' + escHtml(name));
+  if (errEl) errEl.classList.remove('show');
+  try {
+    const res = await api('PATCH', '/api/admin/clients/' + encodeURIComponent(name), { datasets: ds });
+    toast(res.message || ("Grants updated for '" + name + "'"));
+    await loadClients();
+  } catch (e) {
+    if (e.status === 401) { handleAuthRejected(); return; }
+    if (errEl) {
+      errEl.textContent = e.message || 'Update failed';
+      errEl.classList.add('show');
+    } else {
+      toast(e.message || 'Update failed', 'error');
+    }
+  }
+}
+
+async function revokeClient(btn) {
+  const name = btn.dataset.name;
+  if (!name) return;
+  if (!confirm("Revoke '" + name + "'? Its key stops authenticating immediately.")) return;
+  try {
+    const res = await api('DELETE', '/api/admin/clients/' + encodeURIComponent(name));
+    toast(res.message || ("Client '" + name + "' revoked"));
+    await loadClients();
+  } catch (e) {
+    if (e.status === 401) { handleAuthRejected(); return; }
+    toast(e.message || 'Revoke failed', 'error');
+  }
+}
+
+(function init() {
+  applyTheme(localStorage.getItem('theme') || 'light');
+  document.getElementById('login-form').addEventListener('submit', connect);
+
+  // Escape closes the open inline unlock form (dropping the typed password).
+  document.getElementById('dataset-list').addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const item = e.target.closest('.dataset-item');
+    if (!item || item.dataset.name !== openUnlockRow) return;
+    openUnlockRow = null;
+    unlockError = null;
+    renderList();
+  });
+
+  const stored = getStoredKey();
+  if (!stored) { showLogin(); return; }
+  showBoot();
+  loadDatasets()
+    .then(() => probeAdmin())
+    .then(() => probeSelfMint())   // D25: refresh the card with fresh state
+    .catch((e) => {
+      if (e.status === 401 || e.status === 403) {
+        handleAuthRejected();
+      } else {
+        // Key was not rejected — keep it and let the user retry Connect.
+        showLogin();
+        showLoginError(e.message || 'Could not reach the server');
+      }
+    });
+})();
+
+// D22: show the "Sign in with SSO" section only when the flow is served
+// (an inert deployment 404s /oauth/login — the button would be a dead end).
+// The link itself is plain navigation: /oauth/login redirects to the realm,
+// the callback lands back here with the session cookie planted.
+fetch('/api/oidc-session', { credentials: 'same-origin' })
+  .then(function (r) { return r.ok ? r.json() : null; })
+  .then(function (s) {
+    if (s && s.oidc && s.oidc.enabled) {
+      var sec = document.getElementById('sso-section');
+      if (sec) sec.style.display = 'block';
+      // Already signed in via SSO? Surface it on the sign-in card.
+      if (s.authenticated && s.source === 'sso-cookie') {
+        var hint = document.getElementById('sso-hint');
+        if (hint) hint.textContent = 'Currently signed in via SSO as ' + s.identity + '.';
+      }
+    }
+  })
+  .catch(function () { /* SSO probe failed — keep the section hidden */ });
+</script>
+</body>
+</html>

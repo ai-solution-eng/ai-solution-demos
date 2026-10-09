@@ -32,12 +32,19 @@
  *     whitespace-collapsed preview of the tool's output (MAX_OUTPUT_PREVIEW
  *     characters). Read-only NOISE_TOOLS stay excluded from Actions.
  *   - Transport: the memory MCP server is called directly over its
- *     streamable-HTTP JSON-RPC endpoint (``tools/call add_memory``) using
- *     the same ``X-Memory-Dataset`` / ``X-Dataset-Password`` headers the MCP
- *     config already sends. TLS trusts the private CA via the
- *     ``NODE_EXTRA_CA_CERTS`` env var that opencode already requires to
- *     reach these servers. Everything is best-effort; diagnostics go to a
- *     log file (never the terminal, which would overlap the TUI).
+ *     streamable-HTTP JSON-RPC endpoint (``tools/call add_memory``). Auth
+ *     (2026-10, D20/D21): key/JWT-authenticating deployments are FAIL-CLOSED
+ *     against unauthenticated writes, so the plugin sends
+ *     ``Authorization: Bearer`` from ``RAG_MEMORY_BEARER_TOKEN`` (falling
+ *     back to ``MM_RAG_BEARER_TOKEN`` — the same credential the opencode MCP
+ *     config uses) whenever either is exported. The ``X-Memory-Dataset`` /
+ *     ``X-Dataset-Password`` headers still ride along for key-unconfigured
+ *     (single-user) deployments; on D16 deployments they are superseded by
+ *     the per-identity ★ binding + saved password from the /access page.
+ *     TLS trusts the private CA via the ``NODE_EXTRA_CA_CERTS`` env var that
+ *     opencode already requires to reach these servers. Everything is
+ *     best-effort; diagnostics go to a log file (never the terminal, which
+ *     would overlap the TUI).
  *
  * Shutdown safety: the whole shutdown flush is bounded by FLUSH_TIMEOUT_MS
  * and each POST is aborted after POST_TIMEOUT_MS, so a hung or unreachable
@@ -374,6 +381,11 @@ const sessionMemoryLogger: Plugin = async ({ client, $, directory, worktree }) =
     "https://rag-mcp-server.pcai-se-ai-application.hst.rdlabs.hpecorp.net/mcp"
   const dataset = process.env.RAG_MEMORY_DATASET
   const password = process.env.RAG_MEMORY_PASSWORD || ""
+  // D20/D21: fail-closed deployments reject unauthenticated MCP writes. Send
+  // the caller's bearer when provided (RAG_MEMORY_BEARER_TOKEN, falling back
+  // to MM_RAG_BEARER_TOKEN — the credential the opencode config already uses).
+  const bearer =
+    process.env.RAG_MEMORY_BEARER_TOKEN || process.env.MM_RAG_BEARER_TOKEN || ""
 
   return {
     // Grab the configured rag-memory MCP URL from the merged config so we
@@ -586,6 +598,7 @@ const sessionMemoryLogger: Plugin = async ({ client, $, directory, worktree }) =
         headers: {
           "Content-Type": "application/json",
           "Accept": "application/json, text/event-stream",
+          ...(bearer ? { "Authorization": `Bearer ${bearer}` } : {}),
           ...(dataset ? { "X-Memory-Dataset": dataset } : {}),
           ...(password ? { "X-Dataset-Password": password } : {}),
         },

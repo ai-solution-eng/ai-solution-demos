@@ -27,10 +27,26 @@ data:
   MODEL_ASR_EXTRA: {{ .Values.models.asr.extra | toJson | quote }}
   # RAG pipeline
   RAG_OCR_DEFAULT: {{ .Values.rag.ocr | default false | quote }}
+  {{- if .Values.rag.contextual }}
+  # Contextual-retrieval create default — rendered ONLY when enabled, so the
+  # default render stays byte-identical to the pre-feature chart (the
+  # gated-feature rule; a disabled deployment must not gain a config key).
+  RAG_CONTEXTUAL_DEFAULT: "true"
+  {{- end }}
   RAG_CAPTION_WITH_ASR: {{ .Values.rag.captionWithAsr | quote }}
   RAG_CAPTION_WITH_VLM: {{ .Values.rag.captionWithVlm | quote }}
   RAG_REMOTE: {{ .Values.rag.remote | quote }}
   RAG_DEDUP_THRESHOLD: {{ .Values.rag.dedupThreshold | quote }}
+  {{- $unlockMaxTtl := 86400 }}
+  {{- if hasKey .Values.rag "unlockMaxTtl" }}{{- $unlockMaxTtl = int .Values.rag.unlockMaxTtl }}{{- end }}
+  RAG_UNLOCK_MAX_TTL: {{ $unlockMaxTtl | quote }}
+  {{- $rrf := .Values.rag.rrfDefault | default dict }}
+  {{- if and $rrf (dig "enabled" false $rrf) }}
+  # Weighted-RRF per-dataset create-time default — rendered ONLY when
+  # enabled, so the default render is byte-identical to the pre-feature
+  # chart (gated-feature rule).  Format: "dense,sparse[,k]".
+  RAG_RRF_DEFAULT: "{{ $rrf.dense | default 1.0 }},{{ $rrf.sparse | default 1.0 }}{{- if $rrf.k }},{{ $rrf.k }}{{- end }}"
+  {{- end }}
   # Media base URL (for PVC-to-HTTP conversion in MCP search results)
   MEDIA_BASE_URL: {{ printf "https://%s" .Values.ezua.virtualService.endpoint | quote }}
   # S3 / MinIO endpoint (not sensitive — just a URL).  Optional: leave
@@ -49,3 +65,24 @@ data:
   PW_MAX_FAILURES: {{ int (.Values.security.pwMaxFailures | default 10) | quote }}
   PW_FAIL_WINDOW: {{ int (.Values.security.pwFailWindow | default 300) | quote }}
   RAG_TRUST_PROXY_IDENTITY: {{ .Values.security.trustProxyIdentity | default false | quote }}
+  # D16 self-service dataset selection (the /access checkbox model) —
+  # ALWAYS rendered (the default is true, ratified 2026-09-24): with the
+  # store on, registry-key users select their own datasets (protected ones
+  # with the password, saved per identity under /data/access); effective
+  # access = operator ACL ∪ selections.  Explicit false opts out.
+  RAG_ACCESS_STORE: {{ .Values.security.accessStore | default false | quote }}
+  {{- if .Values.security.accessDenySelect }}
+  RAG_ACCESS_DENY_SELECT: {{ .Values.security.accessDenySelect | quote }}
+  {{- end }}
+  {{- if .Values.security.accessSelfMint }}
+  # D25 SSO self-mint (chart default ON — set security.accessSelfMint to
+  # false to omit): SSO-authenticated identities (JWT / SSO cookie /
+  # trusted proxy headers) may mint their OWN long-lived API key from the
+  # Access page.  Read per request — flip without a restart.
+  RAG_ACCESS_SELF_MINT: "true"
+  {{- end }}
+  {{- if .Values.security.memoryDefault }}
+  # Deployment-wide fallback memory dataset (used when a caller has no
+  # personal ★ binding and no client headers/env).
+  RAG_MEMORY_DEFAULT: {{ .Values.security.memoryDefault | quote }}
+  {{- end }}

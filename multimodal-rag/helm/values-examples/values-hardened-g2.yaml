@@ -1,0 +1,61 @@
+# rag-mcp-server — HARDENED-G2 example: the MCP network zone ON.
+# Owner: Andrew Bydlon
+# Email: andrew.bydlon@hpe.com
+#
+# OVERLAY: NOT standalone — merge onto values.g2.yaml (or the base document);
+# every key here tunes networkPolicy.* only.  See README "Enabling the network zone".
+# The browser path stays ON (allowEzafGatewayIngress: true + VS rendered) —
+# REST and /mcp keep working; in-cluster callers are allowlisted explicitly,
+# everyone else denied.
+# ⚠️ Enable AFTER confirming the LLM gateway's relay namespace is listed —
+# every unlisted caller times out (deny by absence).
+# Zone list (G2 live facts, inventory §6): least-privilege — the namespaces
+# the LIVE gateway netpol already authorizes, plus monitoring.  Widen one
+# namespace at a time via the RUNBOOK operator recipe.
+
+# ============================================================================
+# PCAI Networking
+# ============================================================================
+
+# The VirtualService stays rendered (browser path unchanged); the Qdrant
+# StatefulSet (different pod label) is NOT selected and keeps its own posture.
+ezua:
+  virtualService:
+    enabled: true
+
+networkPolicy:
+  enabled: true
+  sameNamespace: true
+  authorizedClients:
+    namespaces:
+      - pcai-llm            # LLM Gateway relay (in-cluster MCP relay)
+      - dsh-web-helm        # DSH web (live gateway allowlist, inventory §6)
+      - owebui0-11-0        # OWUI instance on the live gateway allowlist
+      - opencode-web-helm   # OpenCode web
+      - prometheus         # the ACTUAL Prometheus scraper (kubeprom stack,
+                            # ns `prometheus`) — the monitoring ns holds otel/UA,
+                            # NOT the scraper; omit and up=0 within one interval
+      - monitoring          # Prometheus scraping /metrics (ServiceMonitor) —
+                            # omit and metrics scraping dies SILENTLY
+                            # (check Prometheus targets after enabling)
+  # USER-FACING: the gateway rule stays ON — VS routes (/, /mcp, batch-upload)
+  # arrive via the edge gateway.
+  allowEzafGatewayIngress: true
+  ingressGatewayNamespace: istio-system
+  ingressGatewayLabels:
+    app: istio-ingressgateway   # live edge-pod label (NOT app=ezaf-gateway)
+  # Kubelet probes originate at the NODE: allow node IPs only (inventory §4:
+  # masters .61-.63, workers .161-.162) — pod traffic stays zone-governed.
+  probeCidrs:
+    - 172.28.1.61/32
+    - 172.28.1.62/32
+    - 172.28.1.63/32
+    - 172.28.1.161/32
+    - 172.28.1.162/32
+  # probeExceptCidrs stays EMPTY with per-node /32 allows: ipBlock.except must
+  # be a STRICT SUBSET of the cidr (pod IPs are outside a node /32 — nothing
+  # to carve out; only a broad probe allow like 0.0.0.0/0 pairs with a carve-out).
+  probeExceptCidrs: []
+
+# The VirtualService stays rendered (browser path unchanged); the Qdrant
+# StatefulSet (different pod label) is NOT selected and keeps its own posture.

@@ -22,6 +22,11 @@ spec:
       backoffLimit: 1
       template:
         metadata:
+          # Deliberately NO hpe-ezua vendor labels on cron pods: the platform's
+          # scheduler-stamping vendor policy makes labeled pods undeletable on
+          # pod update (immutable schedulerName; G2 2026-09-24 incident). The
+          # app-catalog status comes from the long-running pods — see the
+          # pod-template comment in templates/deployment.yaml.
           labels:
             app: {{ .Values.deployment.appName }}
         spec:
@@ -37,6 +42,14 @@ spec:
                 - |
                   import os, datetime, tempfile, boto3, httpx
 
+                  # The deployment REST key from the model-keys Secret (envFrom
+                  # below) — without this header every call 401s under
+                  # security.apiKey (the long-standing backup-cron gap, fixed
+                  # 2026-09 alongside the watched-sources cron).
+                  api_key = os.environ.get("RAG_API_KEY") or ""
+                  headers = {"X-RAG-Api-Key": api_key} if api_key else {}
+                  if not headers:
+                      print("[backup] WARNING: RAG_API_KEY empty - auth-enabled deployments will 401 every call")
                   api = os.environ["BACKUP_API_URL"].rstrip("/")
                   bucket = os.environ["BACKUP_BUCKET"]
                   endpoint = os.environ.get("S3_ENDPOINT_URL") or None
@@ -47,7 +60,7 @@ spec:
                       aws_secret_access_key=os.environ.get("S3_SECRET_ACCESS_KEY") or None,
                   )
                   stamp = datetime.datetime.now(datetime.UTC).strftime("%Y%m%d-%H%M%S")
-                  resp = httpx.get(f"{api}/api/datasets", timeout=30.0)
+                  resp = httpx.get(f"{api}/api/datasets", headers=headers or None, timeout=30.0)
                   resp.raise_for_status()
                   datasets = resp.json().get("datasets", [])
                   exported = skipped = failed = 0
@@ -61,7 +74,7 @@ spec:
                           continue
                       try:
                           with tempfile.NamedTemporaryFile(suffix=".tar.gz") as f:
-                              with httpx.stream("GET", f"{api}/api/datasets/{name}/export", timeout=httpx.Timeout(1800.0, connect=30.0)) as r:
+                              with httpx.stream("GET", f"{api}/api/datasets/{name}/export", headers=headers or None, timeout=httpx.Timeout(1800.0, connect=30.0)) as r:
                                   r.raise_for_status()
                                   for chunk in r.iter_bytes():
                                       f.write(chunk)
@@ -113,13 +126,37 @@ spec:
                     name: {{ .Values.deployment.name }}-config
                 - secretRef:
                     name: {{ .Values.deployment.name }}-model-keys
+                {{- if .Values.modelSecrets.existingSecret }}
+                # User-owned model Secret — S3_*/REDIS_PASSWORD (and any model
+                # keys) it carries override the chart-managed Secret here too;
+                # keys it omits keep the seeded/stored values.
+                - secretRef:
+                    name: {{ .Values.modelSecrets.existingSecret }}
+                {{- end }}
               env:
                 - name: BACKUP_API_URL
-                  value: "http://{{ .Values.deployment.name }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.api.targetPort }}"
+                  value: "http://{{ .Values.deployment.name }}-api.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.api.port }}"
                 - name: BACKUP_BUCKET
                   value: {{ .Values.backups.bucket | quote }}
                 - name: BACKUP_RETENTION_DAYS
                   value: {{ .Values.backups.retentionDays | default 0 | quote }}
+                {{- if .Values.security.existingSecret }}
+                # REST API key + media-token secret come from the user-owned
+                # Secret (security.existingSecret) — the chart-managed
+                # -model-keys Secret renders neither key in that mode, so
+                # envFrom alone would leave RAG_API_KEY empty (401 on every
+                # backup tick).
+                - name: RAG_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.security.existingSecret }}
+                      key: {{ .Values.security.existingSecretApiKey }}
+                - name: MEDIA_TOKEN_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.security.existingSecret }}
+                      key: {{ .Values.security.existingSecretMediaTokenKey }}
+                {{- end }}
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true

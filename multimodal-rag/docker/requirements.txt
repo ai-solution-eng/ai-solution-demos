@@ -74,3 +74,6 @@ redis>=5.0.0
 # Prometheus metrics (/metrics endpoint; optional at runtime — the server
 # degrades to no-op counters when the import is unavailable)
 prometheus-client>=0.20.0
+
+# OIDC JWT verification (D21: RS256 signature checks against the IdP's JWKS)
+cryptography>=42.0.0

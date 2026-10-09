@@ -74,6 +74,33 @@ def _lightweight_payload_selector():
 # seconds, not datetimes) simply never match a condition on that key.
 
 
+@dataclass(frozen=True)
+class RrfParams:
+    """Caller-supplied weighted-RRF override for one query (feature: weighted RRF).
+
+    Weights are positional by lane — ``dense_weight`` applies to the dense
+    prefetch (S[0]) and ``sparse_weight`` to the BM25 prefetch (S[1]) — and
+    are rank-space tilts, NOT score multipliers: qdrant computes
+    ``1/((pos+1)/w + k − 1)`` per lane, so ``sparse_weight=3`` does not
+    triple BM25 scores, it makes the sparse lane's rank positions count more
+    ("trust the order, not the magnitude").
+
+    When ``k`` is set here it pins the RRF ranking constant explicitly.  The
+    default (``None``) is deliberate: today's unweighted
+    ``FusionQuery(Fusion.RRF)`` inherits the client's implicit
+    ``DEFAULT_RANKING_CONSTANT_K = 2``, and emitting an ``RrfQuery`` with a
+    different k would silently change rank arithmetic on every hybrid query.
+
+    Per-dataset defaults live OUT OF SCOPE for this slice (ruling, 2026-09):
+    caller weights win uniformly, and only a caller-provided override may
+    produce an ``RrfQuery`` — the default path stays byte-identical.
+    """
+
+    dense_weight: float = 1.0
+    sparse_weight: float = 1.0
+    k: int | None = None
+
+
 def build_payload_filter(filters: dict[str, Any] | None) -> Any:
     """Translate the public search-filter dict into a Qdrant ``Filter``.
 
@@ -271,7 +298,12 @@ class VectorStore:
         raise NotImplementedError
 
     async def asimilarity_search_with_relevance_scores(
-        self, query: str, k: int, need_media: bool = True, filters: dict[str, Any] | None = None
+        self,
+        query: str,
+        k: int,
+        need_media: bool = True,
+        filters: dict[str, Any] | None = None,
+        rrf: RrfParams | None = None,
     ) -> list[tuple[Document, float]]:
         raise NotImplementedError
 
@@ -315,8 +347,16 @@ class InMemoryVectorStore(VectorStore):
         return [(docs[i], float(sims[i])) for i in top]
 
     async def asimilarity_search_with_relevance_scores(
-        self, query: str, k: int, need_media: bool = True, filters: dict[str, Any] | None = None
+        self,
+        query: str,
+        k: int,
+        need_media: bool = True,
+        filters: dict[str, Any] | None = None,
+        rrf: RrfParams | None = None,
     ) -> list[tuple[Document, float]]:
+        """In-memory fallback: no sparse lane exists, so a weighted-RRF
+        override has nothing to weight — the dense result is returned
+        unstamped (honesty rule: dense results never carry weights)."""
         emb = await self.embedding.aembed_query(query)
         return self.similarity_search_with_score_by_vector(emb, k, need_media=need_media, filters=filters)
 
@@ -329,8 +369,8 @@ class _QdrantBatcher:
     While Qdrant is fast (~16ms/query), the per-call gRPC overhead and thread
     pool contention add up under high concurrency.
 
-    This batcher collects ``(embedding, k, need_media, filters, query_text)``
-    requests arriving within a short window (default 5 ms) or until
+    This batcher collects ``(embedding, k, need_media, filters, query_text,
+    rrf)`` requests arriving within a short window (default 5 ms) or until
     ``max_batch_size`` accumulate, then sends
     them as a single ``query_batch_points`` call with N ``QueryRequest``
     objects.  Qdrant processes the batch in one round-trip and returns
@@ -342,7 +382,7 @@ class _QdrantBatcher:
 
     def __init__(
         self,
-        search_fn: "Callable[[list[tuple[list[float], int, bool, dict[str, Any] | None, str | None]]], list[list[tuple[Document, float]]]]",
+        search_fn: "Callable[[list[tuple[list[float], int, bool, dict[str, Any] | None, str | None, RrfParams | None]]], list[list[tuple[Document, float]]]]",
         max_batch_size: int = 32,
         max_wait_ms: float = 5.0,
     ) -> None:
@@ -356,6 +396,7 @@ class _QdrantBatcher:
                 bool,
                 dict[str, Any] | None,
                 str | None,
+                RrfParams | None,
                 asyncio.Future[list[tuple[Document, float]]],
             ]
         ] = []
@@ -374,20 +415,23 @@ class _QdrantBatcher:
         need_media: bool = True,
         filters: dict[str, Any] | None = None,
         query_text: str | None = None,
+        rrf: RrfParams | None = None,
     ) -> list[tuple[Document, float]]:
         """Submit a single query and await its results.
 
         *query_text* is the raw text query when the caller has one (text
         retrieval) — it lets the store build the BM25 sparse query vector
         for hybrid fusion.  Vector-supplied queries (multimodal) pass
-        ``None`` and stay dense-only.
+        ``None`` and stay dense-only.  *rrf* is the caller's optional
+        weighted-RRF override (ignored on dense-only paths — a request with
+        no query text can never fuse).
         """
         loop = asyncio.get_running_loop()
         fut: asyncio.Future[list[tuple[Document, float]]] = loop.create_future()
         flush_now = False
 
         async with self._get_lock():
-            self._queue.append((embedding, k, need_media, filters, query_text, fut))
+            self._queue.append((embedding, k, need_media, filters, query_text, rrf, fut))
             if len(self._queue) >= self._max_batch_size:
                 flush_now = True
             elif self._flush_task is None:
@@ -416,8 +460,8 @@ class _QdrantBatcher:
                 self._flush_task.cancel()
             self._flush_task = None
 
-        queries = [(emb, k, need_media, filters, text) for emb, k, need_media, filters, text, _ in batch]
-        futs = [f for _, _, _, _, _, f in batch]
+        queries = [(emb, k, need_media, filters, text, rrf) for emb, k, need_media, filters, text, rrf, _ in batch]
+        futs = [f for _, _, _, _, _, _, f in batch]
 
         loop = asyncio.get_running_loop()
         exec_fut = loop.run_in_executor(_QDRANT_IO_POOL, self._search_fn, queries)
@@ -698,7 +742,9 @@ class QdrantVectorStore(VectorStore):
         return stats if stats.get("n_docs", 0) > 0 else None
 
     def _query_requests(
-        self, queries: list[tuple[list[float], int, bool, dict[str, Any] | None, str | None]], hybrid: bool
+        self,
+        queries: list[tuple[list[float], int, bool, dict[str, Any] | None, str | None, RrfParams | None]],
+        hybrid: bool,
     ) -> list[tuple[Any, bool]]:
         """Build one ``QueryRequest`` per queued query.
 
@@ -708,14 +754,23 @@ class QdrantVectorStore(VectorStore):
         filtered subset; anything that cannot go hybrid (no query text, no
         usable stats, env off, fusion known-unsupported) stays the flat
         dense request.  Fusion is per-request, so a batch mixes freely.
+
+        Weighted RRF: when the query carries an :class:`RrfParams` override,
+        the hybrid request emits ``RrfQuery(rrf=Rrf(k=…, weights=[dense,
+        sparse]))`` instead of the plain ``FusionQuery`` — the weights are
+        positional (dense=S[0], sparse=S[1]).  Without an override the
+        request shape is byte-identical to the historical fusion request
+        (the ``FusionQuery`` form carries the client's implicit
+        ``DEFAULT_RANKING_CONSTANT_K = 2``; pinning a k here would silently
+        change rank arithmetic on every default query — the k-default trap).
         """
-        from qdrant_client.models import Fusion, FusionQuery, Prefetch, QueryRequest
+        from qdrant_client.models import Fusion, FusionQuery, Prefetch, QueryRequest, Rrf, RrfQuery
 
         stats = self._bm25_stats() if hybrid else None
         lightweight = _lightweight_payload_selector()
         out: list[tuple[Any, bool]] = []
         want_dense_vectors = self._embedding_scores_enabled()
-        for emb, k, need_media, filters, query_text in queries:
+        for emb, k, need_media, filters, query_text, rrf in queries:
             flt = build_payload_filter(filters)
             with_payload: Any = True if need_media else lightweight
             sparse = None
@@ -729,10 +784,21 @@ class QdrantVectorStore(VectorStore):
             if sparse is not None:
                 # Hoisted so the None-check below narrows the same value mypy sees.
                 dense_using = self._dense_using()
+                # Weighted override → parameterized RrfQuery; anything else
+                # keeps the default fusion form (byte-identical request).
+                # A weights list of [1.0, 1.0] with no k pinned is rank-
+                # arithmetic-identical to the default form, so it must not
+                # switch the request shape either.
+                if isinstance(rrf, RrfParams) and (
+                    rrf.k is not None or rrf.dense_weight != 1.0 or rrf.sparse_weight != 1.0
+                ):
+                    fused_query: Any = RrfQuery(rrf=Rrf(k=rrf.k, weights=[rrf.dense_weight, rrf.sparse_weight]))
+                else:
+                    fused_query = FusionQuery(fusion=Fusion.RRF)
                 out.append(
                     (
                         QueryRequest(
-                            query=FusionQuery(fusion=Fusion.RRF),
+                            query=fused_query,
                             prefetch=[
                                 Prefetch(query=emb, using=self._dense_using(), limit=k, filter=flt),
                                 Prefetch(query=sparse, using=bm25_lane.BM25_VECTOR_NAME, limit=k, filter=flt),
@@ -817,12 +883,12 @@ class QdrantVectorStore(VectorStore):
         return _points_to_docs(responses)[0]
 
     def similarity_search_with_score_by_vector_batch(
-        self, queries: list[tuple[list[float], int, bool, dict[str, Any] | None, str | None]]
+        self, queries: list[tuple[list[float], int, bool, dict[str, Any] | None, str | None, RrfParams | None]]
     ) -> list[list[tuple[Document, float]]]:
         """Batch-execute multiple queries in a single Qdrant gRPC call.
 
         *queries* is a list of ``(embedding, k, need_media, filters,
-        query_text)`` tuples.  When *need_media* is False, heavy base64
+        query_text, rrf)`` tuples.  When *need_media* is False, heavy base64
         ``image``/``video`` payload keys are excluded from the Qdrant
         response to avoid transferring megabytes of data that would be
         discarded on the fast path.  Returns a list of result lists, one
@@ -885,9 +951,32 @@ class QdrantVectorStore(VectorStore):
         want_vectors = self._embedding_scores_enabled()
         for q_idx, ((_, is_hybrid), per_query) in enumerate(zip(executed, results)):
             if not is_hybrid:
+                # Dense-degraded path: the request never fused, so any
+                # weighted-RRF override was silently dropped — results stay
+                # UNSTAMPED (an honest dense result carries no weights, and
+                # the surfaces report ``rrf.applied=false`` from that).
                 continue
+            rrf_requested = queries[q_idx][5]
+            applied_override = bool(
+                isinstance(rrf_requested, RrfParams)
+                and (
+                    rrf_requested.k is not None
+                    or rrf_requested.dense_weight != 1.0
+                    or rrf_requested.sparse_weight != 1.0
+                )
+            )
             for doc, _ in per_query:
                 doc.metadata["_score_kind"] = "rrf"
+                if applied_override:
+                    # RRF is rank arithmetic — a rank-space tilt, not a score
+                    # multiplier.  Stamp the exact weights/k the executed
+                    # request used so consumers can attribute ordering.
+                    assert rrf_requested is not None
+                    doc.metadata["_rrf"] = {
+                        "dense": rrf_requested.dense_weight,
+                        "sparse": rrf_requested.sparse_weight,
+                        "k": rrf_requested.k,
+                    }
             if want_vectors:
                 self._stamp_dense_cosines(queries[q_idx][0], responses[q_idx].points, per_query)
         return results
@@ -921,14 +1010,24 @@ class QdrantVectorStore(VectorStore):
         return await self._batcher().submit(embedding, k, need_media, filters, None)
 
     async def asimilarity_search_with_relevance_scores(
-        self, query: str, k: int, need_media: bool = True, filters: dict[str, Any] | None = None
+        self,
+        query: str,
+        k: int,
+        need_media: bool = True,
+        filters: dict[str, Any] | None = None,
+        rrf: RrfParams | None = None,
     ) -> list[tuple[Document, float]]:
         """Async batched search for a *text* query — the hybrid entry point.
 
         The raw query text travels with the embedding through the batcher so
         the executed ``QueryRequest`` can become an RRF-fusion request over
         the dense + BM25 lanes (bm25-capable collections only; everything
-        else keeps the flat dense request).
+        else keeps the flat dense request).  *rrf* carries an optional
+        :class:`RrfParams` override — when set, the fusion request is
+        ``RrfQuery(rrf=Rrf(k=…, weights=[dense, sparse]))`` and every fused
+        result is stamped ``metadata["_rrf"]`` with the weights used;
+        anything else keeps the default ``FusionQuery(RRF)`` request and no
+        stamp.  Dense-degraded paths never apply (or stamp) the weights.
         """
         emb = await self.embedding.aembed_query(query)
-        return await self._batcher().submit(emb, k, need_media, filters, query if isinstance(query, str) else None)
+        return await self._batcher().submit(emb, k, need_media, filters, query if isinstance(query, str) else None, rrf)

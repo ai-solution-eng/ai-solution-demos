@@ -13,8 +13,20 @@ spec:
       app: {{ .Values.deployment.name }}-qdrant
   template:
     metadata:
+      # EzUA app-catalog labels on the POD TEMPLATE: the catalog derives a
+      # card's status from labeled pods — an app whose pods carry no
+      # hpe-ezua labels shows "Unknown" in the catalog (this chart was the
+      # only unlabeled-pod app on G2 and the only Unknown card, 2026-10).
+      # Long-running controllers only: cron-job pods stay UNLABELED — the
+      # platform's assign-custom-scheduler-for-ezua-user-vendor-pods policy
+      # stamps schedulerName on labeled pods at EVERY admission, and pod
+      # updates (Job finalizer removal) then reject the immutable-field
+      # change — the G2 2026-09-24 undeletable-cron-pod incident (see
+      # tests/full_pipeline/test_kyverno_vendor_labels_render.py).
       labels:
         app: {{ .Values.deployment.name }}-qdrant
+        hpe-ezua/type: vendor-service
+        hpe-ezua/app: {{ .Chart.Name }}
     spec:
       automountServiceAccountToken: false
       containers:

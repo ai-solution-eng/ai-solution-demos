@@ -1,6 +1,7 @@
 {{- $name := .Values.deployment.name -}}
 {{- $ns := .Release.Namespace -}}
 {{- $secret := .Values.mcp.apiKey.existingSecret -}}
+{{- $modelSecret := .Values.modelSecrets.existingSecret | default "" -}}
 
 rag-mcp-server {{ .Chart.Version }} (app {{ .Chart.AppVersion }}) deployed to namespace {{ $ns }}.
 
@@ -38,6 +39,28 @@ rag-mcp-server {{ .Chart.Version }} (app {{ .Chart.AppVersion }}) deployed to na
    clients over, drop the old. The server re-reads the env per request
    — no restart needed. The fleet-universal MCP_API_KEYS env is honored
    too (either var works).
+{{- if $modelSecret }}
+
+2b. Model API keys — provided by YOUR Secret (modelSecrets.existingSecret =
+    {{ $modelSecret }}). Every MODEL_*/S3_*/REDIS_PASSWORD key it carries
+    overrides the chart-managed {{ $name }}-model-keys Secret (wired last in
+    envFrom and CONFIG_DIR); keys it omits keep the seeded/stored values.
+    Rotation is kubectl/ESO-native and hot-reloads (<=15s, no rollout).
+    Endpoints may live there too (MODEL_<ROLE>_URL overrides the ConfigMap).
+    The values modelSecrets.* seeds are now optional fallbacks — safe to
+    blank (do NOT delete the {{ $name }}-model-keys object itself).
+{{- else }}
+
+2b. Model API keys — seeded from values (modelSecrets.*) into the
+    {{ $name }}-model-keys Secret. To keep key material out of values
+    entirely, create your own Secret with the canonical key names
+    (MODEL_EMBEDDER_API_KEY, MODEL_RERANKER_API_KEY, MODEL_VLM_API_KEY,
+    MODEL_ASR_API_KEY — optionally MODEL_*_URL endpoints, S3_*,
+    REDIS_PASSWORD) and re-run:
+      helm upgrade <release> . -n {{ $ns }} --reuse-values \
+        --set modelSecrets.existingSecret=<your-secret>
+    Missing Secret = pods fail loudly (CreateContainerConfigError).
+{{- end }}
 
 ════════════════════════════════════════════════════════════════════
 3. Endpoints:

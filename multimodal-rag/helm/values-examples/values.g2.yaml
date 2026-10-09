@@ -1,119 +1,47 @@
 # =============================================================================
 # Multimodal RAG — SE G2 deployment values (sanitized) — single-replica chart.
-#
-# Variant: helm/  (chart rag-mcp-server, 1 API replica + MCP sidecar, 1 Qdrant)
-# Choose this variant for pilots and single-team use — smallest footprint.
-# For concurrent multi-user throughput use helm-scale-medium/ or
-# helm-scale-large/ instead (more API replicas + sharded Qdrant).
-#
-# Sanitized SE-G2 deployment: real (non-secret) serving URLs and the real
-# cluster domain are kept; ALL credentials are fillers. This folder is
-# hardlinked to the public delivery repo — never put real credentials here.
-# Real per-site values live in helm/local/ (gitignored + hardlink-ignored +
-# never packaged).
-#
+# Variant: helm/ (rag-mcp-server: 1 API replica + MCP sidecar, 1 Qdrant) —
+# pilots / single-team use, smallest footprint.  Concurrent multi-user
+# throughput: helm-scale-medium/ or helm-scale-large/ (more replicas + sharded Qdrant).
+# Sanitized SE-G2 deployment: real (non-secret) serving URLs + cluster domain;
+# ALL credentials are fillers (this folder is hardlinked to the public repo —
+# never add real credentials).  Real per-site values live in helm/local/
+# (gitignored + never packaged).
 # PCAI usage: import the packaged chart once, paste this whole file into the
-# release's Helm Values editor, adjust the '# SITE:' lines, apply.
+# release's Helm Values editor, apply.
 # Operators with cluster access may render-check first:
-#   helm template <release> helm/ -f helm/values-examples/values.g2.yaml
+# helm template <release> helm/ -f helm/values-examples/values.g2.yaml
 # =============================================================================
+# ============================================================================
+#
+# ### REQUIRED ### — key material lives in Secrets you own, NOT in values
+# (missing Secret = CreateContainerError; every key the Secret carries
+# overrides the values seeds below it).
+#   1. modelSecrets.existingSecret — the broad secret: MODEL_*_API_KEY per
+#      enabled role, optionally MODEL_*_URL / S3_* / REDIS_PASSWORD
+#   2. models.embedder.url — reachable embedder endpoint (startup ABORTS if
+#      unreachable) unless the Secret carries MODEL_EMBEDDER_URL
+#   3. security.existingSecret — RAG_API_KEY + MEDIA_TOKEN_SECRET
+#   4. ezua.virtualService.endpoint — RENDER FAILS without it while ezua.enabled
 
-# -- Deployment -----------------------------------------------------------------
-replicaCount: 1
-
-image:
-  # Packaged with the chart — leave as-is unless you built your own image.
-  repository: ghcr.io/ai-solution-eng/multimodal-rag-mcp
-  tag: v3.6.3
-  pullPolicy: IfNotPresent
+# ============================================================================
+# Image / Deployment
+# ============================================================================
 
 deployment:
   name: rag-mcp-server
   appName: rag-mcp-server
 
-# -- Persistence ------------------------------------------------------------------
-persistence:
-  data:
-    # SITE: size to the corpus (RWX storage class required)
-    size: 50Gi
-    storageClass: gl4f-filesystem
-    accessMode: ReadWriteMany
-  qdrant:
-    # SITE: size to the corpus
-    size: 50Gi
-    storageClass: gl4f-filesystem
-    accessMode: ReadWriteMany
-    mountReadOnly: true
+replicaCount: 1
 
-# -- Model configuration -------------------------------------------------------------
-# The embedder is the only required endpoint; leave url "" to disable a role.
-models:
-  embedder:
-    name: RamManavalan/Qwen3-VL-Embedding-8B-FP8
-    # SITE: SE-G2 shared serving endpoints (public URLs, not secret)
-    url: https://qwen3-vl-embedding-8b.project-user-andrew-bydlon.serving.pcai-se-ai-application.hst.rdlabs.hpecorp.net
-    className: MultiModalEmbeddings
-    extra:
-      embedding_dim: 4096
-      chunk_size: 2048
-      chunk_overlap: 256
-      code_chunk_size: 8192
-      code_chunk_overlap: 512
-      tokenizer_name: Qwen/Qwen3-VL-Embedding-8B
-      tokenizer_type: HuggingFace
-      # Same-embedder alias for the dataset fingerprint guard: datasets indexed
-      # under this id keep working after the FP8 swap (vectors agree to >=0.95 cosine).
-      # Requires an image with alias support — v4.0.0 rejects unknown extra keys.
-      alias: Qwen/Qwen3-VL-Embedding-8B
-  reranker:
-    name: Qwen/Qwen3-VL-Reranker-8B
-    # SITE: optional — precision at the cost of latency
-    url: https://qwen3-vl-reranker-8b.project-user-andrew-bydlon.serving.pcai-se-ai-application.hst.rdlabs.hpecorp.net
-    className: MultiModalReranker
-    extra: {}
-  vlm:
-    name: Qwen/Qwen3.8-27B-FP8
-    # SITE: optional — captions images/videos, converts them at query time
-    url: https://qwen-38-27b.project-user-andrew-bydlon.serving.pcai-se-ai-application.hst.rdlabs.hpecorp.net
-    extra: {}
-  asr:
-    name: CohereLabs/cohere-transcribe-03-2026
-    # SITE: optional — transcribes audio + video soundtracks
-    url: https://cohere-transcribe-03-2026.project-user-andrew-bydlon.serving.pcai-se-ai-application.hst.rdlabs.hpecorp.net
-    extra: {}
+image:
+  # Packaged with the chart — leave as-is unless you built your own image.
+  repository: ghcr.io/ai-solution-eng/multimodal-rag-mcp
+  tag: v5.7.0
+  pullPolicy: IfNotPresent
 
-# -- Model API keys (sensitive — fillers here) -----------------------------------------
-# Rendered into the <name>-model-keys Secret (env MODEL_*_API_KEY).
-# SE G2: platform JWTs for the serving endpoints — kept ONLY in helm/local/.
-modelSecrets:
-  # SITE: paste the real platform JWT for each endpoint you enabled
-  embedderApiKey: "<EMBEDDER_API_KEY>"
-  rerankerApiKey: "<RERANKER_API_KEY>"
-  vlmApiKey: "<VLM_API_KEY>"
-  asrApiKey: "<ASR_API_KEY>"
-
-# -- S3 / MinIO ---------------------------------------------------------------------------
-# Endpoint URL is non-sensitive (ConfigMap); access keys go into the Secret.
-s3:
-  endpointUrl: http://minio.minio.svc.cluster.local:9000
-  # SITE: fill only if the site's MinIO needs static keys (else leave "" for
-  # the default boto3 credential chain)
-  accessKeyId: ""
-  secretAccessKey: ""
-
-# -- RAG parameters ---------------------------------------------------------------------------
-rag:
-  ocr: false
-  captionWithAsr: true
-  captionWithVlm: true
-  # Keep false on SE G2: URLs containing ".serving." are rewritten to their
-  # in-cluster .svc.cluster.local form.
-  remote: false
-  dedupThreshold: 0.995
-
-# -- Qdrant --------------------------------------------------------------------------------------
-# Single-replica chart: Qdrant runs as one StatefulSet; the API mounts its
-# PVC read-only (mountReadOnly above) to report disk usage.
+# Single-replica chart: one Qdrant StatefulSet; the API mounts its PVC
+# read-only (mountReadOnly above) for disk reporting.
 qdrant:
   image:
     repository: qdrant/qdrant
@@ -123,56 +51,161 @@ qdrant:
   httpPort: 6333
   telemetryDisabled: true
 
-# -- MCP server (sidecar) --------------------------------------------------------------------------
+redis:
+  enabled: false
+  password: ''
+
+# ============================================================================
+# Resources
+# ============================================================================
+
+resources:
+  app:
+    requests: {cpu: 2, memory: 2Gi}
+    limits: {cpu: 4, memory: 8Gi}
+  qdrant:
+    requests: {cpu: '4', memory: 16Gi}
+    limits: {cpu: '8', memory: 32Gi}
+
+persistence:
+  data:
+    size: 50Gi
+    storageClass: gl4f-filesystem
+    accessMode: ReadWriteMany
+  qdrant:
+    size: 50Gi
+    storageClass: gl4f-filesystem
+    accessMode: ReadWriteMany
+    mountReadOnly: true
+
+# The embedder is the only required endpoint; leave url "" to disable a role.
+
+# ============================================================================
+# Secrets
+# ============================================================================
+
+# The embedder is the only required endpoint; leave url "" to disable a role.
+models:
+  embedder:
+    name: RamManavalan/Qwen3-VL-Embedding-8B-FP8
+    url: https://qwen3-vl-embedding-8b.project-user-andrew-bydlon.serving.${DOMAIN_NAME}
+    className: MultiModalEmbeddings
+    extra:
+      embedding_dim: 4096
+      chunk_size: 2048
+      chunk_overlap: 256
+      code_chunk_size: 8192
+      code_chunk_overlap: 512
+      tokenizer_name: Qwen/Qwen3-VL-Embedding-8B
+      tokenizer_type: HuggingFace
+      # Fingerprint-guard alias: datasets indexed under the old id survive the
+      # FP8 swap (>=0.95 cosine); requires an alias-capable image (v4.0.0 rejects unknown extra keys).
+      alias: Qwen/Qwen3-VL-Embedding-8B
+  reranker:
+    name: Qwen/Qwen3-VL-Reranker-8B
+    # optional — precision at the cost of latency
+    url: https://qwen3-vl-reranker-8b.project-user-andrew-bydlon.serving.${DOMAIN_NAME}
+    className: MultiModalReranker
+    extra: {}
+  vlm:
+    name: Qwen/Qwen3.8-27B-FP8
+    # optional — captions images/videos, converts them at query time
+    url: https://qwen-38-27b.project-user-andrew-bydlon.serving.${DOMAIN_NAME}
+    extra: {}
+  asr:
+    name: CohereLabs/cohere-transcribe-03-2026
+    # optional — transcribes audio + video soundtracks
+    url: https://cohere-transcribe-03-2026.project-user-andrew-bydlon.serving.${DOMAIN_NAME}
+    extra: {}
+
+# Rendered into the <name>-model-keys Secret (env MODEL_*_API_KEY).
+# SE G2: platform JWTs for the serving endpoints — kept ONLY in helm/local/.
+modelSecrets:
+  # Broadest-secret mode: one Secret you own carries MODEL_*_API_KEY (+ optional
+  # MODEL_*_URL, S3_*, REDIS_PASSWORD) — build from helm/local/secrets.template.yaml.
+  existingSecret: ""
+  embedderApiKey: "<EMBEDDER_API_KEY>"
+  rerankerApiKey: "<RERANKER_API_KEY>"
+  vlmApiKey: "<VLM_API_KEY>"
+  asrApiKey: "<ASR_API_KEY>"
+
+# Endpoint URL is non-sensitive (ConfigMap); access keys go into the Secret.
+
+# ============================================================================
+# App Defaults
+# ============================================================================
+
+rag:
+  ocr: false
+  captionWithAsr: true
+  captionWithVlm: true
+  # Keep false on SE G2: ".serving." URLs rewrite to in-cluster.svc.cluster.local.
+  remote: false
+  dedupThreshold: 0.995
+  # Ingest-time contextual retrieval (RAG_CONTEXTUAL_DEFAULT) — off; the
+  # per-dataset checkbox is the recommended path (blast radius = one dataset).
+  # A deploy-wide default stamps every NEW dataset (cost: one small LLM call
+  # per real-text chunk — preview via
+  # POST /api/admin/datasets/{name}/contextual-preview first).  To enable:
+  # contextual: true
+  contextual: false
+
+  # Weighted-RRF create-time default (RAG_RRF_DEFAULT) — DISABLED on purpose:
+  # a global non-neutral default shifts EVERY new dataset's ranking; prefer the
+  # per-dataset editor (or sparse_weight/dense_weight per search).  A deploy-
+  # wide default, if wanted: sparse > dense for code/log-heavy corpora
+  # (rank-space tilts — trust the order, not the magnitude):
+  rrfDefault:
+    enabled: false
+    dense: 1.0
+    sparse: 1.0
+    k: 2
+    # Example (mild sparse tilt for code/log corpora — uncomment to apply):
+    # enabled: true
+    # dense: 1.0
+    # sparse: 1.5
+    # k: 2
+
+  # Unlock TTL bound (RAG_UNLOCK_MAX_TTL) — 0 HERE: opts this deployment into
+  # NO-EXPIRY unlocks (the /access "No expiry (0)" option — a lease lasts
+  # until an explicit Lock; an MCP ttl=0 lease until pod restart).
+  unlockMaxTtl: 0
+# Single-replica chart: one Qdrant StatefulSet; the API mounts its PVC
+# read-only (mountReadOnly above) for disk reporting.
+
 mcp:
   apiKey:
+    # pre-create first — the chart never creates/inlines this key:
+    # kubectl -n <ns> create secret generic mcp-fleet-apikeys \
+    # --from-literal='api-keys=<key1>,<key2>'
     existingSecret: "mcp-fleet-apikeys"
     existingSecretKey: "api-keys"
+  # per-user keys + ACLs — KEY MATERIAL (Secret pipeline; never commit).
+  # Empty on this site: per-user keys are minted on /access ( overlay).
+  # read-only grants: "name:ds1:ro,ds2:rw" — a bare token = rw (default); ":ro" makes the grant read-only (writes refuse); "*:ro" = read-only-all. Env syntax only — the Admin UI sends {name, mode} objects instead.
+  apiKeyClients: ""
+  datasetAcls: ""
 
   enabled: true
   port: 9090
 
-# -- Service configuration -----------------------------------------------------------------------------
-service:
-  api:
-    type: ClusterIP
-    port: 80
-  mcp:
-    type: ClusterIP
-
-# -- Resources ---------------------------------------------------------------------------------------------
-# SITE: tune to the namespace quota
-resources:
-  app:
-    requests:
-      memory: 2Gi
-      cpu: 2
-    limits:
-      memory: 8Gi
-      cpu: 4
-  qdrant:
-    requests:
-      memory: 16Gi
-      cpu: '4'
-    limits:
-      memory: 32Gi
-      cpu: '8'
-
 extraEnv: {}
 
-# -- Security hardening ------------------------------------------------------------------------------------------
+# ============================================================================
+# Security
+# ============================================================================
+
 # mediaTokenSecret is REQUIRED: both the API and MCP containers refuse to
 # start without it. Generate: python -c "import secrets; print(secrets.token_hex(32))"
 security:
-  # SITE: the chart ships NO key material (hidden 2026-09, P0-7). Replace
-  # both fillers, leave '' to let the chart auto-generate per install, or
-  # point security.existingSecret at a Secret you manage. Rotation is
-  # OPTIONAL and operator-initiated — read helm/ROTATION.md first.
-  apiKey: "<RAG_API_KEY>"
-  mediaTokenSecret: "<MEDIA_TOKEN_SECRET>"
-  # Optional: Secret you manage providing both keys (key names in
-  # existingSecretApiKey / existingSecretMediaTokenKey).
-  existingSecret: ''
+  # key material lives in a Secret YOU manage — the chart renders
+  # neither key into its own Secret when this is set; both containers read it
+  # via secretKeyRef and refuse to start without MEDIA_TOKEN_SECRET:
+  # kubectl -n <ns> create secret generic rag-platform-keys \
+  # --from-literal=RAG_API_KEY='<deployment key>' \
+  # --from-literal=MEDIA_TOKEN_SECRET='<64-hex secret>'
+  # Rotation = update the Secret + roll the pods (env binds at pod start).
+  existingSecret: "rag-platform-keys"
   existingSecretApiKey: RAG_API_KEY
   existingSecretMediaTokenKey: MEDIA_TOKEN_SECRET
   mediaTokenTtl: 3600
@@ -185,40 +218,116 @@ security:
   mediaAllowPathPrefixes: /data/datasets:/data/staging
   pwMaxFailures: 10
   pwFailWindow: 300
-  # true is correct on SE G2 / hosted trials: an enforcing auth proxy
-  # (oauth2-proxy) overwrites the identity headers on every request.
+  # true: an enforcing auth proxy (oauth2-proxy / ezaf-gateway) overwrites the
+  # identity headers on every request.
   trustProxyIdentity: true
 
-# -- Redis (unused by the single-replica chart; kept for template uniformity) ---------------------------------------
-redis:
-  enabled: false
-  password: ''
+  # / self-service selection + key minting — ON this site (env
+  # RAG_ACCESS_STORE): every registry key gets the /access checkbox model
+  # (passwords saved per identity under /data/access; ★ memory binding
+  # server-side so opencode needs only the API key) and the admin gets the
+  # User-keys panel (mint/grant/rotate/revoke, applied next request).  Per-user
+  # keys come from mcp.apiKeyClients (env) or the page mint (overlay) — merged.
+  accessStore: true
+  # ceiling: comma-separated datasets that can never be self-selected.
+  accessDenySelect: ''
+  accessSelfMint: true   # ezaf-gateway proxy identities mint/rotate their own key on the Access page
+  # Fallback memory dataset (RAG_MEMORY_DEFAULT) for callers without a ★ binding.
+  memoryDefault: ''
+  # Empty: security.existingSecret above supplies both (inline = back-compat only).
+  apiKey: ''
+  mediaTokenSecret: ''
+  # Keep false: in-cluster Prometheus scrapes without a token.  If true, also
+  # set metrics.serviceMonitorBearerSecret (the scraper's bearer token).
+  metricsAuth: false
+  oidc:
+    enabled: true
+    issuer: "https://keycloak.${DOMAIN_NAME}/realms/UA"
+    audience: ua
+    identityClaim: preferred_username
+    # In-cluster Keycloak headless service (plain HTTP inside the mesh).
+    jwksUrl: "http://keycloak-headless.keycloak.svc.cluster.local:8080/realms/UA/protocol/openid-connect/certs"
+    jwksRefreshSeconds: 3600
+    observedTtl: 86400
+    fetchTimeoutSeconds: 3
+    clockSkewSeconds: 60
 
-# -- Metrics (optional) -----------------------------------------------------------------------------------------------
+    platformCa:
+      configMapName: ezaf-root-ca
+      configMapKey: ezaf-root-ca.crt
+
+    sso:
+      enabled: true
+      clientId: ua
+      # Substituted by the PCAI values editor at deploy time.
+      clientSecret: "${OIDC_CLIENT_SECRET}"
+      clientExistingSecret: ""
+      clientExistingSecretKey: clientSecret
+      redirectUri: "https://rag-mcp-server.${DOMAIN_NAME}/oauth/oidc/callback"
+      providerUrl: "https://keycloak.${DOMAIN_NAME}/realms/UA/.well-known/openid-configuration"
+      scopes: "openid profile email"
+      cookieName: pcai-sso
+      cookieMaxAgeSeconds: 43200
+      cookieSecure: true
+  ssoGate: false
+
 metrics:
   serviceMonitor: false
   interval: 30s
+  # With metricsAuth on: the Secret/key the ServiceMonitor presents as its
+  # scrape bearer token.
+  serviceMonitorBearerSecret: ''
+  serviceMonitorBearerSecretKey: RAG_API_KEY
 
-# -- Backups (optional) ---------------------------------------------------------------------------------------------------
+# ============================================================================
+# S3 Related
+# ============================================================================
+
+# Endpoint URL is non-sensitive (ConfigMap); access keys go into the Secret.
+s3:
+  endpointUrl: http://minio.minio.svc.cluster.local:9000
+  accessKeyId: ""
+  secretAccessKey: ""
+
 backups:
   enabled: false
   schedule: 0 3 * * *
   bucket: ''
   retentionDays: 0
 
-# -- PCAI (HPE Ezmeral Unified Analytics) integration -----------------------------------------------------------------------
+# Reconciler CronJob: each tick POSTs the prefixes to batch-urls with sync=true
+# (new/changed ingest, deleted prune, unchanged skip via the ETag/Size state;
+# s3:// directory URLs validated at render time; the job presents X-RAG-Api-Key
+# from the model-keys Secret).  SITE: point the prefix at something the G2
+# MinIO (s3.endpointUrl) actually holds; enabled: true to demo.
+watchedSources:
+  enabled: false
+  schedule: '*/15 * * * *'
+  sources: []
+  # sources:
+  # - dataset: showcase-docs
+  # prefixes:
+  # - s3://mlis-models/showcase-docs/      # change me — bucket/prefix your S3 holds
+
+# ============================================================================
+# PCAI Networking
+# ============================================================================
+
+service:
+  api:
+    type: ClusterIP
+    port: 80
+  mcp:
+    type: ClusterIP
+
 ezua:
   enabled: true
   virtualService:
-    # SITE: SE-G2 cluster domain (literal — or use rag-mcp-server.${DOMAIN_NAME})
-    endpoint: rag-mcp-server.pcai-se-ai-application.hst.rdlabs.hpecorp.net
+    endpoint: rag-mcp-server.${DOMAIN_NAME}
     istioGateway: istio-system/ezaf-gateway
     timeout: 300s
     longTimeout: 3600s
   authorizationPolicy:
-    # SITE: false on SE G2 — the ezaf-gateway applies HPE SSO centrally, so the
-    # chart does not create its own AuthorizationPolicy. Set true (+ provider
-    # oauth2-proxy) on customer PCAI clusters.
-    enabled: false
+    enabled: true
     namespace: istio-system
     providerName: oauth2-proxy

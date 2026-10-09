@@ -40,9 +40,23 @@ def _classify_url(url: str) -> str | None:
         if mime.startswith("audio/"):
             return "audio"
         return None
-    # Local file path
-    if not url.startswith(("http://", "https://", "file://")) and os.path.isfile(url):
-        mime = _detect_media_type(url)
+    # Local file path — sniff only paths inside the media allowlist: this
+    # read runs BEFORE any fetch guard, so without the check every existing
+    # bare path (e.g. /etc/passwd) was opened for the 32-byte header probe
+    # even though the fetch itself would later refuse it (audit P0-2,
+    # defense in depth).  Cross-validation 1-α: the file:// form takes the
+    # SAME gate — without it `file:///etc/shadow.jpg` fell through to
+    # mimetypes.guess_type on the path string and was classified media
+    # (a sniff-shaped decision on an out-of-prefix path, though no read).
+    if not url.startswith(("http://", "https://")):
+        local = url.removeprefix("file://")
+        if not os.path.isfile(local):
+            return None
+        from .media_paths import _media_path_allowed
+
+        if not _media_path_allowed(local):
+            return None
+        mime = _detect_media_type(local)
         if mime.startswith("image/"):
             return "image"
         if mime.startswith("video/"):
@@ -210,6 +224,58 @@ def _detect_media_type(file_path: str) -> str:
     # 6️⃣  Nothing matched – generic fallback
     # ------------------------------------------------------------------
     return "application/octet-stream"
+
+
+def _guard_media_fetch(url: str) -> None:
+    """Policy + allowlist guard for every media ref the embedder fetches.
+
+    Audit P0-2: the fetch helpers below used to ``open()`` whatever local ref
+    they were handed — ``file:///etc/passwd`` (or a bare ``/etc/passwd``)
+    reached the read site unguarded whenever a caller skipped its own entry
+    gating, and the bytes went straight into the embed request.  Every fetch
+    site in this module now calls this guard BEFORE dispatching, so the
+    model_adapters layer is safe REGARDLESS of caller:
+
+    * http(s) — the media URL policy (``url_policy._check_media_url_policy``)
+      runs at check time, the same gate the MCP/REST entry points apply, so
+      this is idempotent for gated callers and closes the hole for internal
+      ones.  Residual (documented, matches the pre-existing branch):
+      ``follow_redirects`` hops are not re-validated — the pinned-fetch
+      upgrade lives in ``rag_system._afetch_media_bytes``.
+    * ``data:`` — inert (never read from disk, size-bounded by the request
+      body cap); keeps its pre-existing flow.
+    * everything else (``file://`` / bare path) — REUSES the canonical
+      allowlist helper ``media_paths._media_path_allowed`` (realpath-resolved,
+      prefix allowlist, fail-closed) and raises :class:`MediaRefError` on
+      refusal — the same contract rag_system's media fetch raises — rather
+      than reimplementing the prefix logic here.
+    """
+    if not isinstance(url, str):
+        return
+    if url.startswith(("http://", "https://")):
+        # Lazy import: url_policy lazily imports media_paths and vice versa —
+        # keep this coupling lazy too (house convention) so no import order
+        # can cycle.
+        from .url_policy import _check_media_url_policy
+
+        _check_media_url_policy(url)
+        return
+    if url.startswith("data:"):
+        return
+    if url.startswith("s3://"):
+        # Cross-validation 1-β: agree with url_policy._check_media_url_policy
+        # (which treats s3:// as out of scope for the media policy) by
+        # refusing it HERE with the same error type — the server never
+        # fetches S3 refs at query time (ingest goes through /batch-urls).
+        from .media_paths import MediaRefError
+
+        raise MediaRefError("S3 media refs are not fetched at query time — ingest via /batch-urls instead.")
+    from .media_paths import MediaRefError, _media_path_allowed
+
+    path = url.removeprefix("file://")
+    if not _media_path_allowed(path):
+        # Message parity with rag_system's local-media refusals.
+        raise MediaRefError(f"Local media path '{path}' is outside the allowed prefixes (MEDIA_ALLOW_PATH_PREFIXES)")
 
 
 class InputConversion:
@@ -520,6 +586,11 @@ class InputConversion:
         max_px = self.emb.mm_processor_kwargs.get("max_pixels", 0) if hasattr(self.emb, "mm_processor_kwargs") else 0
         nf = num_frames if num_frames is not None else self.max_video_frames
 
+        # Guard BEFORE any I/O: http(s) runs the URL policy; file:///bare
+        # paths must be inside the media-path allowlist (audit P0-2 — this
+        # branch previously decoded whatever local path it was handed).
+        _guard_media_fetch(url)
+
         if url.startswith(("http://", "https://")):
             response = await self.emb.http_async_client.get(url, follow_redirects=True)
             response.raise_for_status()
@@ -553,6 +624,13 @@ class InputConversion:
         potentially large blobs) is offloaded to the default thread pool so
         it never stalls the event loop shared by concurrent requests.
         """
+        # Guard BEFORE any I/O (audit P0-2): the local branch below used to
+        # ``open()`` whatever it was handed — an unguarded ``file:///etc/passwd``
+        # became base64 in the embed request.  http(s) re-runs the URL policy,
+        # file:///bare paths must pass the media-path allowlist, ``data:``
+        # stays inert.
+        _guard_media_fetch(url)
+
         if url.startswith(("http://", "https://")):
             response = await self.emb.http_async_client.get(url, follow_redirects=True)
             response.raise_for_status()
@@ -661,6 +739,9 @@ class InputConversion:
     def _add_raw_url(self, requests: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for input_dict in requests:
             for url in input_dict.pop("_audio_urls", []):
+                # Same guard as the async twin (audit P0-2): the local
+                # branches below open() bare/file:// refs directly.
+                _guard_media_fetch(url)
                 if url.startswith(("http://", "https://", "data:")):
                     input_dict["content"].insert(0, {"type": "audio_url", "audio_url": {"url": url}})
                 else:
@@ -676,6 +757,8 @@ class InputConversion:
                     )
 
             for url in input_dict.pop("_image_urls", []):
+                # Same guard as the async twin (audit P0-2).
+                _guard_media_fetch(url)
                 if url.startswith(("http://", "https://", "data:")):
                     # Remote URL or model-ready data URL (tier 3) — pass
                     # through without client-side resize; the server applies
@@ -716,6 +799,8 @@ class InputConversion:
                         logger.warning("Skipping unreadable image %s: %s", url[:80], img_exc)
 
             for url in input_dict.pop("_video_urls", []):
+                # Same guard as the async twin (audit P0-2).
+                _guard_media_fetch(url)
                 if url.startswith(("http://", "https://", "data:")):
                     input_dict["content"].insert(0, {"type": "video_url", "video_url": {"url": url}})
                 else:

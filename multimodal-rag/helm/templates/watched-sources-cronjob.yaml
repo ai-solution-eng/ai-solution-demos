@@ -1,0 +1,266 @@
+{{- if .Values.watchedSources.enabled }}
+{{- /* Config validation at values-parse time (the review's "helm template
+       check"): a bad prefix must fail the render, not 3 a.m. in a cron log.
+       Rules mirror the server's _sync_prefixes: every prefix is an s3://
+       directory URL (single-object s3://file and http(s) URLs raise); every
+       source carries a dataset name and at least one prefix; a reserved
+       `type:` field must stay "s3" (SharePoint is a follow-up per decision
+       2026-09); and a prefix whose last key segment carries an extension
+       without a trailing slash (a single object) is rejected — the server's
+       _sync_prefixes refuses it too (no meaningful prune scope). */ -}}
+{{- $seenDatasets := dict -}}
+{{- range $i, $src := .Values.watchedSources.sources -}}
+{{-   $srcType := $src.type | default "s3" -}}
+{{-   if ne $srcType "s3" -}}
+{{-     fail (printf "watchedSources.sources[%d]: unsupported type %q — only \"s3\" sources are supported in v1 (SharePoint is a follow-up)" $i $srcType) -}}
+{{-   end -}}
+{{-   $dsName := $src.dataset | default "" -}}
+{{-   if not $dsName -}}
+{{-     fail (printf "watchedSources.sources[%d]: 'dataset' is required (the reconciler ingests into a named dataset)" $i) -}}
+{{-   end -}}
+{{-   if hasKey $seenDatasets $dsName -}}
+{{-     fail (printf "watchedSources.sources[%d]: dataset %q appears more than once — merge its prefixes into one source (serial per source, one batch-urls call each)" $i $dsName) -}}
+{{-   end -}}
+{{-   $_ := set $seenDatasets $dsName true -}}
+{{-   $prefixes := $src.prefixes | default list -}}
+{{-   if not $prefixes -}}
+{{-     fail (printf "watchedSources.sources[%d] (dataset %q): at least one prefix is required" $i $dsName) -}}
+{{-   end -}}
+{{-   range $j, $pfx := $prefixes -}}
+{{-     $pfxStr := $pfx | toString -}}
+{{-     if not (hasPrefix "s3://" $pfxStr) -}}
+{{-       fail (printf "watchedSources.sources[%d].prefixes[%d] (dataset %s): prefix %q must be an s3:// URL — sync reconciles S3 prefixes only" $i $j $dsName $pfx) -}}
+{{-     end -}}
+{{-     $keyPart := substr 5 (int -1) $pfxStr -}}
+{{-     $nopfx := trimAll "/" $keyPart -}}
+{{-     if or (contains "*" $nopfx) (contains "?" $nopfx) (contains " " $nopfx) -}}
+{{-       fail (printf "watchedSources.sources[%d].prefixes[%d] (dataset %s): prefix %q must name a concrete key prefix (no wildcard/query/whitespace)" $i $j $dsName $pfx) -}}
+{{-     end -}}
+{{-     $lastSeg := last (splitList "/" $nopfx) -}}
+{{-     if and $lastSeg (contains "." $lastSeg) (not (hasSuffix "/" $keyPart)) -}}
+{{-       fail (printf "watchedSources.sources[%d].prefixes[%d] (dataset %s): prefix %q looks like a single object — sync requires an s3:// directory prefix (trailing slash or extension-less key)" $i $j $dsName $pfx) -}}
+{{-     end -}}
+{{-   end -}}
+{{- end -}}
+{{- if not .Values.watchedSources.sources -}}
+{{-   fail "watchedSources.enabled=true but watchedSources.sources is empty — add at least one {dataset, prefixes} source (or leave enabled=false)" -}}
+{{- end -}}
+# Opt-in watched S3 sources reconciler: on each tick, for every configured
+# source, POSTs the configured s3:// prefixes to
+# POST /api/datasets/{dataset}/batch-urls with {"urls": [...], "sync": true}
+# — the server ingests new/changed objects, prunes objects deleted upstream,
+# and skips unchanged objects via the per-dataset ETag/Size state
+# (files/.watched_state.json).  Serial per source, fail-soft: one bad source
+# is logged and does not kill the run.  The bucket allowlist
+# INGEST_ALLOW_S3_BUCKETS still applies server-side — keep it documented as
+# the multi-tenant guard.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .Values.deployment.name }}-watched-sources
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.deployment.appName }}
+spec:
+  schedule: {{ .Values.watchedSources.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      # Keep the finished Job (and its failed pod) around long enough to
+      # read the logs: the TTL controller deletes the Job cascadingly
+      # (pods included) after this many seconds.  failedJobsHistoryLimit
+      # above is what evicts the JOB after 3 later ticks; this bounds the
+      # pod lifetime WITHIN that window so a failing tick is debuggable.
+      ttlSecondsAfterFinished: 3600
+      template:
+        metadata:
+          # Deliberately NO hpe-ezua vendor labels on cron pods: the platform's
+          # scheduler-stamping vendor policy makes labeled pods undeletable on
+          # pod update (immutable schedulerName; G2 2026-09-24 incident). The
+          # app-catalog status comes from the long-running pods — see the
+          # pod-template comment in templates/deployment.yaml.
+          labels:
+            app: {{ .Values.deployment.appName }}
+        spec:
+          automountServiceAccountToken: false
+          # Never (not OnFailure): with OnFailure the job controller DELETES
+          # the pod the moment backoffLimit is reached (observed 2026-09
+          # pcai-se: SuccessfulDelete ~5 s after start — the cron's failure
+          # output was unreachable).  With Never the failed pod stays in
+          # place as a terminated pod owned by the (TTL-retained) Job, so
+          # `kubectl logs <pod>` still works after the failure.  The script
+          # is idempotent per tick (409-tolerant bootstrap + ETag-skip
+          # sync), so a fresh pod on retry costs nothing.
+          restartPolicy: Never
+          containers:
+            - name: watched-sources
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command:
+                - python
+                - -c
+                - |
+                  import json, os, sys, httpx
+
+                  # Sources arrive as JSON (built from the values at render
+                  # time) — no YAML parsing, no quoting hazards in argv.
+                  sources = json.loads(os.environ["WATCHED_SOURCES_JSON"])
+                  api = os.environ["BACKUP_API_URL"].rstrip("/")
+                  api_key = os.environ.get("RAG_API_KEY") or ""
+                  if not api_key:
+                      print("[watched] WARNING: RAG_API_KEY empty — auth-enabled deployments will 401 every call")
+                  headers = {"X-RAG-Api-Key": api_key} if api_key else {}
+                  ok = failed = skipped = 0
+                  for src in sources:
+                      name = src.get("dataset", "")
+                      prefixes = src.get("prefixes") or []
+                      if not name or not prefixes:
+                          print(f"[watched] skip malformed source (dataset={name!r}, prefixes={len(prefixes)})")
+                          skipped += 1
+                          continue
+                      # Ensure the dataset exists before syncing: batch-urls
+                      # answers 404 for an unknown dataset and the sync job
+                      # never starts, which read as a baffling instant-cron
+                      # failure when the dataset was simply not created yet
+                      # (2026-09 pcai-se incident: showcase-* placeholders).
+                      # 409 = already exists = success. This is bootstrap-only
+                      # — it never re-configures an existing dataset.
+                      try:
+                          cr = httpx.post(
+                              f"{api}/api/datasets",
+                              headers=headers,
+                              json={"name": name, "description": f"Watched S3 source (auto-created by the watched-sources cron)"},
+                              timeout=httpx.Timeout(60.0, connect=30.0),
+                          )
+                          if cr.status_code == 409:
+                              pass  # already exists — the expected steady state
+                          else:
+                              cr.raise_for_status()
+                              print(f"[watched] {name}: dataset auto-created (was missing — previous ticks 404'd)")
+                      except Exception as exc:
+                          print(f"[watched] FAILED {name}: dataset bootstrap failed ({exc}) — "
+                                f"the sync below would 404 against a missing dataset; creating it failed independently")
+                          failed += 1
+                          continue
+                      try:
+                          # sync=true: ingest new/changed, prune deleted,
+                          # skip unchanged (per-dataset ETag/Size state).
+                          # Serial per source; poll the returned job to the
+                          # terminal status so a slow embed batch cannot
+                          # overlap the next tick under concurrencyPolicy:
+                          # Forbid.
+                          r = httpx.post(
+                              f"{api}/api/datasets/{name}/batch-urls",
+                              headers=headers,
+                              json={"urls": list(prefixes), "sync": True},
+                              timeout=httpx.Timeout(120.0, connect=30.0),
+                          )
+                          r.raise_for_status()
+                          job_id = r.json().get("job_id")
+                          if not job_id:
+                              raise RuntimeError(f"no job_id in response: {r.text[:200]}")
+                          status, error = "uploading", None
+                          for _ in range(720):  # ≤2h poll window per source
+                              import time as _time
+
+                              _time.sleep(5.0)
+                              pr = httpx.get(
+                                  f"{api}/api/datasets/{name}/upload-status/{job_id}",
+                                  headers=headers,
+                                  timeout=30.0,
+                              )
+                              pr.raise_for_status()
+                              job = pr.json()
+                              status = job.get("status", "uploading")
+                              if status in ("complete", "error"):
+                                  error = job.get("error")
+                                  break
+                          if status != "complete":
+                              raise RuntimeError(f"job {job_id} ended as {status}: {error}")
+                          res = job.get("result") or {}
+                          files = res.get("files") or []
+                          n_err = sum(1 for f in files if f.get("error"))
+                          n_ok = sum(1 for f in files if not f.get("error"))
+                          sync_res = res.get("sync") or {}
+                          print(
+                              f"[watched] {name}: {len(prefixes)} prefix(es) — {n_ok} object(s) processed"
+                              f" ({n_err} failed), pruned {sync_res.get('pruned_points', 0)} point(s)"
+                              f" / {len(sync_res.get('pruned_sources') or [])} source(s)"
+                          )
+                          ok += 1
+                      except Exception as exc:
+                          # Fail-soft: one bad source must not kill the run.
+                          print(f"[watched] FAILED {name}: {exc}")
+                          msg = str(exc)
+                          if "404" in msg or "not found" in msg.lower():
+                              print(f"[watched] HINT {name}: the dataset or an s3:// prefix was not found — "
+                                    f"check the dataset exists and the prefix exists on S3_ENDPOINT_URL "
+                                    f"($ aws --endpoint-url {os.environ.get('S3_ENDPOINT_URL', 'http://minio.minio.svc.cluster.local:9000')} "
+                                    f"s3 ls s3://<bucket>/<prefix>/)")
+                          elif "credentials" in msg.lower() or "InvalidAccessKeyId" in msg or "SignatureDoesNotMatch" in msg:
+                              print(f"[watched] HINT {name}: S3 rejected the credentials — the chart wires "
+                                    f"s3.accessKeyId/secretAccessKey into the model-keys Secret as "
+                                    f"S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY; empty values there fall back to "
+                                    f"the boto3 default chain and fail against MinIO")
+                          elif "NoSuchBucket" in msg:
+                              print(f"[watched] HINT {name}: bucket does not exist on the S3 endpoint — "
+                                    f"create it (or fix the prefix in watchedSources.sources)")
+                          failed += 1
+                  print(f"[watched] done: {ok} ok, {failed} failed, {skipped} skipped")
+                  raise SystemExit(1 if failed and not ok else 0)
+              envFrom:
+                - configMapRef:
+                    name: {{ .Values.deployment.name }}-config
+                - secretRef:
+                    name: {{ .Values.deployment.name }}-model-keys
+                {{- if .Values.modelSecrets.existingSecret }}
+                # User-owned model Secret — S3_*/REDIS_PASSWORD (and any model
+                # keys) it carries override the chart-managed Secret here too;
+                # keys it omits keep the seeded/stored values.
+                - secretRef:
+                    name: {{ .Values.modelSecrets.existingSecret }}
+                {{- end }}
+              env:
+                - name: BACKUP_API_URL
+                  value: "http://{{ .Values.deployment.name }}-api.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.api.port }}"
+                - name: WATCHED_SOURCES_JSON
+                  value: {{ .Values.watchedSources.sources | toJson | quote }}
+                {{- if .Values.security.existingSecret }}
+                # REST API key + media-token secret come from the user-owned
+                # Secret (security.existingSecret) — the chart-managed
+                # -model-keys Secret renders neither key in that mode, so
+                # envFrom alone would leave RAG_API_KEY empty (401 on every
+                # cron tick).
+                - name: RAG_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.security.existingSecret }}
+                      key: {{ .Values.security.existingSecretApiKey }}
+                - name: MEDIA_TOKEN_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.security.existingSecret }}
+                      key: {{ .Values.security.existingSecretMediaTokenKey }}
+                {{- end }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                requests:
+                  memory: "256Mi"
+                  cpu: "200m"
+                limits:
+                  memory: "1Gi"
+                  cpu: "1"
+          volumes:
+            - name: tmp
+              emptyDir: {}
+{{- end }}

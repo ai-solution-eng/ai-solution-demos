@@ -24,7 +24,10 @@ by precedence:
    `security.existingSecretApiKey` / `security.existingSecretMediaTokenKey`, defaults
    `RAG_API_KEY` / `MEDIA_TOKEN_SECRET`). The chart then renders **neither** key into its
    own Secret, and `templates/deployment.yaml` wires both env vars from your Secret via
-   `secretKeyRef` (both containers).
+   `secretKeyRef` (both containers). **2026-09: the watched-sources and backup CronJobs
+   wire the same two `secretKeyRef`s when `existingSecret` is set** — their `envFrom`
+   of the chart Secret alone would otherwise leave `RAG_API_KEY` empty in that mode
+   (401 on every cron tick; found while switching g2 to `rag-platform-keys`).
 2. **Inline values** `security.apiKey` / `security.mediaTokenSecret` — kept for
    **back-compat**: an existing values file that sets them behaves exactly as before.
 3. **Lookup reuse** — `lookup "v1" "Secret" .Release.Namespace <deployment.name>-model-keys`:
@@ -106,9 +109,26 @@ rotation, which was explicitly not wanted**:
 |---|---|---|
 | `helm-scale-large/local/values.g2.yaml` (ex-se_g2.yaml; deleted 2026-09-18 — merged into values.g2.yaml) | `security.apiKey`, `security.mediaTokenSecret` | `_55_V…PoPd`, `5787d…a7dd` |
 | `helm-scale-large/local/values.g2.yaml` (57-60, 144-145) | `modelSecrets.*ApiKey` (4 model-serving **JWTs**), `security.apiKey`, `security.mediaTokenSecret` | JWTs (`eyJhbG…`), `_55_V…PoPd`, `5787d…a7dd` |
+| `helm-scale-large/local/secrets.g2.yaml` (**NEW 2026-10**, gitignored, mode 0600) | `MODEL_*_API_KEY` (the 4 MLIS **JWTs**, moved out of values.g2.yaml), `MODEL_*_URL` (4 endpoint overrides — site domain baked, not secret material), `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY` (MinIO) | JWTs (`eyJhbG…`, 914-char, iat 1778014789–1786843671), `admin-io` / `MinIO$2K` — apply as Secret `rag-model-keys` (ns `mm-rag`) via `modelSecrets.existingSecret` |
+
+> **2026-09 update (g2):** the `security.apiKey` / `security.mediaTokenSecret` literals were
+> removed from `helm-scale-large/local/values.g2.yaml` and the release now provisions both
+> keys from the operator-owned Secret `rag-platform-keys` (ns `mm-rag`) via
+> `security.existingSecret` — fresh values generated with `openssl rand -hex 16` (API key)
+> / `openssl rand -hex 32` (media secret), i.e. the old inline values above were **rotated
+> away** (D1 consequences applied: old REST key dead, previously issued media tokens
+> invalid). The model-serving JWTs and MinIO credentials remain in the file (gitignored),
+> still listed here as the working credentials.
+>
+> **2026-10 update (g2):** the model-serving JWTs + MinIO credentials + model endpoint
+> overrides moved out of `values.g2.yaml` into the operator-owned Secret
+> `helm-scale-large/local/secrets.g2.yaml` (Secret `rag-model-keys`, ns `mm-rag`, wired via
+> `modelSecrets.existingSecret`). Rotation is now `kubectl apply` of that manifest (pods
+> hot-reload ≤15s, no rollout) — the values seeds are blanked fallbacks. While the Secret
+> carries `MODEL_*_URL`, values `models.*.url` edits are inert for the running deployment.
 | `helm-scale-large/local/values.omnilife.yaml` (ex-omnilife.yaml, restored 2026-09-18) (88-104, 215-216) | `modelSecrets` JWTs, `s3.accessKeyId`/`s3.secretAccessKey` (MinIO), `security.apiKey`/`mediaTokenSecret` | JWTs, `iZEud…Cbu6`, `MYSwK…Qw81`, `Y4GlF…5M5g`, `ed735…06be` |
 | `helm-scale-large/local/migrate-my-memory.py` (31) | `API_KEY` (G2 REST key baked into the helper script) | `_55_V…PoPd` |
-| `MultimodalRAG/.g2_cluster.yaml` (100-103, 243; repo root) | `modelSecrets.*ApiKey` JWTs + `security.mediaTokenSecret` | JWTs (`eyJhbG…`), `5787d…a7dd` |
+| ~~`MultimodalRAG/.g2_cluster.yaml`~~ (DELETED 2026-09-30 — legacy parallel site-values copy superseded by `helm-scale-large/local/values.g2.yaml`, which sources keys from the `rag-platform-keys` Secret and holds no literals) | was: `modelSecrets.*ApiKey` JWTs + `security.mediaTokenSecret` | JWTs (`eyJhbG…`), `5787d…a7dd` — the media-token literal lived ONLY here; if a rotation ever requires it, mint a FRESH `MEDIA_TOKEN_SECRET` (rolling media-token invalidation) instead of hunting for the old value |
 | SearXNG site file (recorded for A3/wave boundary) | `secretKey` | see §2 "Other app" |
 
 Only a now-false comment in `se_g2.yaml` (since merged into `values.g2.yaml` and deleted; see 2026-09-18 cleanup) ("the charts ship the same default key") was
@@ -130,6 +150,36 @@ becomes tracked or mirrored, the scan goes red.
 Existing inline users: unaffected — precedence 2 keeps their values working verbatim.
 Existing deployed clusters: upgrading does not change their Secret (precedence 3 reuses
 the released values).
+
+### Model / S3 / Redis keys — SECRET-FIRST, sticky (2026-09)
+
+`modelSecrets.*ApiKey`, `s3.accessKeyId`/`secretAccessKey` and `redis.password` follow the
+**opposite flow** of the REST keys: the value already stored in `<release>-model-keys`
+WINS on every upgrade; the values entries only SEED (first install, or after the Secret is
+deleted). Nothing is auto-generated. Practical consequences:
+
+- **Rotate in place (no rollout):** `kubectl -n <ns> edit secret <release>-model-keys` —
+  the `/etc/rag/secrets` mount refreshes (~1s) and the containers' `CONFIG_DIR` watcher
+  rebuilds the models (~15s). The next upgrade preserves your edit (stored value wins).
+- **Reseed from values:** delete the Secret first, then upgrade
+  (`kubectl -n <ns> delete secret <release>-model-keys && helm upgrade …`). Pods inside
+  the delete→upgrade window may show `CreateContainerConfigError` until the upgrade
+  recreates the Secret.
+- **Values edits to already-seeded keys are inert** — the stored value always wins. This
+  is deliberate: an upgrade can never clobber a key rotated out-of-band.
+- **`MODEL_<ROLE>_URL` entries** added out-of-band are sticky the same way (re-rendered
+  from the stored Secret on every upgrade, 2026-10) and OVERRIDE the ConfigMap endpoints
+  (secrets merge after config in `envFrom` and `CONFIG_DIR`). They are never seeded from
+  values — the ConfigMap remains the values-borne source.
+- **User-owned Secret (`modelSecrets.existingSecret`, 2026-10)** — keep key material out
+  of values entirely: point the chart at a Secret you own (canonical key names
+  `MODEL_*_API_KEY`, optional `MODEL_*_URL`, `S3_*`, `REDIS_PASSWORD`). It is wired LAST
+  in `envFrom` and `CONFIG_DIR`, so every key it carries overrides the chart Secret and
+  keys it omits keep the seeded/stored values; rotation is plain `kubectl apply` (or your
+  ESO pipeline) + the ≤15s hot reload, no rollout, no chart involvement. Hard-wired: a
+  missing Secret = `CreateContainerConfigError` (loud), matching
+  `security.existingSecret` semantics. An in-cluster upgrade whose NO source provides an
+  embedder URL/API key fails the render (guard; offline `helm template` skips it).
 
 ---
 

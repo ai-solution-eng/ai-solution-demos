@@ -15,6 +15,7 @@ from typing import Any, NamedTuple
 import numpy as np
 
 import multimodal_rag.utils.bm25 as bm25_lane
+from multimodal_rag.utils import contextualizer
 from multimodal_rag.utils.general_tools import (
     cosine_sim,
     list_chunker,
@@ -42,6 +43,7 @@ from multimodal_rag.vector_store import (
     Document,
     InMemoryVectorStore,
     QdrantVectorStore,
+    RrfParams,
     VectorStore,
     ensure_search_payload_indexes,
     filters_to_predicate,
@@ -159,9 +161,20 @@ def resolve_federated_targets(
     skipped: list[dict[str, str]] = []
     errors: list[dict[str, str]] = []
 
+    # Dataset-name shape gate (audit 2026-10-02, same class as the MCP
+    # _require_dataset_acl fix): a malformed name must be refused BEFORE it
+    # reaches dm.get_dataset → _read_meta → _dataset_dir (a name like
+    # "../datasets/<other>" would otherwise address a sibling dataset's
+    # meta as a federated target).  Mirrors DatasetManager._validate_name.
+    _DATASET_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
     def _consider(name: str, *, from_all: bool = False) -> None:
         name = (name or "").strip()
         if not name or name in targets:
+            return
+        if not _DATASET_NAME_RE.match(name):
+            if not from_all:
+                errors.append({"dataset": name, "error": "Invalid dataset name."})
             return
         try:
             dm.get_dataset(name, sync_count=False)
@@ -551,7 +564,10 @@ def _bm25_ingest_context(vs: VectorStore) -> dict[str, Any] | None:
         # Working copy: load_stats returns the mtime-cached object, and this
         # snapshot is mutated per sub-batch — mutating the cache itself would
         # make the end-of-ingest locked persist re-merge the same counts.
-        "stats": bm25_lane.copy_stats(bm25_lane.load_stats(Path(stats_path))),
+        # ``effective_stats`` also folds in deltas this process has marked but
+        # not yet flushed, so a deferred batch weighs each file against the
+        # same df view immediate mode would have produced (without the write).
+        "stats": bm25_lane.effective_stats(Path(stats_path)),
         "dirty": [],
     }
 
@@ -580,18 +596,35 @@ def _bm25_sparse_vectors(sub_docs: list[Document], ctx: dict[str, Any] | None) -
     return out
 
 
-def _bm25_persist_stats(ctx: dict[str, Any] | None) -> None:
-    """Persist the ingest's df deltas under the cross-process lock (once).
+def _bm25_persist_stats(ctx: dict[str, Any] | None) -> bool:
+    """Hand the ingest's df deltas to the deferred writer; return flush-due.
 
-    A crash before this point loses only the df counts of the stored prefix
-    — the sparse vectors are already on the points, so idf drifts slightly
-    until the stats catch up (never corrupt: idf stays positive).
+    The deltas are only *recorded* here (cheap, in-memory); ``True`` means the
+    count/age threshold fired (or the sidecar is missing entirely) and the
+    caller should run :func:`bm25_lane.flush_if_dirty` off the event loop —
+    that is the once-per-interval multi-MB sidecar rewrite.  Immediate mode
+    (``RAG_BM25_FLUSH_CALLS=1``, or both triggers set <= 0) reports due on
+    every call, reproducing the historical write-per-call behaviour.
+
+    Crash semantics: losing deferred deltas is bounded, not corrupting — the
+    sparse vectors are already on the points, so idf drifts slightly (df low
+    → idf high, always positive) until the next ingest re-counts those files.
+    The sidecar is NEVER silently absent, though: the first ingest of a
+    session against a missing sidecar force-flushes (``mark_dirty`` returns
+    True via :func:`bm25_lane.stats_fully_absent`), because nothing in this
+    repo re-derives the df map from the stored points.  The deltas are
+    dropped from the context after being handed over, so a repeated call on
+    the same context can never double-count.
     """
-    if ctx is not None and ctx["dirty"]:
-        try:
-            bm25_lane.record_documents(ctx["stats_path"], ctx["dirty"])
-        except Exception as exc:
-            logger.warning("Could not persist BM25 df stats (%s) — idf weighting may drift: %s", ctx["stats_path"], exc)
+    if ctx is None or not ctx["dirty"]:
+        return False
+    try:
+        due = bm25_lane.mark_dirty(ctx["stats_path"], ctx["dirty"])
+    except Exception as exc:
+        logger.warning("Could not record BM25 df stats (%s) — idf weighting may drift: %s", ctx["stats_path"], exc)
+        return False
+    ctx["dirty"] = []
+    return bool(due)
 
 
 def _has_embeddable_content(doc: dict, embed_modalities: set[str]) -> bool:
@@ -1525,6 +1558,11 @@ class MultimodalRAG:
     preprocess: bool = True
     preprocess_chunk_size: int = 128
     dedup_threshold: float = 0.995
+    # Ingest-time contextual retrieval (feature: contextual retrieval): when
+    # True, aadd_to_vector_store runs the utils/contextualizer stage 0a½ —
+    # one small LLM call per real-text chunk prepends a "[Document context]:"
+    # line before embedding.  No-op without a VLM; fail-open on LLM errors.
+    contextualize: bool = False
 
     # VectorStore option — pass a ``VectorStore`` instance, a config dict for
     # auto-creation, or ``None`` (in-memory retrieval via ``documents`` param).
@@ -1546,6 +1584,13 @@ class MultimodalRAG:
                 "caption_with_asr is enabled but no ASR model is configured; "
                 "video audio-track captioning will be skipped (auto-disabled). "
                 "Set MODEL_ASR_URL or pass an `asr` model to enable it."
+            )
+
+        if self.contextualize and self.vlm is None:
+            logger.warning(
+                "contextualize is enabled but no VLM model is configured; "
+                "ingest-time contextual retrieval is a no-op (chunks are stored "
+                "plain). Set MODEL_VLM_URL or pass a `vlm` model to enable it."
             )
 
         self._preprocessor = Preprocessor(
@@ -1695,6 +1740,7 @@ class MultimodalRAG:
             ("vlm", _mn(self.vlm) if self.vlm else "(none)"),
             ("asr", _mn(self.asr) if self.asr else "(none)"),
             ("caption_with_asr", str(self.caption_with_asr)),
+            ("contextualize", str(self.contextualize)),
             ("preprocess", str(self.preprocess)),
             ("remote", str(self.remote)),
             ("vector_store", _vs(self.vector_store)),
@@ -2352,6 +2398,26 @@ class MultimodalRAG:
             len(processed),
         )  # type: ignore[attr-defined]
 
+        # ── 0a½. Ingest-time contextual retrieval (feature: contextual) ─────
+        # One small LLM call per real-text chunk prepends a
+        # "[Document context]: …" line before embedding — BEFORE the
+        # sub-batch loop so the whole set is contextualized in producer order
+        # (prefix caching pays only when a document's chunks are consecutive)
+        # and both the base embedding AND the text-only twins embed the
+        # contextualized text.  Skips pure-media docs (no _has_real_text — a
+        # context line would newly count as real text and shift the twin
+        # gating) and memory_kind-tagged docs (memories stay verbatim).
+        # Fail-open: an LLM error stores the plain chunk + ingest warning.
+        # No VLM configured → identity pass-through (the module's gate).
+        if self.contextualize and self.vlm is not None:
+            t_ctx = time.monotonic()
+            processed = await contextualizer.acontextualize_docs(processed, self.vlm)
+            logger.verbose(  # type: ignore[attr-defined]
+                "  %.2fs add_vs  — contextualize (%d docs)",
+                time.monotonic() - t_ctx,
+                len(processed),
+            )  # type: ignore[attr-defined]
+
         # ── 0d helper (used inside sub-batch loop) ────────────────────────
         def _replace_audio(d: dict[str, Any]) -> dict[str, Any]:
             if "audio" not in d:
@@ -2608,8 +2674,21 @@ class MultimodalRAG:
             # sub_embs / sub_docs fall out of scope here — released before the
             # next sub-batch starts.
 
-        # ── 4. Persist the batch's BM25 df deltas (once, locked) ─────────
-        _bm25_persist_stats(bm25_ctx)
+        # ── 4. Defer the batch's BM25 df deltas; flush only when due ──────
+        # dataset_manager calls add_to_vector_store once per FILE, so the old
+        # unconditional persist here rewrote the whole (multi-MB) df map over
+        # NFS 5000 times for a 5000-file batch.  The deltas are now recorded
+        # in memory and merged once the count/age threshold fires (or at
+        # process exit / SIGTERM), with the actual sidecar write offloaded
+        # like every other Qdrant-adjacent I/O on this path.
+        if _bm25_persist_stats(bm25_ctx) and bm25_ctx is not None:
+            _flush_guard = _store_write_guard(vs)
+
+            def _flush_bm25() -> None:
+                with _flush_guard:
+                    bm25_lane.flush_if_dirty(bm25_ctx["stats_path"])
+
+            await loop.run_in_executor(_QDRANT_IO_POOL, _flush_bm25)
 
         if total_skipped:
             logger.info("Dedup total: skipped %d document(s)", total_skipped)
@@ -2802,6 +2881,7 @@ class MultimodalRAG:
         query_vector: list[float] | None = None,
         need_media: bool | None = None,
         filters: dict[str, Any] | None = None,
+        rrf: "RrfParams | None" = None,
     ) -> list[tuple[Any, float]]:
         """Sync wrapper around :meth:`aretrieve`."""
         return sync_wrapper_safe(
@@ -2815,6 +2895,7 @@ class MultimodalRAG:
                 "query_vector": query_vector,
                 "need_media": need_media,
                 "filters": filters,
+                "rrf": rrf,
             },
         )
 
@@ -2828,6 +2909,7 @@ class MultimodalRAG:
         query_vector: list[float] | None = None,
         need_media: bool | None = None,
         filters: dict[str, Any] | None = None,
+        rrf: "RrfParams | None" = None,
     ) -> list[tuple[Any, float]]:
         rerank_active = use_reranker and self.reranker is not None
 
@@ -2850,6 +2932,16 @@ class MultimodalRAG:
         # Applies to the vector-store path only: caller-provided documents
         # carry their media in memory already, so there is no transfer to save.
         media_lite = rerank_active and _rerank_media_lite() and documents is None
+
+        # Weighted RRF (feature: weighted RRF).  The override is meaningful
+        # only on the hybrid lane — it threads through to the text-query
+        # vector-store call below; multimodal (vector-supplied) queries and
+        # caller-provided documents have no fusion to weight and ignore it.
+        # ``None`` (the default) keeps the default fusion request
+        # byte-identical; the ruling for this slice is that caller weights
+        # win uniformly and per-dataset defaults are out of scope.
+        if not isinstance(rrf, RrfParams):
+            rrf = None
 
         # Auto-compute need_media: base64 media payloads are needed when the
         # reranker will consume them — except under media-lite rerank, where
@@ -2903,6 +2995,7 @@ class MultimodalRAG:
                     k=fetch_k,
                     need_media=fetch_need_media,
                     filters=filters,
+                    rrf=rrf,
                 )
             results = [(self._extract_doc(doc), score) for doc, score in docs_and_scores]
 
@@ -3346,12 +3439,18 @@ class MultiModalRAGSystem:
     async def aadd_to_vector_store(self, documents, **kwargs):
         return await self._rag.aadd_to_vector_store(documents, **kwargs)
 
-    def retrieve(self, query, documents=None, top_k=10, use_reranker=True, reranker_top_k=3, query_vector=None):
-        return self._rag.retrieve(query, documents, top_k, use_reranker, reranker_top_k, query_vector=query_vector)
+    def retrieve(
+        self, query, documents=None, top_k=10, use_reranker=True, reranker_top_k=3, query_vector=None, rrf=None
+    ):
+        return self._rag.retrieve(
+            query, documents, top_k, use_reranker, reranker_top_k, query_vector=query_vector, rrf=rrf
+        )
 
-    async def aretrieve(self, query, documents=None, top_k=10, use_reranker=False, reranker_top_k=3, query_vector=None):
+    async def aretrieve(
+        self, query, documents=None, top_k=10, use_reranker=False, reranker_top_k=3, query_vector=None, rrf=None
+    ):
         return await self._rag.aretrieve(
-            query, documents, top_k, use_reranker, reranker_top_k, query_vector=query_vector
+            query, documents, top_k, use_reranker, reranker_top_k, query_vector=query_vector, rrf=rrf
         )
 
     def list_documents(self, limit=50):

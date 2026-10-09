@@ -1,21 +1,22 @@
 # Agent Instructions — Multimodal RAG memory integration
 
-This repo ships a Multimodal RAG MCP server. When connected to opencode it provides **long-term memory** of past interactions via two MCP namespaces:
+This repo ships a Multimodal RAG MCP server. When connected to opencode it provides **long-term memory** of past interactions via MCP tools:
 
-- **`rag-memory`** — personal, per-user long-term memory. Tools: `rag-memory_add_memory`, `rag-memory_search_memory`. The memory dataset and its password are supplied by opencode via request headers, so you do NOT pass `dataset_name` or `password` to these tools.
-- **`rag-knowledge`** — access to the shared project/knowledge datasets. Tools: `rag-knowledge_search_dataset`, `rag-knowledge_list_datasets`, `rag-knowledge_get_dataset_files`, `rag-knowledge_get_dataset_info`, `rag-knowledge_unlock_dataset`, `rag-knowledge_describe_media`, `rag-knowledge_transcribe_audio`. For these you DO pass `dataset_name` explicitly; pass `password` only for protected
-  datasets.
+- **Memory tools** — personal, per-user long-term memory: `add_memory`, `search_memory`, `delete_memory`, `list_memories`, `forget_session`. The memory dataset and its password are resolved **server-side from your identity** (the /access ★ binding + saved selection), so you do NOT pass `dataset_name` or `password` to these tools.
+- **Knowledge tools** — access to the shared project/knowledge datasets: `search_dataset`, `search_datasets`, `list_datasets`, `get_dataset_files`, `get_dataset_info`, `unlock_dataset`, `dataset_add_documents`, `dataset_delete_documents`, `dataset_replace_document`, `describe_media`, `transcribe_audio`. For these you DO pass `dataset_name` explicitly; pass `password` only for protected datasets.
 
-> If neither namespace is connected, ignore this file — the memory tools are unavailable and you should proceed normally.
+Tools arrive prefixed with the MCP connection name (e.g. `rag_add_memory` under the unified 2026-10 config; `rag-memory_add_memory` / `rag-knowledge_search_dataset` under the legacy two-connection pattern). Adapt the prefixes below to whatever `opencode mcp list` shows.
 
-## Long-term memory behavior (rag-memory)
+> If the memory tools are not connected, ignore this file — memory is unavailable and you should proceed normally.
 
-### When to RECALL — `rag-memory_search_memory`
-- At the **start of any non-trivial task** (a task likely to span multiple steps or touch existing code), call `rag-memory_search_memory` with a concise summary of the task. This surfaces relevant past decisions, preferences, gotchas, and prior work before you act.
-- Whenever the **user references prior work** ("remember when…", "like we did before", "last time"), call `rag-memory_search_memory` with the described topic.
+## Long-term memory behavior (memory tools)
+
+### When to RECALL — `search_memory`
+- At the **start of any non-trivial task** (a task likely to span multiple steps or touch existing code), call `search_memory` with a concise summary of the task. This surfaces relevant past decisions, preferences, gotchas, and prior work before you act.
+- Whenever the **user references prior work** ("remember when…", "like we did before", "last time"), call `search_memory` with the described topic.
 - Keep `top_k` at the default (5). Turn the reranker on only if the first recall feels off.
 
-### When to WRITE — `rag-memory_add_memory`
+### When to WRITE — `add_memory`
 A full record of this session (prompts, responses, tool calls, file changes) is captured automatically by the `session-memory-logger` plugin (`kind: session_history`), so don't reproduce the session here — only durable, distilled facts.
 
 After completing a non-trivial task, store a memory **only if** something durable was learned. Worth remembering:
@@ -35,9 +36,9 @@ Do NOT store: transient debugging steps, trivial Q&A, restatements of what is al
 ### Rules
 - Never mention the memory dataset name or password to the user — they are resolved silently server-side and are none of the user's concern.
 - Near-duplicate memories are auto-skipped at cosine ≥ 0.995, so re-saving a learned fact in a later session is a harmless no-op.
-- Wrong or outdated memories can be removed with `rag-memory_delete_memory` (by explicit `memory_id` from `search_memory`/`list_memories` results) — prefer correcting with a new memory when the fact is still useful, and mention the supersession. `rag-memory_forget_session` wipes one session's stored history.
+- Wrong or outdated memories can be removed with `delete_memory` (by explicit `memory_id` from `search_memory`/`list_memories` results) — prefer correcting with a new memory when the fact is still useful, and mention the supersession. `forget_session` wipes one session's stored history.
 - Memory is per-user (per dataset). Do not assume a teammate's memory is present; recall only ever searches your own store.
 
-## Knowledge datasets (rag-knowledge)
+## Knowledge datasets (knowledge tools)
 
-Use `rag-knowledge_search_dataset` to retrieve from a named project dataset (the RAG knowledge base). Use `rag-knowledge_list_datasets` to discover named datasets when the user asks about available corpora. Prefer `search_dataset` over `get_dataset_files` for finding content — datasets can contain tens of thousands of files and listing them wastes context.
+Use `search_dataset` to retrieve from a named project dataset (the RAG knowledge base). Use `list_datasets` to discover named datasets when the user asks about available corpora. Prefer `search_dataset` over `get_dataset_files` for finding content — datasets can contain tens of thousands of files and listing them wastes context.

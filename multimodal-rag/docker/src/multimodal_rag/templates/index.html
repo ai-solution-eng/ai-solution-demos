@@ -221,6 +221,115 @@
   }
   [data-theme="dark"] .theme-toggle-track { background: var(--accent); }
   [data-theme="dark"] .theme-toggle-thumb { transform: translateX(16px); background: #fff; }
+  /* --- D23 SPA shell additions (ported from access.html where noted) --- */
+  .header-links { margin-left: auto; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: flex-end; }
+  #app-tabs { gap: 2px; }
+  #app-tabs .tab { padding: 6px 12px; }
+  .check-row {
+    display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+    font-weight: 400; font-size: .85rem; margin-bottom: 0;
+  }
+  .check-row input[type="checkbox"] { width: auto; cursor: pointer; }
+  .muted { color: var(--text-muted); font-size: .8rem; }
+  .badge-admin {
+    display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 10px;
+    background: rgba(1, 169, 130, .12); color: var(--accent); font-size: .7rem;
+    font-weight: 600; text-transform: uppercase; letter-spacing: 1px; vertical-align: middle;
+  }
+  .client-item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 14px; border: 1px solid var(--border); border-radius: 4px;
+    margin-bottom: 8px; gap: 10px; flex-wrap: wrap;
+  }
+  .client-item:hover { background: var(--surface-2); }
+  .client-name { font-weight: 500; }
+  .client-meta { font-size: .78rem; color: var(--text-muted); }
+  .client-datasets { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+  .ds-chip {
+    display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: .72rem;
+    border: 1px solid var(--border); color: var(--text-muted);
+  }
+  .ds-chip.wild { border-color: var(--accent); color: var(--accent); }
+  .grant-form { display: none; width: 100%; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
+  .grant-form.open { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+  .grant-form > div { flex: 1; min-width: 200px; }
+  /* D26 ro/rw grants: searchable checkbox dropdown inside the grant form */
+  .grant-picker { width: 100%; }
+  .grant-picker .gp-search { padding: 6px 10px; font-size: .8rem; }
+  .gp-list {
+    max-height: 220px; overflow-y: auto; margin-top: 6px;
+    border: 1px solid var(--border); border-radius: 4px; background: var(--surface);
+  }
+  .gp-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px; border-bottom: 1px solid var(--border); font-size: .85rem;
+  }
+  .gp-row:last-child { border-bottom: none; }
+  .gp-row.gp-head { background: var(--surface-2); font-weight: 500; }
+  .gp-row input[type="checkbox"] { width: auto; margin: 0; }
+  .gp-row .gp-name { margin-bottom: 0; flex: 1; word-break: break-all; cursor: pointer; font-weight: inherit; color: var(--text); font-size: inherit; }
+  .gp-badge { font-size: .75rem; flex-shrink: 0; }
+  .gp-empty { padding: 14px 10px; color: var(--text-muted); font-size: .85rem; }
+  .gp-hint { margin-top: 4px; font-size: .72rem; color: var(--text-muted); }
+  .gp-toggle { display: inline-flex; gap: 2px; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; flex-shrink: 0; }
+  .gp-toggle button {
+    border: none; background: transparent; color: var(--text-muted);
+    font-family: inherit; font-size: .72rem; line-height: 1.4; padding: 2px 8px; cursor: pointer;
+  }
+  .gp-toggle button.on { background: var(--accent); color: #fff; }
+  .gp-toggle button:not(.on):hover { color: var(--text); }
+  .ds-chip.ro { opacity: .65; border-style: dashed; }
+  .src-tag { font-size: .7rem; padding: 1px 6px; border-radius: 8px; border: 1px solid var(--border); color: var(--text-muted); }
+  .key-reveal {
+    font-family: 'SF Mono', 'Fira Code', monospace; background: var(--surface-2);
+    padding: 8px 12px; border-radius: 4px; word-break: break-all; margin-top: 8px;
+    border: 1px solid var(--yellow); font-size: .85rem;
+  }
+  .error-text {
+    display: none; color: var(--red); font-size: .85rem;
+    margin-top: 12px; padding: 8px 12px;
+    border: 1px solid var(--red); border-radius: 4px;
+    background: rgba(220, 38, 38, .06);
+  }
+  .error-text.show { display: block; }
+  /* Access-tab rows: the workspace .dataset-item plus the access page's wrap/lock extras */
+  #access-dataset-list .dataset-item { flex-wrap: wrap; gap: 6px 8px; }
+  #access-dataset-list .dataset-item.unlock-open { border-color: var(--accent); }
+  #access-dataset-list .dataset-info { min-width: 200px; }
+  #access-dataset-list .dataset-name { word-break: break-all; }
+  #access-dataset-list .dataset-actions { flex-shrink: 0; }
+  .star {
+    background: none; border: none; cursor: pointer; padding: 4px 6px;
+    font-size: 1.1rem; line-height: 1; color: var(--text-muted);
+    transition: transform .15s;
+  }
+  .star.starred { color: var(--yellow); }
+  .star:hover { transform: scale(1.15); }
+  .unlock-form {
+    display: none; flex-basis: 100%;
+    margin-top: 10px; padding-top: 12px; border-top: 1px dashed var(--border);
+    gap: 10px; align-items: flex-end; flex-wrap: wrap;
+  }
+  .unlock-form.open { display: flex; }
+  .unlock-form label { margin-bottom: 4px; }
+  .unlock-form .unlock-pw { flex: 1 1 220px; }
+  .unlock-form .unlock-pw input { width: 100%; }
+  .unlock-form .unlock-ttl { flex: 0 0 170px; }
+  .unlock-form .unlock-ttl select { width: 100%; }
+  .unlock-form .btn { flex: 0 0 auto; }
+  .row-error { flex-basis: 100%; color: var(--red); font-size: .8rem; display: none; }
+  .row-error.show { display: block; }
+  /* D23 memory panel (homepage CTA / bound state + access-tab summary) */
+  .memory-panel {
+    border: 1px solid var(--border); border-radius: 4px; padding: 10px 14px;
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    background: var(--surface-2); font-size: .85rem;
+  }
+  .memory-panel.cta { border-color: var(--accent); background: rgba(1, 169, 130, .06); }
+  .memory-dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--green); flex-shrink: 0;
+  }
 </style>
 </head>
 <body>
@@ -293,18 +402,218 @@
       <div class="hpe-brand-sub">Dataset Manager — create, upload, and search multimodal datasets</div>
     </div>
   </div>
-  <div style="margin-left:auto;display:flex;gap:12px;align-items:center">
+  <div class="header-links">
+    <div class="tabs" id="app-tabs" style="border-bottom:none;margin-bottom:0;display:none">
+      <div class="tab" data-apptab="datasets" onclick="switchAppTab('datasets')">Datasets</div>
+      <div class="tab" data-apptab="access" onclick="switchAppTab('access')">Access</div>
+      <div class="tab" data-apptab="admin" id="tab-admin" onclick="switchAppTab('admin')" style="display:none">Admin</div>
+      <div class="tab" data-apptab="stats" id="tab-stats" onclick="switchAppTab('stats')" style="display:none">Stats</div>
+      <div class="tab" data-apptab="inspector" onclick="switchAppTab('inspector')">Inspector</div>
+    </div>
+    <span id="identity-chip" style="display:none;align-items:center;gap:8px;font-size:.78rem;color:var(--text-muted)"></span>
+    <a href="#" id="use-key-link" onclick="openKeyModal(event)" style="display:none;color:var(--text-muted);font-size:.78rem;text-decoration:none">Use an API key</a>
+    <button class="btn btn-outline btn-sm" id="signout-btn" onclick="signOut()" style="display:none" title="End this session on this device">Sign out</button>
     <div class="theme-toggle" onclick="toggleTheme()" title="Toggle dark/light mode">
       <span id="theme-label">Light</span>
       <div class="theme-toggle-track">
         <div class="theme-toggle-thumb"></div>
       </div>
     </div>
-    <a href="/" style="color:var(--text-muted);font-size:.85rem;text-decoration:none">Datasets</a>
-    <a href="/manage" style="color:var(--text-muted);font-size:.85rem;text-decoration:none">Manage</a>
+  </div>
+  </div>
+
+<!-- D23 sign-in card (anonymous visitors): SSO first, key paste below -->
+<div id="signin-view" style="display:none">
+  <div class="card" style="max-width:520px;margin:48px auto">
+    <h2>Sign in</h2>
+    <p class="muted" style="margin-bottom:16px;font-size:.85rem">
+      Use your platform single sign-on, or paste the per-user registry key issued to you.
+      A pasted key stays in this browser and is sent only as the <span class="inline-code">X-RAG-Api-Key</span> header.
+    </p>
+    <div id="signin-sso-section" style="display:none;margin-bottom:14px">
+      <a class="btn btn-primary" id="signin-sso-btn" href="/oauth/login?next=/"
+         style="display:block;text-align:center;text-decoration:none"
+         onclick="sessionStorage.removeItem('rag-key-override')"
+         title="Start the SSO round trip — you come back with an HttpOnly session cookie page scripts never see.">
+        Sign in with SSO
+      </a>
+    </div>
+    <div id="signin-divider" style="display:none;align-items:center;gap:10px;margin-bottom:14px">
+      <div style="flex:1;height:1px;background:var(--border)"></div>
+      <span class="muted" style="font-size:.75rem">or</span>
+      <div style="flex:1;height:1px;background:var(--border)"></div>
+    </div>
+    <form id="signin-key-form" autocomplete="off">
+      <div class="form-group">
+        <label for="signin-key-input">API key</label>
+        <input type="password" id="signin-key-input" autocomplete="off" spellcheck="false" placeholder="Paste your registry key">
+      </div>
+      <div class="form-group">
+        <label class="check-row" title="Stores the key in this browser's localStorage until you sign out. Leave unchecked to keep it for this tab session only.">
+          Remember on this device <input type="checkbox" id="signin-remember">
+        </label>
+      </div>
+      <div class="error-text" id="signin-error"></div>
+      <button type="submit" class="btn btn-primary" id="signin-connect-btn">Connect</button>
+    </form>
+    <div id="signin-operator" style="display:none;margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+      <a href="#" onclick="continueAsOperator(event)" style="color:var(--accent);font-size:.8rem;text-decoration:none">
+        Continue as operator (use this deployment's key on this device)
+      </a>
+    </div>
   </div>
 </div>
 
+<!-- Access tab — ported from access.html: per-identity dataset checkboxes,
+     unlock/TTL, ★ memory binding (promoted to the pane's first slot below
+     the header). Handlers live in the access script below. -->
+<div id="view-access" class="app-view" style="display:none">
+  <!-- D25 SSO self-mint — shown/hidden entirely by renderSelfMintCard();
+       visible only in session mode when the whoami flags carry self_mint. -->
+  <div class="card" id="selfmint-card" style="display:none">
+    <div class="card-header">
+      <h2 style="margin-bottom:0">Your API key</h2>
+    </div>
+    <p class="muted" id="selfmint-explainer" style="margin-bottom:12px;font-size:.85rem">
+      Mint a long-lived API key for your identity — use it in MCP clients (opencode, Open WebUI) or any REST caller. It carries exactly your access (grants + selections) and never expires.
+    </p>
+    <div id="selfmint-body"></div>
+  </div>
+  <div class="card">
+    <div class="card-header">
+      <h2 style="margin-bottom:0">Your datasets</h2>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input type="text" id="access-ds-filter" placeholder="Filter datasets by name…" style="width:220px;font-size:.8rem;padding:6px 10px" oninput="renderAccessList()">
+        <button class="btn btn-outline btn-sm" onclick="refreshDatasets()">Refresh</button>
+      </div>
+    </div>
+    <div id="access-memory-summary" class="memory-panel" style="display:none;margin-bottom:12px"></div>
+    <div id="access-acl-note" class="muted" style="display:none;margin-bottom:10px"></div>
+    <div id="access-dataset-list"><div class="empty-state">No datasets are visible to this identity.</div></div>
+    <div id="access-memory-hint" class="muted" style="margin-top:12px">
+      ★ marks the dataset your MCP client uses for long-term memory (server-side per-identity binding when the access store is on; browser preference otherwise).
+    </div>
+  </div>
+  <div class="muted" style="margin:0 4px">
+    Checked datasets are usable by your credentials on BOTH surfaces (MCP tools and REST) — protected ones need their password once, at selection. Unlocks apply to the REST API surface keyed to YOUR identity; MCP sessions maintain their own per-session unlock cache on top.
+  </div>
+</div>
+
+<!-- Admin tab — the /access "User keys" panel plus full dataset power.
+     Rendered for admin identities only; the tab itself stays hidden otherwise. -->
+<div id="view-admin" class="app-view" style="display:none">
+  <div class="card">
+    <div class="card-header">
+      <h2 style="margin-bottom:0">User keys <span class="badge-admin">admin</span></h2>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="text" id="client-filter" placeholder="Filter by name…" style="width:180px;font-size:.8rem;padding:6px 10px" oninput="renderClients()">
+        <button class="btn btn-outline btn-sm" onclick="loadClients()">Refresh</button>
+        <button class="btn btn-primary btn-sm" onclick="openMintForm()">Mint key…</button>
+      </div>
+    </div>
+    <div id="mint-form" style="display:none;margin-bottom:14px;padding:14px;border:1px solid var(--border);border-radius:4px;background:var(--surface-2)">
+      <form id="mint-form-el" onsubmit="submitMint(event)">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+          <div style="flex:1;min-width:160px">
+            <label for="mint-name">User name</label>
+            <input type="text" id="mint-name" placeholder="e.g. alice" autocomplete="off" required>
+          </div>
+          <div style="flex:2;min-width:240px">
+            <label for="mint-datasets">Datasets (comma-separated, <code>*</code> = all, empty = none yet)</label>
+            <input type="text" id="mint-datasets" placeholder="e.g. reports, notes (ro) — or * for everything" autocomplete="off">
+          </div>
+          <button type="submit" class="btn btn-primary btn-sm" id="mint-submit">Mint</button>
+          <button type="button" class="btn btn-outline btn-sm" onclick="closeMintForm()">Cancel</button>
+        </div>
+      </form>
+      <div id="mint-result" class="muted" style="display:none;margin-top:10px"></div>
+    </div>
+    <div id="client-list"><div class="empty-state">Loading…</div></div>
+    <div class="muted" style="margin-top:10px">
+      Keys are re-read on every request — grants apply immediately, no restart. Env-registry entries (<code>RAG_API_KEY_CLIENTS</code>) are shown but edited only in the env.
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-header">
+      <h2 style="margin-bottom:0">Dataset management <span class="badge-admin">admin</span></h2>
+      <button class="btn btn-outline btn-sm" onclick="ensureAdminLoaded(true)">Refresh</button>
+    </div>
+    <div id="admin-dataset-list"><div class="empty-state">No datasets.</div></div>
+    <div class="muted" style="margin-top:10px">
+      Full power (D23): delete ANY dataset (owner-or-admin enforcement is server-side) and publish/unpublish the 🌐 GLOBAL flag on any dataset. Password-protected datasets may need to be unlocked first.
+    </div>
+  </div>
+</div>
+
+<!-- Stats tab — read-only /api/stats (everyone). Hidden entirely when the
+     endpoint is missing (older backend) instead of erroring. -->
+<div id="view-stats" class="app-view" style="display:none">
+  <div class="card">
+    <div class="card-header">
+      <h2 style="margin-bottom:0">Deployment stats</h2>
+      <span id="stats-generated" class="muted"></span>
+    </div>
+    <div id="stats-body"><div class="empty-state"><span class="spinner"></span></div></div>
+  </div>
+</div>
+
+<!-- Inspector tab (D27) — direct MCP tool calls as THIS session. The browser
+     never reaches the MCP endpoint itself (the sidecar is off the ingress
+     path and page scripts never see an SSO-derived key): the calls are
+     proxied through the API server with the session's own credential
+     envelope forwarded server-side. -->
+<div id="view-inspector" class="app-view" style="display:none">
+  <div class="card">
+    <div class="card-header">
+      <h2 style="margin-bottom:0">MCP Inspector</h2>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <span id="inspector-cred-chip" class="src-tag" style="display:none" title="The credential envelope forwarded to the MCP endpoint with every call — never the credential itself"></span>
+        <button class="btn btn-outline btn-sm" onclick="ensureInspectorLoaded(true)">Refresh tools</button>
+      </div>
+    </div>
+    <div class="muted" style="margin-bottom:12px;font-size:.8rem">
+      Pick a tool, edit the JSON arguments, and run it — the call is proxied to this deployment's
+      MCP endpoint (<span class="inline-code" id="inspector-endpoint">…</span>) with the credentials
+      of THIS session. Dataset ACLs, passwords/unlocks and the ★ memory binding apply exactly as
+      they do for your MCP client.
+    </div>
+    <div id="inspector-body">
+      <div style="display:grid;grid-template-columns:minmax(220px,300px) 1fr;gap:16px;align-items:start">
+        <div>
+          <input type="text" id="inspector-filter" placeholder="Filter tools…" style="width:100%;font-size:.8rem;padding:6px 10px;margin-bottom:8px" oninput="renderInspectorTools()">
+          <div id="inspector-tool-list" style="max-height:520px;overflow:auto;border:1px solid var(--border);border-radius:4px">
+            <div class="empty-state"><span class="spinner"></span></div>
+          </div>
+        </div>
+        <div id="inspector-detail"><div class="empty-state">Select a tool on the left to inspect it.</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- "Use an API key instead" modal (signed-in state): the pasted key is
+     stored and the page RELOADS with it governing (explicit-key precedence). -->
+<div class="modal-overlay" id="key-modal" onclick="if(event.target===this)closeKeyModal()">
+  <div class="modal" style="max-width:440px">
+    <h3>Use an API key instead</h3>
+    <p class="muted" style="font-size:.8rem;margin-bottom:12px">
+      The pasted key governs this tab's requests after reload — an explicit key outranks your SSO session.
+    </p>
+    <div class="form-group">
+      <input type="password" id="key-modal-input" placeholder="Paste your registry key" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="form-group">
+      <label class="check-row" title="Stores the key in this browser's localStorage until you sign out.">
+        Remember on this device <input type="checkbox" id="key-modal-remember">
+      </label>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-primary btn-sm" onclick="applyPastedKey()">Use key &amp; reload</button>
+      <button class="btn btn-outline btn-sm" onclick="closeKeyModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+<div id="view-datasets" class="app-view">
 <div id="manage-view" style="display:none">
   <div style="margin-bottom:16px">
     <a href="/" style="color:var(--accent);font-size:.9rem;text-decoration:none">← Back to Datasets</a>
@@ -384,7 +693,7 @@
         <div>
           <input type="text" id="ds-name" placeholder="e.g. research-papers" autocomplete="off">
         </div>
-        <button class="btn btn-primary" onclick="createDataset()">Create</button>
+        <button id="create-ds-btn" class="btn btn-primary" onclick="createDataset()">Create</button>
       </div>
     </div>
     <div class="form-group">
@@ -392,18 +701,44 @@
       <input type="text" id="ds-desc" placeholder="e.g. My research paper collection" autocomplete="off">
     </div>
     <div class="form-group" style="margin-top:10px">
-      <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-weight:400" title="Transcribe audio tracks from videos via ASR at ingest time.">
-        Caption with ASR <input type="checkbox" id="ds-caption-asr">
+      <table style="border-collapse:collapse;font-size:.85rem">
+        <tbody>
+          <tr>
+            <td style="padding:6px 10px 6px 0;vertical-align:middle"><input type="checkbox" id="ds-caption-asr" title="Transcribe audio tracks from videos via ASR at ingest time." style="margin:0;vertical-align:middle;cursor:pointer"></td>
+            <td style="padding:6px 0;white-space:nowrap"><label for="ds-caption-asr" style="cursor:pointer;margin-bottom:0" title="Transcribe audio tracks from videos via ASR at ingest time.">Caption with ASR</label></td>
+          </tr>
+          <tr>
+            <td style="padding:6px 10px 6px 0;vertical-align:middle"><input type="checkbox" id="ds-caption-vlm" title="Generate VLM descriptions of images/videos at ingest time. Enables VLM-skip at retrieval for generic queries." style="margin:0;vertical-align:middle;cursor:pointer"></td>
+            <td style="padding:6px 0;white-space:nowrap"><label for="ds-caption-vlm" style="cursor:pointer;margin-bottom:0" title="Generate VLM descriptions of images/videos at ingest time. Enables VLM-skip at retrieval for generic queries.">Caption with VLM</label></td>
+          </tr>
+          <tr>
+            <td style="padding:6px 10px 6px 0;vertical-align:middle"><input type="checkbox" id="ds-keep-originals" title="Keep original full-quality files on disk after preprocessing. Uncheck to save disk space (preprocessed copies are retained)." style="margin:0;vertical-align:middle;cursor:pointer" checked></td>
+            <td style="padding:6px 0;white-space:nowrap"><label for="ds-keep-originals" style="cursor:pointer;margin-bottom:0" title="Keep original full-quality files on disk after preprocessing. Uncheck to save disk space (preprocessed copies are retained).">Keep originals</label></td>
+          </tr>
+          <tr>
+            <td style="padding:6px 10px 6px 0;vertical-align:middle"><input type="checkbox" id="ds-ocr" title="OCR fallback: scanned pages (images, no text layer) are OCR'd via tesseract at ingest. Text pages are never OCR'd - costs nothing unless a page needs it." style="margin:0;vertical-align:middle;cursor:pointer"></td>
+            <td style="padding:6px 0;white-space:nowrap"><label for="ds-ocr" style="cursor:pointer;margin-bottom:0" title="OCR fallback: scanned pages (images, no text layer) are OCR'd via tesseract at ingest. Text pages are never OCR'd - costs nothing unless a page needs it.">OCR fallback</label></td>
+          </tr>
+          <tr>
+            <td style="padding:6px 10px 6px 0;vertical-align:middle"><input type="checkbox" id="ds-contextual" title="Contextual retrieval: at ingest, one small LLM call per text chunk writes 1-2 sentences of document-level context, prepended before embedding (better chunk retrieval for large documents). Affects NEW ingests only - Recreate the dataset to re-contextualize existing files. Watch the cost preview when enabling on a large dataset." style="margin:0;vertical-align:middle;cursor:pointer"></td>
+            <td style="padding:6px 0;white-space:nowrap"><label for="ds-contextual" style="cursor:pointer;margin-bottom:0" title="Contextual retrieval: at ingest, one small LLM call per text chunk writes 1-2 sentences of document-level context, prepended before embedding (better chunk retrieval for large documents). Affects NEW ingests only - Recreate the dataset to re-contextualize existing files. Watch the cost preview when enabling on a large dataset.">Contextual retrieval</label></td>
+          </tr>
+        </tbody>
+      </table>
+      <span id="ds-contextual-cost" style="display:none;font-size:.8rem;color:var(--text-muted);margin-left:24px"></span>
+    </div>
+    <div class="form-group" style="margin-top:10px">
+      <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-weight:400" title="Weighted-RRF defaults for this dataset (hybrid text search only). Rank-space tilt, NOT a score multiplier: a higher weight makes that lane's rank positions count more (trust the order, not the magnitude). Applies only when a search carries no explicit override; multimodal (vector-only) queries ignore weights. Leave blank for the global default.">
+        RRF weights (optional) — dense / sparse / k
       </label>
-      <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-weight:400;margin-left:16px" title="Generate VLM descriptions of images/videos at ingest time. Enables VLM-skip at retrieval for generic queries.">
-        Caption with VLM <input type="checkbox" id="ds-caption-vlm">
-      </label>
-      <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-weight:400;margin-left:16px" title="Keep original full-quality files on disk after preprocessing. Uncheck to save disk space (preprocessed copies are retained).">
-        Keep originals <input type="checkbox" id="ds-keep-originals" checked>
-      </label>
-      <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-weight:400;margin-left:16px" title="OCR fallback: scanned pages (images, no text layer) are OCR'd via tesseract at ingest. Text pages are never OCR'd - costs nothing unless a page needs it.">
-        OCR fallback <input type="checkbox" id="ds-ocr">
-      </label>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <input type="number" id="ds-rrf-dense" step="0.001" min="0" max="10" placeholder="dense 1.0" style="width:110px">
+        <span style="color:var(--text-muted)">/</span>
+        <input type="number" id="ds-rrf-sparse" step="0.001" min="0" max="10" placeholder="sparse 1.0" style="width:110px">
+        <span style="color:var(--text-muted)">/</span>
+        <input type="number" id="ds-rrf-k" step="1" min="1" max="1000" placeholder="k default" style="width:100px">
+        <span style="font-size:.8rem;color:var(--text-muted)" title="Rank-space tilt, NOT a score multiplier: a higher weight makes that lane's rank positions count more (trust the order, not the magnitude). Applies only when a search carries no explicit override; multimodal (vector-only) queries ignore weights.">ⓘ</span>
+      </div>
     </div>
     <div class="form-group" style="margin-top:10px">
       <label for="ds-password">Password (optional — protects dataset access)</label>
@@ -422,6 +757,7 @@
       <h2>Datasets</h2>
       <button class="btn btn-outline btn-sm" onclick="listDatasets()">Refresh</button>
     </div>
+    <div id="memory-panel" class="memory-panel" style="display:none;margin-bottom:12px"></div>
     <div class="tabs" id="ds-tabs" style="margin-bottom:8px">
       <div class="tab active" data-dstab="all" onclick="setDatasetTab('all')">All <span id="ds-count-all" style="color:var(--text-muted)"></span></div>
       <div class="tab" data-dstab="public" onclick="setDatasetTab('public')">Public <span id="ds-count-public" style="color:var(--text-muted)"></span></div>
@@ -527,7 +863,7 @@
         <button class="btn btn-outline btn-sm" onclick="recreateDataset()" title="Drops the indexed vectors and re-embeds the original files from disk with the currently configured embedder">Recreate</button>
         <button class="btn btn-outline btn-sm" onclick="downloadBackup()" title="Download the full dataset backup (.tar.gz: metadata + documents + files)">Backup</button>
         <button class="btn btn-outline btn-sm" onclick="downloadDocuments('md')" title="Download every document in this dataset as one readable Markdown file (no binary files; scripts can also use ?format=jsonl)">Download Docs</button>
-        <button class="btn btn-danger btn-sm" onclick="deleteDataset()">Delete</button>
+        <button id="selected-delete-btn" class="btn btn-danger btn-sm" onclick="deleteDataset()">Delete</button>
       </div>
     </div>
     <div id="selected-meta" style="font-size:.85rem;color:var(--text-muted)"></div>
@@ -536,31 +872,142 @@
         style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:4px;background:var(--surface-2);color:var(--text);font-size:.85rem">
       <button class="btn btn-primary btn-sm" onclick="saveDescription()">Save</button>
     </div>
-    <div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-weight:400;font-size:.85rem" title="Transcribe video audio tracks via ASR for NEW uploads to this dataset.">Caption with ASR <input type="checkbox" id="edit-caption-asr"></label>
-      <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-weight:400;font-size:.85rem;margin-left:8px" title="VLM-describe images/videos at ingest for NEW uploads. Enables VLM-skip at retrieval.">Caption with VLM <input type="checkbox" id="edit-caption-vlm"></label>
-      <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-weight:400;font-size:.85rem;margin-left:8px" title="OCR fallback via tesseract for scanned pages (images, no text layer) for NEW uploads to this dataset.">OCR fallback <input type="checkbox" id="edit-ocr"></label>
-      <button class="btn btn-primary btn-sm" onclick="saveDatasetSettings()" title="Apply captioning/OCR settings now — affects future ingests/retrievals">Save Flags</button>
+    <!-- D23 (UX, table form 2026-10): dataset settings as aligned columns —
+     control | state | meaning — three groups, one Save button.
+     saveDatasetAll() applies the three PATCHes in order; per-section
+     failures are named in one combined result line. -->
+    <div style="margin-top:12px;border:1px solid var(--border);border-radius:6px;padding:12px 14px;background:var(--surface-2)">
+      <div style="font-size:.78rem;font-weight:600;color:var(--text-muted);margin-bottom:2px;letter-spacing:.03em">DATASET SETTINGS</div>
+      <div style="font-size:.72rem;color:var(--text-muted);margin-bottom:10px">Ingest rows affect <b>future uploads</b> only; RRF and Public apply immediately.</div>
+
+      <table style="width:100%;border-collapse:collapse;font-size:.85rem">
+        <tbody>
+          <tr><td colspan="3" style="padding:6px 0 4px;font-weight:600;border-bottom:1px solid var(--border)">Ingest behavior</td></tr>
+          <tr>
+            <td style="padding:6px 0;width:190px;white-space:nowrap"><label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="edit-caption-asr" title="Transcribe video audio tracks via ASR for NEW uploads to this dataset." style="margin:0;vertical-align:middle">Caption with ASR</label></td>
+            <td style="padding:6px 12px;width:150px;color:var(--text);font-weight:500">ASR transcripts</td>
+            <td style="padding:6px 0;color:var(--text-muted);font-size:.78rem">video audio → text, for future uploads</td>
+          </tr>
+          <tr>
+            <td style="padding:6px 0;white-space:nowrap"><label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="edit-caption-vlm" title="VLM-describe images/videos at ingest for NEW uploads. Enables VLM-skip at retrieval." style="margin:0;vertical-align:middle">Caption with VLM</label></td>
+            <td style="padding:6px 12px;color:var(--text);font-weight:500">VLM descriptions</td>
+            <td style="padding:6px 0;color:var(--text-muted);font-size:.78rem">images/videos described at ingest</td>
+          </tr>
+          <tr>
+            <td style="padding:6px 0;white-space:nowrap"><label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="edit-ocr" title="OCR fallback via tesseract for scanned pages (images, no text layer) for NEW uploads to this dataset." style="margin:0;vertical-align:middle">OCR fallback</label></td>
+            <td style="padding:6px 12px;color:var(--text);font-weight:500">Text from images</td>
+            <td style="padding:6px 0;color:var(--text-muted);font-size:.78rem">tesseract for scanned pages (no text layer)</td>
+          </tr>
+          <tr>
+            <td style="padding:6px 0;white-space:nowrap"><label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="edit-contextual" title="Contextual retrieval (ingest-time document context per chunk) for NEW uploads to this dataset. Affects new ingests only - Recreate to re-contextualize existing files." style="margin:0;vertical-align:middle">Contextual retrieval</label></td>
+            <td style="padding:6px 12px;color:var(--text);font-weight:500">Chunk context</td>
+            <td style="padding:6px 0;color:var(--text-muted);font-size:.78rem">document context per chunk — Recreate applies retroactively</td>
+          </tr>
+
+          <tr><td colspan="3" style="padding:10px 0 4px;font-weight:600;border-bottom:1px solid var(--border)">Reciprocal Rank Fusion (RRF) <span style="font-weight:400;color:var(--text-muted);font-size:.72rem">— hybrid search defaults · query-time, immediate</span></td></tr>
+          <tr>
+            <td style="padding:6px 0;white-space:nowrap"><label style="display:inline-flex;align-items:center;gap:8px"><span style="min-width:120px">Dense weight</span><input type="number" id="edit-rrf-dense" step="0.001" min="0" max="10" placeholder="1.0" style="width:80px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface-2);color:var(--text);font-size:.85rem"></label></td>
+            <td style="padding:6px 12px;color:var(--text);font-weight:500">Vector lane tilt</td>
+            <td style="padding:6px 0;color:var(--text-muted);font-size:.78rem">how much the vector lane's rank order counts · 0 = lean keyword-only</td>
+          </tr>
+          <tr>
+            <td style="padding:6px 0;white-space:nowrap"><label style="display:inline-flex;align-items:center;gap:8px"><span style="min-width:120px">Sparse weight</span><input type="number" id="edit-rrf-sparse" step="0.001" min="0" max="10" placeholder="1.0" style="width:80px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface-2);color:var(--text);font-size:.85rem"></label></td>
+            <td style="padding:6px 12px;color:var(--text);font-weight:500">Keyword lane tilt</td>
+            <td style="padding:6px 0;color:var(--text-muted);font-size:.78rem">BM25 lane · 0 = lean vector-only, 2+ = keyword-heavy</td>
+          </tr>
+          <tr>
+            <td style="padding:6px 0;white-space:nowrap"><label style="display:inline-flex;align-items:center;gap:8px"><span style="min-width:120px">Ranking constant k</span><input type="number" id="edit-rrf-k" step="1" min="1" max="1000" placeholder="2" style="width:80px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface-2);color:var(--text);font-size:.85rem"></label></td>
+            <td style="padding:6px 12px;color:var(--text);font-weight:500">Top-rank sharpness</td>
+            <td style="padding:6px 0;color:var(--text-muted);font-size:.78rem">Qdrant default 2 · lower flattens (deeper ranks count), higher concentrates on the top few</td>
+          </tr>
+
+          <tr><td colspan="3" style="padding:10px 0 4px;font-weight:600;border-bottom:1px solid var(--border)">Visibility</td></tr>
+          <tr>
+            <td id="edit-public-row" style="padding:6px 0;white-space:nowrap"><label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="edit-public-flag" title="Public (GLOBAL): every minted API key / SSO user can list, read and search this dataset without an explicit grant. Creator-or-admin only (D23). Password-protected datasets cannot be made public." style="margin:0;vertical-align:middle">Public (all users)</label></td>
+            <td style="padding:6px 12px;color:var(--text);font-weight:500">Global</td>
+            <td style="padding:6px 0;color:var(--text-muted);font-size:.78rem" id="public-note">listed for every user · self-selectable without a password</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+        <button class="btn btn-primary btn-sm" onclick="saveDatasetAll()" title="Apply ALL settings in one pass">Save settings</button>
+        <span id="settings-note" style="font-size:.8rem;color:var(--text-muted)"></span>
+      </div>
     </div>
-    <div id="doc-list" style="margin-top:12px"></div>
   </div>
 
 </div>
 </div>
 </div>
 
+</div>
+
 <!-- Toast -->
 <div class="toast" id="toast"></div>
-
 <script>
 let selectedDataset = null;
 let datasets = [];
 let datasetPasswords = {};  // dataset name → password (empty string = no password)
 let mediaTokens = {};       // dataset name → { token, expires } for media ?token= URLs
-// API-key auth: when the server has security.apiKey set it embeds the key
-// here as a meta tag (the page is the auth boundary for browser users).
-// Direct/scripted API callers must send X-RAG-Api-Key themselves.
+// API-key auth (D23 SPA). The server embeds the deployment key as a meta
+// tag for key-configured deployments — but the SPA does NOT auto-send it on
+// identity-scoped calls anymore. After the boot /api/oidc-session probe
+// (credentials: same-origin; the stored key rides along — see below) exactly
+// one mode governs every request authHeaders() builds:
+//   'session'  — SSO cookie / forwarded JWT: requests carry NO key header
+//                (the cookie/JWT envelope authenticates each call);
+//   'paste'    — a per-user key the user pasted (rag-key-override marker
+//                set by storeKey); sent as X-RAG-Api-Key on every call —
+//                explicit keys outrank the SSO session (D19 precedence);
+//   'embedded' — ONLY the legacy-unconfigured fallback (no SSO flow, no
+//                registry clients, or a pre-D21 backend): today's behavior.
+// The embedded meta key is never pre-filled into any input; on SSO-enabled
+// deployments it is not even offered — the user pastes their own key.
 const RAG_API_KEY = (document.querySelector('meta[name="rag-api-key"]') || {}).content || '';
+
+const SS_KEY = 'rag-access-key';   // sessionStorage — this tab session only
+const LS_KEY = 'rag-access-key';   // localStorage — ONLY when "Remember" is set
+const LS_MEMORY = 'rag-memory-dataset';
+const KEY_OVERRIDE = 'rag-key-override';  // sessionStorage marker: an explicitly pasted key governs this tab
+
+// D23 SPA identity state (filled by the boot probe in the identity script).
+const state = {
+  keyMode: 'none',    // 'none' | 'session' | 'paste' | 'embedded'
+  identity: '',
+  source: '',
+  isAdmin: false,
+  flags: null,        // whoami flags {can_create_datasets, sso_enabled, memory_dataset} when provided
+  gated: false,       // RAG_SSO_GATE 401 on the whoami probe
+  requestedTab: 'datasets',
+};
+
+function getStoredKey() {
+  return sessionStorage.getItem(SS_KEY) || localStorage.getItem(LS_KEY) || '';
+}
+
+function storeKey(key, remember) {
+  clearKey();
+  sessionStorage.setItem(SS_KEY, key);
+  if (remember) localStorage.setItem(LS_KEY, key);
+  sessionStorage.setItem(KEY_OVERRIDE, '1');
+}
+
+function clearKey() {
+  sessionStorage.removeItem(SS_KEY);
+  localStorage.removeItem(LS_KEY);
+  sessionStorage.removeItem(KEY_OVERRIDE);
+}
+
+// The auth header set for THIS request, per the resolved key mode.
+function authHeaders() {
+  if (state.keyMode === 'embedded' && RAG_API_KEY) return { 'X-RAG-Api-Key': RAG_API_KEY };
+  if (state.keyMode === 'paste') {
+    const k = getStoredKey();
+    if (k) return { 'X-RAG-Api-Key': k };
+  }
+  return {};   // 'session' (and unresolved 'none'): cookie/JWT envelope only
+}
 
 // Mint (and cache) a short-lived, dataset-scoped media token so <img>/<video>
 // URLs never carry the dataset password in their query string.
@@ -596,7 +1043,7 @@ async function api(method, path, body, timeoutMs, extraHeaders) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs || 1200000);
   const hdrs = {};
-  if (RAG_API_KEY) hdrs['X-RAG-Api-Key'] = RAG_API_KEY;
+  Object.assign(hdrs, authHeaders());
   if (extraHeaders) Object.assign(hdrs, extraHeaders);
   const opts = { method, headers: hdrs, signal: controller.signal };
   if (body instanceof FormData) {
@@ -617,12 +1064,12 @@ async function api(method, path, body, timeoutMs, extraHeaders) {
         const text = await res.text().catch(() => '');
         if (text) detail = text;
       }
-      throw new Error(detail);
+      const _e = new Error(detail); _e.status = res.status; throw _e;
     }
     return res.json();
   } catch (e) {
     clearTimeout(timeout);
-    if (e.name === 'AbortError') throw new Error('Request timed out');
+    if (e.name === 'AbortError') { const _t = new Error('Request timed out'); _t.status = 0; throw _t; }
     throw e;
   }
 }
@@ -649,10 +1096,23 @@ async function createDataset() {
   const keepOriginals = document.getElementById('ds-keep-originals').checked;
   const dsOcr = document.getElementById('ds-ocr');
   const ocr = dsOcr ? dsOcr.checked : false;
+  const dsContextual = document.getElementById('ds-contextual');
+  const contextual = dsContextual ? dsContextual.checked : false;
   const pw = document.getElementById('ds-password').value.trim();
+  // Optional weighted-RRF defaults: blank fields → omit (server falls back
+  // to the deployment default, else the global 1.0/1.0).  The inputs'
+  // min/max steer the user, but the server clamps authoritatively.
+  const rrf = {};
+  const denseEl = document.getElementById('ds-rrf-dense');
+  const sparseEl = document.getElementById('ds-rrf-sparse');
+  const kEl = document.getElementById('ds-rrf-k');
+  if (denseEl && denseEl.value.trim() !== '') rrf.dense_weight = parseFloat(denseEl.value);
+  if (sparseEl && sparseEl.value.trim() !== '') rrf.sparse_weight = parseFloat(sparseEl.value);
+  if (kEl && kEl.value.trim() !== '') rrf.k = parseInt(kEl.value, 10);
   input.disabled = true;
   try {
-    const body = { name, caption_with_asr: captionWithAsr, caption_with_vlm: captionWithVlm, keep_originals: keepOriginals, ocr: ocr };
+    const body = { name, caption_with_asr: captionWithAsr, caption_with_vlm: captionWithVlm, keep_originals: keepOriginals, ocr: ocr, contextual: contextual };
+    if (Object.keys(rrf).length) body.rrf = rrf;
     if (desc) body.description = desc;
     if (pw) body.password = pw;
     await api('POST', '/api/datasets', body);
@@ -660,6 +1120,7 @@ async function createDataset() {
     input.value = '';
     document.getElementById('ds-desc').value = '';
     document.getElementById('ds-password').value = '';
+    for (const el of [denseEl, sparseEl, kEl]) { if (el) el.value = ''; }
     await listDatasets();
     selectDataset(name);
   } catch (e) {
@@ -707,26 +1168,37 @@ function renderDatasetList() {
     container.innerHTML = `<div class="empty-state">${datasets.length === 0 ? 'No datasets yet.' : 'No datasets match the current filter.'}</div>`;
     return;
   }
-  container.innerHTML = rows.map(d => `
+  // D23: rows carry ownership (created_by) and an owner-or-admin Delete.
+  container.innerHTML = rows.map(d => {
+    const canDelete = d.owned_by_me === true || state.isAdmin;
+    const delBtn = canDelete
+      ? `<button class="btn btn-outline btn-sm" onclick="event.stopPropagation();deleteDatasetRow(this)" data-name="${escHtml(d.name)}" title="Delete affordance (owner or admin)">Delete</button>`
+      : '';
+    return `
     <div class="dataset-item ${selectedDataset === d.name ? 'selected' : ''}"
          data-name="${escHtml(d.name)}" onclick="selectDataset(this.dataset.name)" style="cursor:pointer">
       <div class="dataset-info">
-        <div class="dataset-name">${d.has_password ? (datasetPasswords[d.name] ? '🔓 ' : '🔒 ') : ''}${escHtml(d.name)}</div>
-        <div class="dataset-meta">${d.document_count || 0} docs · ${d.created ? new Date(d.created).toLocaleDateString() : ''}</div>
+        <div class="dataset-name">${d.has_password ? (datasetPasswords[d.name] ? '🔓 ' : '🔒 ') : ''}${d.public ? '🌐 ' : ''}${escHtml(d.name)}</div>
+        <div class="dataset-meta">${d.document_count || 0} docs · ${d.created ? new Date(d.created).toLocaleDateString() : ''}${d.created_by ? ' · by ' + escHtml(d.created_by) : ''}</div>
       </div>
-    </div>
-  `).join('');
+      <div class="dataset-actions">${delBtn}</div>
+    </div>`;
+  }).join('');
 }
 
 async function listDatasets() {
   const { datasets: ds } = await api('GET', '/api/datasets');
   datasets = ds;
   renderDatasetList();
+  // Keep the Admin tab's full-power list in sync (D23).
+  if (typeof renderAdminDatasets === 'function' && state.isAdmin) renderAdminDatasets();
 }
 
 async function selectDataset(name) {
   selectedDataset = name;
-  document.querySelectorAll('.dataset-item').forEach(el => {
+  // D23 SPA: scope to the workspace list — the Access/Admin tabs render
+  // their own .dataset-item rows that must not get the selection border.
+  document.querySelectorAll('#dataset-list .dataset-item').forEach(el => {
     el.style.borderLeft = el.dataset.name === name ? '3px solid var(--accent)' : '';
   });
   const d = datasets.find(x => x.name === name);
@@ -743,6 +1215,33 @@ async function selectDataset(name) {
   if (cVlm) cVlm.checked = !!d.caption_with_vlm;
   const cOcr = document.getElementById('edit-ocr');
   if (cOcr) cOcr.checked = !!d.ocr;
+  const cContextual = document.getElementById('edit-contextual');
+  if (cContextual) cContextual.checked = !!d.contextual;
+  // Public flag (feature: public-to-all-keys) + the protected-dataset note.
+  const cPublic = document.getElementById('edit-public-flag');
+  if (cPublic) cPublic.checked = !!d.public;
+  const pNote = document.getElementById('public-note');
+  if (pNote) pNote.textContent = d.has_password ? 'Password-protected: remove the password first to publish.' : '';
+  // D23 identity-aware affordances: owner-or-admin can publish/delete.
+  // Older backends (no owned_by_me on rows) keep the pre-D23 admin-only view.
+  const _ownable = state.isAdmin || d.owned_by_me === true;
+  const _pubRow = document.getElementById('edit-public-row');
+  if (_pubRow) _pubRow.style.display = _ownable ? 'flex' : 'none';
+  const _delBtn = document.getElementById('selected-delete-btn');
+  if (_delBtn) _delBtn.style.display = _ownable ? 'inline-flex' : 'none';
+  // Cost-preview confirm line: when the create form's contextual box is
+  // checked, re-fetch the estimate for THIS dataset's scale so the operator
+  // sees the cost before creating the next contextual dataset.
+  if (typeof window._refreshContextualPreview === 'function') window._refreshContextualPreview(name);
+  // Weighted-RRF defaults: show the stored per-dataset values; blank when
+  // the dataset has none (placeholder then shows the global default).
+  const storedRrf = (d.rrf && typeof d.rrf === 'object') ? d.rrf : {};
+  const eDense = document.getElementById('edit-rrf-dense');
+  const eSparse = document.getElementById('edit-rrf-sparse');
+  const eK = document.getElementById('edit-rrf-k');
+  if (eDense) eDense.value = storedRrf.dense_weight !== undefined && storedRrf.dense_weight !== null ? storedRrf.dense_weight : '';
+  if (eSparse) eSparse.value = storedRrf.sparse_weight !== undefined && storedRrf.sparse_weight !== null ? storedRrf.sparse_weight : '';
+  if (eK) eK.value = storedRrf.k !== undefined && storedRrf.k !== null ? storedRrf.k : '';
   document.getElementById('doc-list').innerHTML = '';
 
   // If dataset is password-protected and we don't have a password yet, prompt
@@ -771,7 +1270,7 @@ async function downloadBackup() {
   if (!selectedDataset) return;
   const pw = datasetPasswords[selectedDataset] || '';
   const url = `/api/datasets/${selectedDataset}/export` + (pw ? `?password=${encodeURIComponent(pw)}` : '');
-  const headers = RAG_API_KEY ? { 'X-RAG-Api-Key': RAG_API_KEY } : {};
+  const headers = authHeaders();
   toast('Preparing backup…');
   try {
     const res = await fetch(url, { headers });
@@ -794,7 +1293,7 @@ async function downloadDocuments(format = 'md') {
   const pw = datasetPasswords[selectedDataset] || '';
   const url = `/api/datasets/${selectedDataset}/documents/download?format=${format}`
     + (pw ? `&password=${encodeURIComponent(pw)}` : '');
-  const headers = { ...(RAG_API_KEY ? { 'X-RAG-Api-Key': RAG_API_KEY } : {}), ...passwordHeader() };
+  const headers = { ...authHeaders(), ...passwordHeader() };
   toast('Preparing download…');
   try {
     const res = await fetch(url, { headers });
@@ -821,6 +1320,7 @@ async function deleteDataset() {
     selectedDataset = null;
     document.getElementById('selected-info').style.display = 'none';
     await listDatasets();
+    refreshDatasets().catch(function () {});
   } catch (e) {
     toast(e.message, 'error');
   }
@@ -979,7 +1479,7 @@ async function handleFiles(files) {
     try {
       const resp = await fetch(`/api/datasets/${selectedDataset}/batch-files`, {
         method: 'POST',
-        headers: RAG_API_KEY ? { 'X-RAG-Api-Key': RAG_API_KEY } : {},
+        headers: authHeaders(),
         body: fd,
       });
       if (!resp.ok) {
@@ -1649,11 +2149,13 @@ async function saveDatasetSettings() {
   const cVlm = document.getElementById('edit-caption-vlm');
   if (!cAsr || !cVlm) return;
   const cOcr = document.getElementById('edit-ocr');
+  const cContextual = document.getElementById('edit-contextual');
   const body = {
     caption_with_asr: cAsr.checked,
     caption_with_vlm: cVlm.checked,
     ocr: cOcr ? cOcr.checked : undefined,
   };
+  if (cContextual) body.contextual = cContextual.checked;
   try {
     await api('PATCH', '/api/datasets/' + selectedDataset, body, undefined, passwordHeader());
     toast('Dataset flags applied (affects new content)');
@@ -1663,7 +2165,33 @@ async function saveDatasetSettings() {
       d.caption_with_asr = cAsr.checked;
       d.caption_with_vlm = cVlm.checked;
       if (cOcr) d.ocr = cOcr.checked;
+      if (cContextual) d.contextual = cContextual.checked;
     }
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+// Weighted-RRF defaults (PATCH /api/datasets/{name} {"rrf": …}): query-time
+// only — the change affects this dataset's hybrid text searches immediately,
+// no re-ingest.  All three fields blank → the stored default is REMOVED
+// (the dataset falls back to the global 1.0/1.0).  The server clamps
+// authoritatively; a rejected value surfaces the error message.
+async function saveRrfDefaults() {
+  if (!selectedDataset) return;
+  const eDense = document.getElementById('edit-rrf-dense');
+  const eSparse = document.getElementById('edit-rrf-sparse');
+  const eK = document.getElementById('edit-rrf-k');
+  if (!eDense || !eSparse || !eK) return;
+  const rrf = {};
+  if (eDense.value.trim() !== '') rrf.dense_weight = parseFloat(eDense.value);
+  if (eSparse.value.trim() !== '') rrf.sparse_weight = parseFloat(eSparse.value);
+  if (eK.value.trim() !== '') rrf.k = parseInt(eK.value, 10);
+  try {
+    await api('PATCH', '/api/datasets/' + selectedDataset, { rrf: rrf }, undefined, passwordHeader());
+    toast(Object.keys(rrf).length ? 'RRF defaults applied (query-time)' : 'RRF defaults cleared');
+    const d = datasets.find(x => x.name === selectedDataset);
+    if (d) d.rrf = Object.keys(rrf).length ? rrf : undefined;
   } catch (e) {
     toast(e.message, 'error');
   }
@@ -1687,12 +2215,71 @@ async function saveDescription() {
   }
 }
 
+async function savePublicFlag() {
+  if (!selectedDataset) return;
+  const cb = document.getElementById('edit-public-flag');
+  if (!cb) return;
+  const want = cb.checked;
+  try {
+    // D23: creator-or-admin route first (non-admins publish what they own);
+    // fall back to the admin route for admin keys on pre-D23 datasets.
+    let res;
+    try {
+      res = await api('POST', `/api/datasets/${selectedDataset}/public`, { public: want });
+    } catch (e) {
+      if (e.status === 404) res = await api('POST', `/api/admin/datasets/${selectedDataset}/public`, { public: want });
+      else throw e;
+    }
+    toast(want ? 'Dataset is now public (all minted API keys)' : 'Dataset is private again');
+    const d = datasets.find(x => x.name === selectedDataset);
+    if (d) d.public = !!res.public;
+    renderDatasetList();
+  } catch (e) {
+    toast(e.message, 'error');
+    cb.checked = !want; // revert the checkbox on refusal (e.g. password-protected)
+  }
+}
+
+// D23 (UX): ONE "Save settings" button for the unified settings list —
+// applies flags, RRF defaults, and the public flag in one pass, reporting
+// ONE combined result (per-section toasts are suppressed during the run;
+// each section's own validation/revert semantics are preserved — the public
+// checkbox reverts itself on refusal).
+async function saveDatasetAll() {
+  if (!selectedDataset) return;
+  const note = document.getElementById('settings-note');
+  const results = [];
+  const run = async (label, fn) => {
+    try { await fn(); results.push(`✓ ${label}`); }
+    catch (e) { results.push(`✗ ${label}: ${e.message}`); }
+  };
+  const realToast = window.toast;
+  window.toast = function () {};
+  try {
+    await run('flags', saveDatasetSettings);
+    await run('RRF defaults', saveRrfDefaults);
+    await run('public', savePublicFlag);
+  } finally {
+    window.toast = realToast;
+  }
+  const okCount = results.filter(r => r.startsWith('✓')).length;
+  if (note) {
+    note.textContent = results.join(' · ');
+    note.style.color = okCount === results.length ? 'var(--green)' : 'var(--text-muted)';
+    setTimeout(() => { const n = document.getElementById('settings-note'); if (n) n.textContent = ''; }, 6000);
+  }
+  toast(okCount === results.length ? `Settings saved (${okCount}/${results.length})` : 'Some settings failed — see notes', okCount === results.length ? 'success' : 'error');
+  listDatasets();
+}
+
 // -----------------------------------------------------------------------
 // Tabs
 // -----------------------------------------------------------------------
 
 function switchTab(name) {
-  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  // D23 SPA: scope to the workspace tab strip — the header's app tabs
+  // (#app-tabs) share the .tab class but carry data-apptab, not data-tab.
+  document.querySelectorAll('.tabs:not(#app-tabs) .tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
   document.querySelectorAll('.tab-content').forEach(t => t.classList.toggle('active', t.id === 'tab-' + name));
 }
 
@@ -2018,7 +2605,7 @@ async function loadManageStats() {
               return `<li style="margin:2px 0;color:var(--text-muted)">${k}: ${parts.join(', ')}</li>`;
             }).join('');
             return `<li style="margin:8px 0">
-              <strong>${d.has_password ? (datasetPasswords[d.name] ? '🔓 ' : '🔒 ') : ''}${escHtml(d.name)}</strong>
+              <strong>${d.has_password ? (datasetPasswords[d.name] ? '🔓 ' : '🔒 ') : ''}${d.public ? '🌐 ' : ''}${escHtml(d.name)}</strong>
               <span style="color:var(--text-muted);margin-left:8px">${d.documents} doc${d.documents !== 1 ? 's' : ''}, ${formatBytes(d.file_bytes)}</span>
               ${subs ? '<ol style="list-style:lower-alpha;margin:2px 0 0 20px;padding:0">' + subs + '</ol>' : ''}
             </li>`;
@@ -2117,23 +2704,10 @@ function applyTheme(theme) {
   localStorage.setItem('theme', theme || 'light');
 }
 
-// Init
+// Init — theme only here; the SPA boot (identity probe → tabs) runs in the
+// identity script at the end of the body.
 const savedTheme = localStorage.getItem('theme') || 'light';
 applyTheme(savedTheme);
-
-const isManage = window.location.pathname === '/manage';
-document.getElementById('manage-view').style.display = isManage ? 'block' : 'none';
-document.getElementById('main-view').style.display = isManage ? 'none' : 'block';
-if (isManage) {
-  loadManageStats();
-  loadUploadHistory();
-  pollHealth();
-  _healthInterval = setInterval(pollHealth, 10000);
-} else {
-  if (_healthInterval) { clearInterval(_healthInterval); _healthInterval = null; }
-  initCaptionCheckboxes();
-  listDatasets();
-}
 
 // Fetch model availability and set up caption checkboxes + reranker UI
 async function initCaptionCheckboxes() {
@@ -2184,6 +2758,2085 @@ async function initCaptionCheckboxes() {
     var box = document.getElementById('ds-ocr');
     if (m && box && (m.content || '').toLowerCase() === 'true') box.checked = true;
   })();
+</script>
+<script>
+  // Deployment-level contextual-retrieval create default
+  // (RAG_CONTEXTUAL_DEFAULT, chart values rag.contextual): pre-checks the
+  // create form's "Contextual retrieval" box.  Absent meta (knob disabled —
+  // the default) leaves the box unchecked: zero behaviour change.  When the
+  // checkbox flips to checked, the cost preview endpoint (labeled estimate:
+  // live point count × one context call's token math) is fetched once and
+  // shown as the confirm line next to the checkbox, so the per-chunk LLM
+  // cost is visible BEFORE the flag lands on the dataset.
+  (function () {
+    var m = document.querySelector('meta[name="rag-contextual-default"]');
+    var box = document.getElementById('ds-contextual');
+    if (!box) return;
+    if (m && (m.content || '').toLowerCase() === 'true') box.checked = true;
+    var costEl = document.getElementById('ds-contextual-cost');
+    var fetchedFor = null;  // dataset-name-less create form: fetch once per page load
+    function fmtInt(n) { return (n || 0).toLocaleString(); }
+    function show(preview) {
+      if (!costEl) return;
+      var model = preview.model || 'the configured VLM';
+      costEl.textContent = '≈ ' + fmtInt(preview.estimated_chunk_count) + ' LLM call(s) · ≈ '
+        + fmtInt(preview.estimated_total_tokens) + ' tokens via ' + model + ' (estimate; new ingests only — Recreate re-contextualizes existing files)';
+      costEl.style.display = 'inline';
+    }
+    async function refresh(name) {
+      if (!costEl) return;
+      try {
+        var preview = await api('POST', '/api/admin/datasets/' + encodeURIComponent(name) + '/contextual-preview', undefined, 15000);
+        show(preview);
+      } catch (e) {
+        costEl.style.display = 'none';
+      }
+    }
+    // Create form: no dataset exists yet, so the preview reflects the
+    // deployment's existing datasets only when one is selected in the
+    // detail pane; the create form shows the cost of the LAST fetched
+    // preview (refreshed on checkbox change when a dataset is selected).
+    box.addEventListener('change', function () {
+      if (!box.checked) { if (costEl) costEl.style.display = 'none'; return; }
+      var name = selectedDataset || fetchedFor;
+      if (name) refresh(name);
+    });
+    // Expose for selectDataset(): when a dataset is picked and the create
+    // box is checked, refresh the confirm line with that dataset's scale.
+    window._refreshContextualPreview = function (name) {
+      fetchedFor = name;
+      if (box.checked) refresh(name);
+    };
+  })();
+</script>
+<script>
+  // Deployment-level weighted-RRF create default (RAG_RRF_DEFAULT, chart
+  // values rag.rrfDefault): pre-fills the create form's weight inputs so
+  // the operator sees what NEW datasets will be stamped with.  Absent meta
+  // (knob disabled — the default) leaves the inputs blank with the global
+  // 1.0/1.0 placeholders.  Content is "dense,sparse[,k]".
+  (function () {
+    var m = document.querySelector('meta[name="rag-rrf-default"]');
+    if (!m || !m.content) return;
+    var parts = m.content.split(',');
+    var map = { 'ds-rrf-dense': parts[0], 'ds-rrf-sparse': parts[1], 'ds-rrf-k': parts[2] };
+    Object.keys(map).forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el && el.value.trim() === '' && map[id] !== undefined && map[id] !== '') el.value = map[id];
+    });
+  })();
+</script>
+<script>
+// =======================================================================
+// D23 SPA shell — one identity-gated page with Datasets / Access / Admin /
+// Stats tabs (D27 adds the Inspector: direct MCP tool calls as the session
+// credential). ONE identity probe at boot: GET /api/oidc-session with
+// credentials:'same-origin' (the stored key rides along — under the D23
+// contract the whoami resolves a registry key to {authenticated: true,
+// identity, source: 'key', flags}; only an ADMIN key presented opaquely
+// stays anonymous-shaped). Everything renders from that response and
+// degrades gracefully on older backends (missing flags/is_admin/stats →
+// the affected control or tab simply stays hidden).
+//
+// Sign-in hard rule (escalation guard): the embedded deployment key is
+// NEVER auto-sent unless the identity probe says the deployment is the
+// legacy-unconfigured case (no SSO flow, no registry clients, or a pre-D21
+// backend). See the key-mode contract at the top of the main script.
+// =======================================================================
+
+const APP_TABS = ['datasets', 'access', 'admin', 'stats', 'inspector'];
+
+function switchAppTab(name) {
+  if (!APP_TABS.includes(name)) name = 'datasets';
+  if (name === 'admin' && !state.isAdmin) name = 'datasets';
+  document.querySelectorAll('#app-tabs .tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.apptab === name));
+  document.querySelectorAll('.app-view').forEach(v => {
+    v.style.display = (v.id === 'view-' + name) ? 'block' : 'none';
+  });
+  // Reflect the tab in the URL (#datasets/#access/#admin/#stats) without
+  // polluting history; the hashchange listener stays consistent.
+  try { history.replaceState(null, '', '#' + name); }
+  catch (e) { location.hash = name; }
+  if (name === 'stats') startStatsPolling(); else stopStatsPolling();
+  if (name === 'access') ensureAccessLoaded();
+  if (name === 'admin') ensureAdminLoaded(false);
+  if (name === 'inspector') ensureInspectorLoaded();
+}
+
+window.addEventListener('hashchange', () => {
+  if (state.keyMode === 'none') return;
+  const h = (location.hash || '').replace('#', '');
+  if (APP_TABS.includes(h)) switchAppTab(h);
+});
+
+function showAdminTab(show) {
+  const t = document.getElementById('tab-admin');
+  if (t) t.style.display = show ? '' : 'none';
+  if (!show) {
+    const active = document.querySelector('#app-tabs .tab[data-apptab="admin"].active');
+    if (active) switchAppTab('datasets');
+  }
+}
+
+function showStatsTab(show) {
+  const t = document.getElementById('tab-stats');
+  if (t) t.style.display = show ? '' : 'none';
+  if (!show) {
+    const active = document.querySelector('#app-tabs .tab[data-apptab="stats"].active');
+    if (active) { stopStatsPolling(); switchAppTab('datasets'); }
+  }
+}
+
+// flags.can_create_datasets === false → grey out dataset creation with a
+// tooltip. No flags (older backend) → leave the form enabled and let the
+// server's own 403 speak.
+function applyCreateGating() {
+  const f = state.flags;
+  if (!f) return;
+  const can = (f.can_create_datasets !== undefined ? f.can_create_datasets : f.canCreateDatasets) !== false;
+  if (can) return;
+  const tip = 'your key cannot create datasets';
+  const btn = document.getElementById('create-ds-btn');
+  const inp = document.getElementById('ds-name');
+  if (btn) { btn.disabled = true; btn.title = tip; }
+  if (inp) { inp.disabled = true; inp.title = tip; }
+}
+
+// D23: row-level delete (owner-or-admin; the backend 403s anyone else and
+// a non-owner is never OFFERED the button — see renderDatasetList).
+async function deleteDatasetRow(btn) {
+  const name = btn.dataset.name;
+  if (!name) return;
+  if (!confirm('Delete dataset "' + name + '"? This cannot be undone.')) return;
+  const pw = datasetPasswords[name];
+  try {
+    await api('DELETE', '/api/datasets/' + name, undefined, undefined,
+      pw ? { 'X-Dataset-Password': pw } : {});
+    toast('Deleted "' + name + '"');
+    if (selectedDataset === name) {
+      selectedDataset = null;
+      document.getElementById('selected-info').style.display = 'none';
+    }
+    await listDatasets();
+    refreshDatasets().catch(function () {});
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+// ---------------------------------------------------------------------
+// Identity chip + sign out (D21 banner style reused)
+// ---------------------------------------------------------------------
+
+function renderIdentityChip() {
+  const chip = document.getElementById('identity-chip');
+  const signout = document.getElementById('signout-btn');
+  const keylink = document.getElementById('use-key-link');
+  if (!chip) return;
+  if (state.keyMode === 'none') {
+    chip.style.display = 'none';
+    signout.style.display = 'none';
+    if (keylink) keylink.style.display = 'none';
+    return;
+  }
+  let html = '';
+  if (state.keyMode === 'session') {
+    html = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green)"></span>' +
+      '<span>Signed in as ' + escHtml(state.identity || 'unknown') + '</span>' +
+      '<span class="src-tag">' + escHtml(state.source === 'sso-cookie' ? 'SSO' : state.source) + '</span>';
+  } else if (state.keyMode === 'paste') {
+    // D23 UX: the pasted key IS the identity — when the backend resolved it,
+    // show the NAME (the meaningful thing); the amber dot + "API key" tag
+    // tell the user this session lives in THIS browser only.
+    html = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--yellow)"></span>' +
+      '<span>Signed in as ' + escHtml(state.identity || 'API-key user') + '</span>' +
+      '<span class="src-tag" title="Session from a pasted API key — stored in this browser only (see Remember)">API key</span>';
+  } else {
+    html = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--accent)"></span>' +
+      '<span>Operator session (deployment key)</span>';
+  }
+  chip.innerHTML = html;
+  chip.style.display = 'flex';
+  signout.style.display = 'inline-flex';
+  if (keylink) keylink.style.display = state.keyMode === 'embedded' ? 'none' : 'inline';
+}
+
+// sso-cookie → server-side logout; pasted/embedded key → forget locally.
+function signOut() {
+  // D24 sign-out, COMPLETE version (the "sign out doesn't work" report):
+  // behind an enforcing gateway there are TWO sessions to end —
+  //   1. the remembered/pasted API key (localStorage/sessionStorage), and
+  //   2. the edge SSO session (oauth2-proxy's HttpOnly cookie at the gateway).
+  // Ending only #1 reloads into… the edge re-authenticating instantly
+  // (X-Auth-Request-* headers re-injected), which looks like "sign out
+  // does nothing".  Ending only #2 leaves a remembered key re-signing-in.
+  // So: ALWAYS clear the key, ALWAYS end the edge session via the gateway's
+  // standard oauth2-proxy sign-out (same-origin), and — because the IdP's
+  // own SSO cookie may silently re-authenticate through oauth2-proxy —
+  // chain to Keycloak's end_session when we know the issuer (full SLO).
+  clearKey();
+  location.href = '/oauth2/sign_out?rd=' + encodeURIComponent('/oauth/logged-out');
+}
+
+// ---------------------------------------------------------------------
+// "Use an API key instead" modal (session or paste → switch keys)
+// ---------------------------------------------------------------------
+
+function openKeyModal(event) {
+  if (event) event.preventDefault();
+  const m = document.getElementById('key-modal');
+  if (!m) return;
+  m.classList.add('show');
+  const inp = document.getElementById('key-modal-input');
+  if (inp) { inp.value = ''; inp.focus(); }
+}
+
+function closeKeyModal() {
+  const m = document.getElementById('key-modal');
+  if (m) m.classList.remove('show');
+}
+
+function applyPastedKey() {
+  const inp = document.getElementById('key-modal-input');
+  const key = inp ? inp.value.trim() : '';
+  if (!key) { toast('Paste a key first', 'error'); return; }
+  const remember = document.getElementById('key-modal-remember');
+  storeKey(key, !!(remember && remember.checked));
+  location.reload();   // the stored key governs every request after reload
+}
+
+// ---------------------------------------------------------------------
+// Sign-in card (anonymous state)
+// ---------------------------------------------------------------------
+
+function showSignInCard() {
+  document.getElementById('signin-view').style.display = 'block';
+  document.getElementById('app-tabs').style.display = 'none';
+  document.querySelectorAll('.app-view').forEach(v => { v.style.display = 'none'; });
+  renderIdentityChip();
+  const f = state.flags || {};
+  const ssoKnown = f.sso_enabled !== undefined || f.ssoEnabled !== undefined;
+  const ssoOn = ssoKnown
+    ? (f.sso_enabled !== undefined ? f.sso_enabled : f.ssoEnabled) === true
+    : state._ssoAvailable === true;
+  document.getElementById('signin-sso-section').style.display = ssoOn ? 'block' : 'none';
+  document.getElementById('signin-divider').style.display = ssoOn ? 'flex' : 'none';
+  document.getElementById('signin-operator').style.display =
+    (RAG_API_KEY && !ssoOn) ? 'block' : 'none';
+  if (state.gated) {
+    const errEl = document.getElementById('signin-error');
+    errEl.textContent = 'Sign-in required';
+    errEl.classList.add('show');
+  }
+  // SSO availability unknown (e.g. a rejected remembered key on a D21+
+  // backend that never reached the flags branch): probe it and re-render.
+  if (!ssoKnown && state._ssoAvailable === undefined) {
+    state._ssoAvailable = null;   // probe in flight — do not re-enter
+    ssoLoginAvailable(null).then(avail => {
+      state._ssoAvailable = avail;
+      if (state.keyMode === 'none') showSignInCard();
+    });
+  }
+}
+
+async function connectWithKey(event) {
+  event.preventDefault();
+  const input = document.getElementById('signin-key-input');
+  const key = input.value.trim();
+  const errEl = document.getElementById('signin-error');
+  errEl.textContent = '';
+  errEl.classList.remove('show');
+  if (!key) { errEl.textContent = 'Enter your API key'; errEl.classList.add('show'); return; }
+  const btn = document.getElementById('signin-connect-btn');
+  btn.disabled = true;
+  // Store first, then validate with real calls; a rejection clears the
+  // stored copy again (no half-validated key left behind).
+  storeKey(key, document.getElementById('signin-remember').checked);
+  state.keyMode = 'paste';
+  await enterWorkspace(state.requestedTab);
+  btn.disabled = false;
+}
+
+function continueAsOperator(event) {
+  event.preventDefault();
+  state.keyMode = 'embedded';
+  enterWorkspace(state.requestedTab);
+}
+
+// ---------------------------------------------------------------------
+// Boot: identity probe → mode resolution → workspace
+// ---------------------------------------------------------------------
+
+async function probeIdentitySession() {
+  // ONE probe. A stored (explicitly pasted) key rides along: the D23
+  // contract has the whoami resolve opaque REGISTRY keys to
+  // {authenticated: true, identity, source: "key", flags} — only an ADMIN
+  // key stays anonymous-shaped (never leaks its status). An explicit key
+  // header outranks an SSO cookie (D19 precedence), so this one response
+  // always reflects the credential the workspace will actually use.
+  const key = getStoredKey();
+  const hdrs = key ? { 'X-RAG-Api-Key': key } : {};
+  try {
+    const r = await fetch('/api/oidc-session', { credentials: 'same-origin', headers: hdrs });
+    if (r.status === 401) return { __gate: true };   // RAG_SSO_GATE on → server handles the anonymous page
+    if (!r.ok) return null;
+    const ct = r.headers.get('content-type') || '';
+    if (!ct.includes('json')) return null;
+    return await r.json();
+  } catch (e) {
+    return null;   // server unreachable — legacy fallback below
+  }
+}
+
+// Is the SSO sign-in flow actually served? Prefer the whoami flags; fall
+// back to probing /oauth/login (404 = inert flow; a realm redirect that
+// fetch cannot follow surfaces as an error → assume the flow exists).
+async function ssoLoginAvailable(sess) {
+  const f = (sess && sess.flags) || null;
+  if (f && (f.sso_enabled !== undefined || f.ssoEnabled !== undefined)) {
+    return (f.sso_enabled !== undefined ? f.sso_enabled : f.ssoEnabled) === true;
+  }
+  if (sess && sess.oidc && sess.oidc.enabled !== undefined) return sess.oidc.enabled === true;
+  try {
+    const r = await fetch('/oauth/login', { credentials: 'same-origin' });
+    return r.status !== 404;
+  } catch (e) {
+    return true;
+  }
+}
+
+// Registry clients configured? Only askable WITH a key — this probe uses
+// the embedded deployment key and decides the legacy-unconfigured case:
+// 200 + zero clients → key-unconfigured legacy → embedded mode allowed.
+async function registryProbeWithEmbedded() {
+  if (!RAG_API_KEY) return false;
+  try {
+    const r = await fetch('/api/admin/clients', {
+      headers: { 'X-RAG-Api-Key': RAG_API_KEY },
+      credentials: 'same-origin',
+    });
+    if (!r.ok) return false;
+    const j = await r.json();
+    return Array.isArray(j.clients) && j.clients.length > 0;
+  } catch (e) {
+    return false;
+  }
+}
+
+async function applyIdentity(sess) {
+  state.flags = (sess && sess.flags) || null;
+  if (sess && sess.__gate) { state.keyMode = 'none'; state.gated = true; return; }
+  if (sess && sess.authenticated) {
+    // D23 whoami sources: 'oidc' | 'sso-cookie' | 'key'. A stored key
+    // (source 'key', or the explicit-override marker) governs the tab in
+    // paste mode; a cookie/JWT envelope governs in session mode.
+    if (getStoredKey() && (sess.source === 'key' || sessionStorage.getItem(KEY_OVERRIDE))) {
+      state.keyMode = 'paste';
+    } else {
+      state.keyMode = 'session';
+    }
+    state.identity = String(sess.identity || '');
+    state.source = String(sess.source || 'oidc');
+    state.isAdmin = sess.is_admin === true ||
+      !!(sess.flags && (sess.flags.is_admin === true || sess.flags.isAdmin === true));
+    renderSelfMintCard();   // D25: first-paint correctness on the Access tab
+    return;
+  }
+  // Anonymous whoami (an ADMIN key presented opaquely also yields this
+  // shape by contract — it must never leak that it is one). A remembered
+  // key re-enters directly in paste mode, exactly like the /access page
+  // always did; a rejected key is surfaced by the first workspace call.
+  if (getStoredKey()) { state.keyMode = 'paste'; return; }
+  const ssoOn = await ssoLoginAvailable(sess);
+  state._ssoAvailable = ssoOn;
+  if (!ssoOn && RAG_API_KEY) {
+    // No SSO flow served (probe: /oauth/login 404 when inert) AND a
+    // deployment key embedded. Keep today's embedded-key behavior for the
+    // legacy-unconfigured cases: a pre-D21 backend (payload carries no
+    // flags and no oidc block) — its whoami cannot arbitrate, so stay
+    // byte-compatible with history — or a D21+/D23 backend whose client
+    // registry is UNCONFIGURED (empty /api/admin/clients under the
+    // deployment key). Otherwise → sign-in card (paste mode).
+    const preD21 = !state.flags && !(sess && sess.oidc);
+    const legacy = preD21 || (await registryProbeWithEmbedded()) === false;
+    state.keyMode = legacy ? 'embedded' : 'paste';
+    return;
+  }
+  state.keyMode = 'paste';
+}
+
+async function enterWorkspace(initialTab, isManage) {
+  document.getElementById('signin-view').style.display = 'none';
+  renderIdentityChip();
+  applyCreateGating();
+  initCaptionCheckboxes();
+  try {
+    await listDatasets();
+  } catch (e) {
+    if (e.status === 401 || e.status === 403) { handleAuthRejected('Your credentials were rejected by the server'); return; }
+    toast(e.message || 'Could not load datasets', 'error');
+  }
+  if (isManage) {
+    loadManageStats();
+    loadUploadHistory();
+    pollHealth();
+    _healthInterval = setInterval(pollHealth, 10000);
+  }
+  resolveAdmin();
+  probeStatsAvailability();
+  ensureAccessLoaded();
+  renderMemoryPanel();   // D23 addendum: memory front and center (or hidden)
+  renderSelfMintCard();   // D25: right on first paint (paste/embedded → hidden)
+  switchAppTab(initialTab);
+  document.getElementById('app-tabs').style.display = 'flex';
+}
+
+// Admin detection: the whoami flags when the backend provides them
+// (is_admin / flags.is_admin), else the classic probe — a 200 from
+// GET /api/admin/clients means the governing credential carries admin.
+async function resolveAdmin() {
+  if (!state.isAdmin) state.isAdmin = await getAdminClients();
+  showAdminTab(state.isAdmin);
+}
+
+// /api/stats available? (Older backend → 404 → the Stats tab stays hidden
+// rather than erroring.) A success also warms the first render.
+let _statsAvailable = null;
+async function probeStatsAvailability() {
+  try {
+    await api('GET', '/api/stats', undefined, 15000);
+    _statsAvailable = true;
+  } catch (e) {
+    _statsAvailable = e.status !== 404;
+  }
+  showStatsTab(_statsAvailable);
+}
+
+function handleAuthRejected(message) {
+  clearKey();
+  state.keyMode = 'none';
+  state.identity = '';
+  state.source = '';
+  state.isAdmin = false;
+  state.gated = false;
+  // Reset the ported access-tab state too (mirrors access.html).
+  accessDatasets = [];
+  selections = {};
+  accessStoreOn = false;
+  serverMemory = '';
+  openUnlockRow = null;
+  unlockError = null;
+  openSelectRow = null;
+  selectError = null;
+  _accessLoaded = false;
+  _memoryDone = {};
+  selfmintState = null;   // D25: next identity re-probes GET /api/access/key
+  resetInspector();       // D27: next identity re-probes the MCP catalog
+  clients = [];
+  showAdminTab(false);
+  stopStatsPolling();
+  showSignInCard();
+  const errEl = document.getElementById('signin-error');
+  if (errEl && message) { errEl.textContent = message; errEl.classList.add('show'); }
+}
+
+async function bootSPA() {
+  const isManage = window.location.pathname === '/manage';
+  document.getElementById('manage-view').style.display = isManage ? 'block' : 'none';
+  document.getElementById('main-view').style.display = isManage ? 'none' : 'block';
+  const want = (location.hash || '').replace('#', '');
+  state.requestedTab = APP_TABS.includes(want) ? want : 'datasets';
+  const sess = await probeIdentitySession();
+  await applyIdentity(sess);
+  if (state.keyMode === 'none') { showSignInCard(); return; }
+  await enterWorkspace(state.requestedTab, isManage);
+}
+</script>
+<script>
+// =======================================================================
+// Access tab — ported from access.html (D15/D16 per-identity self-service):
+// dataset checkbox list, unlock/TTL, ★ memory binding. JS copied with the
+// smallest possible renames for the merged scope:
+//   datasets → accessDatasets; loadDatasets → loadAccessDatasets;
+//   renderList → renderAccessList; selectDataset → selectAccessDataset;
+//   ids dataset-list/ds-filter/acl-note → access-*; api()/escHtml()/toast()
+//   are the workspace's own (the workspace api() now attaches e.status).
+// Storage contract unchanged: sessionStorage/localStorage 'rag-access-key',
+// localStorage 'rag-memory-dataset'. Dataset passwords are NEVER stored.
+// =======================================================================
+
+let accessDatasets = [];    // as returned by GET /api/datasets?catalog=1
+let openUnlockRow = null;   // dataset name whose inline unlock form is open
+let unlockError = null;     // { name, message } — inline error for that form
+let openSelectRow = null;   // dataset name whose inline SELECT form is open
+let selectError = null;     // { name, message } — inline error for select forms
+let serverMemory = '';      // server-side ★ binding (D16; empty = none/local)
+let selections = {};        // dataset name → {selected_at, source, has_password}
+let accessStoreOn = false;  // RAG_ACCESS_STORE enabled (server-side ★ + checkboxes)
+let _accessLoaded = false;
+
+function starredDataset() {
+  // D16: the server-side binding wins when the access store is on (it is
+  // what MCP memory tools honor); localStorage is the store-off fallback.
+  if (accessStoreOn) return serverMemory || '';
+  return localStorage.getItem(LS_MEMORY) || '';
+}
+
+async function loadAccessDatasets() {
+  const container = document.getElementById('access-dataset-list');
+  if (!container) return;
+  container.innerHTML = '<div style="text-align:center;padding:20px"><span class="spinner"></span></div>';
+  const body = await api('GET', '/api/datasets?catalog=1');  // 2026-10: world + public-available + excluded
+  accessDatasets = Array.isArray(body && body.datasets) ? body.datasets : [];
+  const hidden = Number(body && body.acl_hidden) || 0;
+  const note = document.getElementById('access-acl-note');
+  if (hidden > 0) {
+    note.textContent = `${hidden} dataset(s) hidden by your access policy`;
+    note.style.display = 'block';
+  } else {
+    note.style.display = 'none';
+  }
+  // D16: fetch the identity's selection state (409/404 = store off → skip).
+  try {
+    const sel = await api('GET', '/api/access/selections');
+    accessStoreOn = !!(sel && sel.enabled);
+    selections = (sel && sel.selections) || {};
+    serverMemory = (sel && sel.memory_dataset) || '';
+  } catch (e) {
+    accessStoreOn = false;
+    selections = {};
+  }
+  renderAccessList();
+  renderAccessMemorySummary();
+  renderSelfMintCard();   // D25: right once accessStoreOn/selections are known
+}
+
+async function refreshDatasets() {
+  try {
+    await loadAccessDatasets();
+  } catch (e) {
+    if (e.status === 401 || e.status === 403) { handleAuthRejected('Your credentials were rejected by the server'); return; }
+    toast(e.message, 'error');
+  }
+}
+
+async function ensureAccessLoaded() {
+  if (_accessLoaded) return;
+  _accessLoaded = true;
+  try {
+    await loadAccessDatasets();
+  } catch (e) {
+    if (e.status === 401 || e.status === 403) { handleAuthRejected('Your credentials were rejected by the server'); return; }
+    toast(e.message, 'error');
+  }
+}
+
+function selEntryHasPassword(name) {
+  const entry = selections[name];
+  return !!(entry && entry.has_password);
+}
+
+function renderAccessRow(d) {
+  const name = String(d.name || '');
+  const count = Number(d.document_count) || 0;
+  const hasPw = !!d.has_password;
+  const isOpen = hasPw && !!d.unlocked;
+  const starred = starredDataset() === name;
+  const open = openUnlockRow === name;
+  const selEntry = selections[name] || null;
+  const aclGranted = d.acl_granted === true;
+  const excluded = d.excluded === true;
+  // 2026-10: the user's checkbox set is authoritative — an excluded
+  // dataset renders UNCHECKED even when the operator grant stands
+  // underneath (re-selecting is then password-free).
+  const isSelected = (!!selEntry || aclGranted) && !excluded;
+  const pwSaved = !!(selEntry && selEntry.has_password);
+
+  // Lock state per spec: unlocked → 🔓 unlocked, locked → 🔒 locked,
+  // no password → no lock icon at all.  The checkbox state reads:
+  //   ✓ granted  — reachable via your identity's operator/admin grants
+  //   ✓ selected — you added it yourself (protected: password saved)
+  const lockState = hasPw ? (isOpen ? '🔓 unlocked' : '🔒 locked') : '';
+  const selState = accessStoreOn && isSelected
+    ? (aclGranted && !selEntry ? ' · ✓ granted' : ' · ✓ selected' + (hasPw ? (pwSaved ? ' 🔑' : '') : ''))
+    : '';
+  const exclState = excluded ? ' · 🚫 excluded (re-select to include)' : '';
+  // D16 public/global marker (2026-10): a GLOBAL dataset — every user may
+  // self-select it WITHOUT a password.  Distinct from a merely password-less
+  // dataset (which only its ACL grants reach).
+  const publicState = d.public === true ? ' · 🌐 global (password-free selection for everyone)' : '';
+  const ownerState = d.created_by ? ' · by ' + escHtml(d.created_by) : '';
+  const meta = `${count} document${count === 1 ? '' : 's'}${lockState ? ' · ' + lockState : ''}${selState}${publicState}${exclState}${ownerState}`;
+
+  // D16 checkbox column (access store on): PRE-CHECKED when the dataset is
+  // already reachable (operator/admin grant or self-selection) — a user
+  // never has to "select" what is already theirs.  Protected + unchecked →
+  // the checkbox click opens the select form (password = proof).
+  let checkbox = '';
+  if (accessStoreOn) {
+    const checked = isSelected ? ' checked' : '';
+    const title = isSelected
+      ? (aclGranted ? 'Included in your identity\u2019s datasets (uncheck to exclude — your checked set is authoritative)'
+                    : 'Selected by you (click to remove)')
+      : (hasPw ? 'Select (will ask for the dataset password)' : 'Select for your identity');
+    checkbox = `<input type="checkbox" class="sel-check" data-name="${escHtml(name)}"${checked} onchange="onSelectToggle(this)" title="${title}" aria-label="Select ${escHtml(name)}">`;
+  }
+
+  // Row action depends strictly on state.
+  let action;
+  if (!accessStoreOn) {
+    // Phase-1 behaviour: unlock/lock manage the TTL cache only.
+    if (!hasPw) {
+      action = '<span class="muted">public</span>';
+    } else if (isOpen) {
+      action = '<button class="btn btn-outline btn-sm" onclick="lockDataset(this)">Lock</button>';
+    } else {
+      action = '<button class="btn btn-outline btn-sm" onclick="openUnlockForm(this)">Unlock…</button>';
+    }
+  } else {
+    // Store on.  The state matrix:
+    //   granted/selected + public       → nothing needed
+    //   granted/selected + pw + unlocked→ Lock
+    //   granted + pw + locked + no pw saved → "Add password…" (memory-ready)
+    //   granted + pw + locked + pw saved   → Unlock… (transient TTL) — but
+    //       the saved password already covers reads; Unlock is for REST TTL
+    //   self-selected + pw + locked     → Unlock… (saved pw covers reads)
+    //   unselected + pw                 → Select… (password = proof)
+    //   unselected + public             → unchecked (nothing to do)
+    if (isSelected) {
+      if (!hasPw) {
+        action = '<span class="muted">selected</span>';
+      } else if (isOpen) {
+        action = '<button class="btn btn-outline btn-sm" onclick="lockDataset(this)">Lock</button>';
+      } else if (aclGranted && !pwSaved) {
+        action = '<button class="btn btn-outline btn-sm" onclick="openSelectForm(this)">Add password…</button>';
+      } else {
+        action = '<button class="btn btn-outline btn-sm" onclick="openUnlockForm(this)">Unlock…</button>';
+      }
+    } else if (hasPw) {
+      action = '<button class="btn btn-outline btn-sm" onclick="openSelectForm(this)">Select…</button>';
+    } else {
+      action = '<span class="muted">unchecked</span>';
+    }
+  }
+
+  const star = `<button class="star${starred ? ' starred' : ''}" onclick="toggleStar(this)" title="Use as memory dataset" aria-label="Use as memory dataset">${starred ? '★' : '☆'}</button>`;
+
+  // The dataset name travels ONLY via the row's data-name attribute (escaped
+  // here); handlers read it back decoded via closest('.dataset-item').
+  let formHtml = '';
+  const selectErr = selectError && selectError.name === name ? selectError.message : '';
+  const unlockErr = unlockError && unlockError.name === name ? unlockError.message : '';
+  if (hasPw && (open || openSelectRow === name)) {
+    const isSelect = openSelectRow === name;
+    const submitLabel = isSelect ? (aclGranted ? 'Save password' : 'Select') : 'Unlock';
+    formHtml = `
+      <form class="unlock-form${(open || isSelect) ? ' open' : ''}" onsubmit="${isSelect ? 'submitSelect(event, this)' : 'submitUnlock(event, this)'}">
+        <label class="unlock-pw">${isSelect && aclGranted ? 'Dataset password (saved for your key — password-free reads & memory)' : 'Password'}
+          <input type="password" name="pw" placeholder="Dataset password" autocomplete="new-password" aria-label="Dataset password">
+        </label>
+        ${isSelect ? '' : `
+        <label class="unlock-ttl">Unlock for
+          <select name="ttl" aria-label="Unlock duration">
+            <option value="1800">30 minutes</option>
+            <option value="3600">1 hour</option>
+            <option value="21600">6 hours</option>
+            <option value="86400" selected>24 hours</option>
+            <option value="0" data-no-expiry>No expiry (0)</option>
+          </select>
+        </label>`}
+        <button type="submit" class="btn btn-primary btn-sm">${submitLabel}</button>
+        <div class="row-error${(isSelect ? selectErr : unlockErr) ? ' show' : ''}">${escHtml(isSelect ? selectErr : unlockErr)}</div>
+      </form>`;
+  }
+
+  return `
+    <div class="dataset-item${open || openSelectRow === name ? ' unlock-open' : ''}" data-name="${escHtml(name)}">
+      <div class="dataset-info">
+        <div class="dataset-name">${escHtml(name)}</div>
+        <div class="dataset-meta">${meta}</div>
+      </div>
+      <div class="dataset-actions">${checkbox}${star}${action}</div>
+      ${formHtml}
+    </div>`;
+}
+
+function renderAccessList() {
+  const container = document.getElementById('access-dataset-list');
+  if (!container) return;
+  const filterEl = document.getElementById('access-ds-filter');
+  const q = ((filterEl && filterEl.value) || '').trim().toLowerCase();
+  // Rows render in the order the server returned (ACL-filtered server-side).
+  const rows = accessDatasets.filter(d => !q || String(d.name || '').toLowerCase().includes(q));
+  if (!rows.length) {
+    container.innerHTML = `<div class="empty-state">${accessDatasets.length === 0
+      ? 'No datasets are visible to this identity.'
+      : 'No datasets match the current filter.'}</div>`;
+    return;
+  }
+  container.innerHTML = rows.map(renderAccessRow).join('');
+  applyTtlPolicy();   // freshly rendered forms must respect the server's TTL bound
+}
+
+// D23 addendum: the ★ binding gets the FIRST slot of the Access pane — a
+// compact summary of the current binding (or the CTA when unbound), sharing
+// the homepage memory panel's rendering rules.
+function renderAccessMemorySummary() {
+  const el = document.getElementById('access-memory-summary');
+  if (!el) return;
+  const name = memoryDatasetName();
+  if (!name) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  el.style.display = 'flex';
+  if (name === 'CTA') {
+    const disabled = !canCreateDatasets();
+    const tip = disabled ? 'your key cannot create datasets — ask an admin' : '';
+    el.className = 'memory-panel cta';
+    el.innerHTML =
+      '<span class="memory-dot" style="background:var(--yellow)"></span>' +
+      '<span style="flex:1"><b>Give your agent long-term memory</b>' +
+      '<div class="muted" style="margin-top:2px">Memories persist across sessions — your MCP client (opencode) reads and writes them automatically via the \u2605 binding.</div></span>' +
+      '<button class="btn btn-primary btn-sm" onclick="createMemoryDataset(this)"' +
+      (disabled ? ' disabled title="' + escHtml(tip) + '"' : '') +
+      '>Create memory dataset</button>';
+    return;
+  }
+  el.className = 'memory-panel';
+  el.innerHTML =
+    '<span class="memory-dot"></span>' +
+    '<span><b>\u2605 Long-term memory:</b> ' + escHtml(String(name)) +
+    ' <span class="muted">— re-bind via the \u2605 on any dataset row below</span></span>';
+}
+
+function rowNameFrom(el) {
+  const item = el.closest('.dataset-item');
+  return item ? item.dataset.name : null;
+}
+
+// Find a rendered row by its (decoded) dataset name. Iterates the DOM rather
+// than building a [data-name="…"] CSS selector: attribute selectors do not
+// decode HTML entities, so an escHtml-ed name containing a quote would never
+// match its own rendered attribute.
+function findAccessRow(name) {
+  const items = document.querySelectorAll('#access-dataset-list .dataset-item');
+  for (const item of items) {
+    if (item.dataset.name === name) return item;
+  }
+  return null;
+}
+
+// =======================================================================
+// D25 SSO self-mint — the identity's own long-lived API key, from the SPA.
+//
+// Backed by the D25 REST pair (both require an SSO-sourced identity; an
+// API-key caller gets 403 and the knob being off gets 409):
+//   GET  /api/access/key      → {enabled, source, identity, has_key,
+//                                key_masked, datasets, created, oidc, blocked}
+//   POST /api/access/mint-key → {status, name, key (FULL, shown once),
+//                                rotated, created, message} — body
+//                                {"rotate": true} replaces an existing key.
+//
+// The card renders ONLY when state.keyMode === 'session' AND the whoami
+// flags carry self_mint: paste mode means the user already holds a key in
+// this browser, embedded mode is the legacy-unconfigured fallback, and the
+// flag's absence keeps pre-D25 deployments byte-compatible (card stays
+// display:none forever). Any 409/403/404 from the pair hides the card
+// silently — the deployment is not offering self-mint to this session.
+// =======================================================================
+
+let selfmintState = null;   // GET /api/access/key result, cached per identity
+let selfmintBusy = false;   // one in-flight probe; clicks re-render instead
+
+function selfmintEligible() {
+  // D25 v2: the card rides the whoami SOURCE, not just the keyMode.  A G2
+  // edge-authenticated visitor resolves through the D24 proxy-identity
+  // path — its whoami source is 'proxy-identity', which the old literal
+  // keyMode==='session' check never matched, hiding the card from exactly
+  // the SSO users the feature is for.  Paste mode (a stored explicit key
+  // governs) still hides it: minting is not a power a key carries (D17),
+  // and the backend 403s key-only callers regardless.
+  if (!(state.flags && state.flags.self_mint === true)) return false;
+  if (state.keyMode === 'paste') return false;
+  return state.keyMode === 'session' || (state.identity || '') !== '';
+}
+
+function hideSelfMintCard() {
+  const card = document.getElementById('selfmint-card');
+  if (card) card.style.display = 'none';
+}
+
+async function fetchSelfMintState() {
+  if (selfmintState !== null || selfmintBusy) return selfmintState;
+  selfmintBusy = true;
+  try {
+    selfmintState = await api('GET', '/api/access/key') || {};
+  } catch (e) {
+    if (e.status === 409 || e.status === 403 || e.status === 404) {
+      selfmintState = { _off: true };          // not offered to this session
+    } else if (e.status === 401) {
+      handleAuthRejected('Your credentials were rejected by the server');
+      selfmintState = { _off: true };
+    } else {
+      toast(e.message, 'error');
+      selfmintState = { _off: true };          // never leave a stuck card
+    }
+  }
+  selfmintBusy = false;
+  return selfmintState;
+}
+
+async function renderSelfMintCard() {
+  const card = document.getElementById('selfmint-card');
+  if (!card) return;
+  if (!selfmintEligible()) { hideSelfMintCard(); return; }
+  const st = await fetchSelfMintState();
+  // st === null → another render's probe is still in flight; it re-renders
+  // the body when it lands, so this pass just keeps the card hidden.
+  if (!selfmintEligible() || !st || st._off) { hideSelfMintCard(); return; }
+  card.style.display = 'block';
+  const body = document.getElementById('selfmint-body');
+  if (!body) return;
+  if (st.has_key) {
+    const created = st.created ? new Date(st.created).toLocaleDateString() : '';
+    body.innerHTML =
+      '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">' +
+      '<span class="client-meta" style="font-family:\'SF Mono\',\'Fira Code\',monospace">' + escHtml(st.key_masked || '') + '</span>' +
+      (st.oidc ? ' <span class="src-tag" style="color:var(--accent);border-color:var(--accent)">oidc:' + escHtml(st.oidc) + '</span>' : '') +
+      (st.blocked ? ' <span class="src-tag" style="color:var(--red);border-color:var(--red)">blocked</span>' : '') +
+      (created ? ' <span class="muted">created ' + escHtml(created) + '</span>' : '') +
+      '</div>' +
+      '<div class="muted" style="margin-bottom:10px">Carries ' + (Array.isArray(st.datasets) ? st.datasets.length : 0) +
+      ' granted dataset(s) — minting again would not change the grants.</div>' +
+      '<button class="btn btn-outline btn-sm" onclick="selfmintRotate()">Rotate…</button>' +
+      '<div class="muted" style="margin-top:8px;font-size:.78rem">Rotation replaces this key — the previous one stops authenticating immediately.</div>';
+  } else {
+    body.innerHTML =
+      '<button class="btn btn-primary btn-sm" onclick="selfmintMint(false)">Mint my key</button>';
+  }
+}
+
+// POST /api/access/mint-key and swap the button row for the copy-once
+// reveal — the same .key-reveal presentation the admin mint uses.
+async function selfmintMint(rotate) {
+  try {
+    const res = await api('POST', '/api/access/mint-key', rotate ? { rotate: true } : {});
+    selfmintState = null;                       // has_key/masked/created changed
+    const body = document.getElementById('selfmint-body');
+    if (body) {
+      body.innerHTML =
+        '<div class="muted" style="margin-bottom:4px">' + escHtml(res.message || (rotate ? 'Key rotated.' : 'Key minted.')) +
+        ' Shown only once — copy it now:</div>' +
+        '<div class="key-reveal" id="selfmint-key">' + escHtml(res.key || '') + '</div>' +
+        '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">' +
+        '<button class="btn btn-outline btn-sm" onclick="copySelfMintKey()">Copy key</button>' +
+        '<button class="btn btn-outline btn-sm" onclick="selfmintUseHere()">Use in this browser</button>' +
+        '<button class="btn btn-outline btn-sm" onclick="selfmintDone()">Done — I saved it</button>' +
+        '</div>';
+    }
+    toast(res.message || (rotate ? 'Key rotated' : 'Key minted'));
+  } catch (e) {
+    if (e.status === 409 || e.status === 403 || e.status === 404) {
+      hideSelfMintCard();                       // not offered to this session
+      return;
+    }
+    if (e.status === 401) { handleAuthRejected('Your credentials were rejected by the server'); return; }
+    toast(e.message || 'Mint failed', 'error');
+  }
+}
+
+function copySelfMintKey() {
+  const key = document.getElementById('selfmint-key');
+  if (!key) return;
+  navigator.clipboard.writeText(key.textContent)
+    .then(() => toast('Key copied to clipboard'))
+    .catch(() => toast('Copy failed — select the key manually', 'error'));
+}
+
+function selfmintUseHere() {
+  const key = document.getElementById('selfmint-key');
+  if (!key) return;
+  storeKey(key.textContent, false);   // paste mode governs after the reload
+  location.reload();
+}
+
+async function selfmintDone() {
+  selfmintState = null;             // has_key/masked/created may have changed
+  await renderSelfMintCard();       // collapses back to the has-key view
+}
+
+async function selfmintRotate() {
+  if (!confirm('Replace your API key? The previous key stops authenticating immediately.')) return;
+  await selfmintMint(true);
+}
+
+// -----------------------------------------------------------------------
+// Unlock / Lock (verbatim behaviour from access.html)
+// -----------------------------------------------------------------------
+
+function openUnlockForm(btn) {
+  const name = rowNameFrom(btn);
+  if (!name) return;
+  openUnlockRow = name;
+  openSelectRow = null;
+  unlockError = null;
+  selectError = null;
+  renderAccessList();
+  const item = findAccessRow(name);
+  if (item) {
+    const pw = item.querySelector('input[name="pw"]');
+    if (pw) pw.focus();
+  }
+}
+
+function openSelectForm(btn) {
+  const name = rowNameFrom(btn);
+  if (!name) return;
+  openSelectRow = name;
+  openUnlockRow = null;
+  selectError = null;
+  unlockError = null;
+  renderAccessList();
+  const item = findAccessRow(name);
+  if (item) {
+    const pw = item.querySelector('input[name="pw"]');
+    if (pw) pw.focus();
+  }
+}
+
+// D16 checkbox toggle: check → select (public: immediately; protected:
+// open the password form), uncheck → deselect (with confirm — it also
+// drops the saved password).
+function onSelectToggle(box) {
+  const name = box.dataset.name;
+  if (!name) { box.checked = !box.checked; return; }
+  const row = accessDatasets.find(x => String(x.name) === name);
+  const aclGranted = !!(row && row.acl_granted);
+  const wasChecked = !!selections[name];
+  const pwSaved = selEntryHasPassword(name);
+  if (!box.checked) {
+    // 2026-10: unchecking ALWAYS works — for a self-selection it removes
+    // the selection (and saved password); for an operator-granted or
+    // public dataset it records an EXCLUSION that hides it until
+    // re-selected. The user's checked set is their world.
+    if (!wasChecked && pwSaved) return;  // nothing to remove
+    if (pwSaved && !confirm(`Remove '${name}' from your datasets? The saved password is dropped too.`)) {
+      box.checked = true;
+      return;
+    }
+    deselectAccessDataset(name);
+    return;
+  }
+  if (wasChecked) return;
+  // Checking an ACL-granted protected dataset = offering the password
+  // (saves it for password-free reads + memory). Checking an unchecked
+  // public dataset = plain self-selection.
+  if (row && row.has_password) {
+    openSelectRow = name;
+    openUnlockRow = null;
+    selectError = null;
+    renderAccessList();
+  } else {
+    selectAccessDataset(name, null, box);
+  }
+}
+
+async function selectAccessDataset(name, password, checkbox) {
+  try {
+    const res = await api('POST', `/api/datasets/${encodeURIComponent(name)}/select`,
+      password ? { password: password } : undefined);
+    toast(res.message || `Dataset '${name}' selected`);
+    openSelectRow = null;
+    selectError = null;
+    await refreshDatasets();
+  } catch (e) {
+    if (e.status === 401) { handleAuthRejected('Your credentials were rejected by the server'); return; }
+    selectError = { name, message: e.message || 'Select failed' };
+    openSelectRow = name;
+    if (checkbox) checkbox.checked = false;
+    renderAccessList();
+  }
+}
+
+async function submitSelect(event, form) {
+  event.preventDefault();
+  const name = rowNameFrom(form);
+  if (!name) return;
+  const pwInput = form.querySelector('input[name="pw"]');
+  const password = pwInput ? pwInput.value : '';
+  if (!password) {
+    selectError = { name, message: 'Enter the dataset password' };
+    renderAccessList();
+    return;
+  }
+  try {
+    const res = await api('POST', `/api/datasets/${encodeURIComponent(name)}/select`, { password: password });
+    toast(res.message || `Dataset '${name}' selected`);
+    openSelectRow = null;
+    selectError = null;
+    await refreshDatasets();
+  } catch (e) {
+    if (e.status === 401) { handleAuthRejected('Your credentials were rejected by the server'); return; }
+    selectError = {
+      name,
+      message: e.status === 403 ? (e.message || 'Incorrect password') : (e.message || 'Select failed'),
+    };
+    renderAccessList();   // form stays open; the typed password is dropped from the DOM
+  }
+}
+
+async function deselectAccessDataset(name) {
+  try {
+    const res = await api('POST', `/api/datasets/${encodeURIComponent(name)}/deselect`);
+    toast(res.message || `Dataset '${name}' removed from your datasets (re-select any time)`);
+    if (serverMemory === name) serverMemory = '';
+    await refreshDatasets();
+  } catch (e) {
+    if (e.status === 401) { handleAuthRejected('Your credentials were rejected by the server'); return; }
+    toast(e.message || 'Deselect failed', 'error');
+    await refreshDatasets();
+  }
+}
+
+function humanTtl(secs) {
+  if (secs % 3600 === 0) { const h = secs / 3600; return `${h} hour${h === 1 ? '' : 's'}`; }
+  if (secs % 60 === 0) { const m = secs / 60; return `${m} minute${m === 1 ? '' : 's'}`; }
+  return `${secs} seconds`;
+}
+
+function unlockToast(name, ttl, res) {
+  if (ttl === 0) return `Dataset '${name}' unlocked — no expiry`;
+  if (res && res.message) return String(res.message);
+  const secs = Number(res && res.ttl_seconds) || ttl;
+  return `Dataset '${name}' unlocked for ${humanTtl(secs)}`;
+}
+
+// The server injects its configured unlock-TTL bound (RAG_UNLOCK_MAX_TTL)
+// as the rag-unlock-ttl-max meta.  NOTE: today the server injects that meta
+// on /access only — the SPA reads it when present and otherwise disables
+// the "No expiry (0)" option (the safe default).  "No expiry (0)" is only
+// offered when the deployment opted in (bound === 0).
+function noExpiryEnabled() {
+  const m = document.querySelector('meta[name="rag-unlock-ttl-max"]');
+  const val = m ? parseInt(m.content, 10) : NaN;
+  return Number.isFinite(val) && val === 0;
+}
+
+function applyTtlPolicy() {
+  const allowed = noExpiryEnabled();
+  document.querySelectorAll('select[name="ttl"] option[value="0"]').forEach(opt => {
+    opt.disabled = !allowed;
+    opt.title = allowed ? '' : 'Disabled: this deployment caps unlock TTLs (RAG_UNLOCK_MAX_TTL)';
+    if (!allowed && opt.selected) {
+      // A stale selection can only exist in the static template — swap to
+      // the bounded default so the form never submits a doomed ttl=0.
+      opt.selected = false;
+      const def = opt.parentElement.querySelector('option[value="86400"]');
+      if (def) def.selected = true;
+    }
+  });
+}
+
+async function submitUnlock(event, form) {
+  event.preventDefault();
+  const name = rowNameFrom(form);
+  if (!name) return;
+  const pwInput = form.querySelector('input[name="pw"]');
+  const ttlSelect = form.querySelector('select[name="ttl"]');
+  const password = pwInput ? pwInput.value : '';
+  const parsed = parseInt(ttlSelect ? ttlSelect.value : '86400', 10);
+  const ttl = Number.isFinite(parsed) ? parsed : 86400;
+  if (!password) {
+    unlockError = { name, message: 'Enter the dataset password' };
+    renderAccessList();
+    return;
+  }
+  const submitBtn = form.querySelector('button[type="submit"]');
+  if (submitBtn) submitBtn.disabled = true;
+  try {
+    const res = await api('POST', `/api/datasets/${encodeURIComponent(name)}/unlock`, { password: password, ttl: ttl });
+    openUnlockRow = null;
+    unlockError = null;
+    toast(unlockToast(name, ttl, res));
+    await refreshDatasets();   // re-render the row from the server's lock state
+  } catch (e) {
+    if (e.status === 401) { handleAuthRejected('Your credentials were rejected by the server'); return; }
+    // 403 → wrong password (the key itself is fine — never log out here).
+    // 429 → throttled; 400/404 → the server's detail, verbatim and inline.
+    unlockError = {
+      name,
+      message: e.status === 403 ? 'Incorrect password' : (e.message || 'Unlock failed'),
+    };
+    renderAccessList();   // form stays open; the typed password is dropped from the DOM
+  }
+}
+
+async function lockDataset(btn) {
+  const name = rowNameFrom(btn);
+  if (!name) return;
+  btn.disabled = true;
+  try {
+    const res = await api('POST', `/api/datasets/${encodeURIComponent(name)}/lock`);
+    if (openUnlockRow === name) openUnlockRow = null;
+    unlockError = null;
+    toast((res && res.message) || `Dataset '${name}' locked`);
+    await refreshDatasets();
+  } catch (e) {
+    btn.disabled = false;
+    if (e.status === 401) { handleAuthRejected('Your credentials were rejected by the server'); return; }
+    toast(e.message, 'error');
+  }
+}
+
+// -----------------------------------------------------------------------
+// Memory-dataset star (single-select; server-side under the access store,
+// localStorage fallback otherwise)
+// -----------------------------------------------------------------------
+
+async function toggleStar(btn) {
+  const name = rowNameFrom(btn);
+  if (!name) return;
+  // Only ONE dataset starred at a time: clicking a star moves it.
+  if (accessStoreOn) {
+    const binding = (serverMemory === name) ? null : name;
+    try {
+      const res = await api('POST', '/api/access/memory-dataset',
+        binding ? { dataset: binding } : {});
+      serverMemory = res.memory_dataset || '';
+      toast(res.message || (binding ? `★ '${name}' bound as your memory dataset` : 'Memory binding cleared'));
+    } catch (e) {
+      if (e.status === 401) { handleAuthRejected('Your credentials were rejected by the server'); return; }
+      toast(e.message || 'Memory binding failed', 'error');
+    }
+    renderAccessList();
+    renderAccessMemorySummary();
+    refreshWhoamiFlags().then(f => { if (f) renderMemoryPanel(); });
+    return;
+  }
+  if (serverMemory === name) localStorage.removeItem(LS_MEMORY);
+  else localStorage.setItem(LS_MEMORY, name);
+  renderAccessList();
+  renderAccessMemorySummary();
+}
+
+// Escape closes the open inline unlock form (dropping the typed password).
+(function () {
+  const list = document.getElementById('access-dataset-list');
+  if (!list) return;
+  list.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const item = e.target.closest('.dataset-item');
+    if (!item || item.dataset.name !== openUnlockRow) return;
+    openUnlockRow = null;
+    unlockError = null;
+    renderAccessList();
+  });
+})();
+</script>
+<script>
+// =======================================================================
+// D23 memory panel (addendum): the MEMORY FEATURE front and center on the
+// homepage Datasets tab.
+//
+//   flags.memory_dataset SET   → compact bound state, green-dot styling:
+//       "★ Long-term memory: <name>" + a Manage link (→ the Access tab)
+//   flags.memory_dataset NULL/absent → prominent CTA: "Give your agent
+//       long-term memory" + a PRIMARY "Create memory dataset" button
+//       running the one-click flow:
+//         (a) prompt for a name (prefill suggestion "<identity>-memory",
+//             cancel-safe),
+//         (b) POST /api/datasets {name, description} — no password
+//             (memory datasets are personal),
+//         (c) POST /api/datasets/{name}/select {} — self-select so the
+//             identity owns it going forward,
+//         (d) POST /api/access/memory-dataset {"dataset": name} — bind ★,
+//         (e) re-fetch the whoami and flip the panel to the bound state.
+//       Each step's failure toasts (house pattern) and leaves the panel in
+//       a RETRYABLE state — a partial flow never strands: a 409/exists on
+//       (b) counts as done, so a retry re-runs select+bind only.
+//
+// CTA-vs-hidden rule: flags present with memory_dataset null → CTA;
+// flags ABSENT (older backend) → panel hidden. can_create_datasets ===
+// false → the button is disabled with the "ask an admin" tooltip.
+// =======================================================================
+
+let _memoryFlow = false;    // one-click memory creation in flight (retryable)
+let _memoryDone = {};       // completed steps of the in-flight memory flow
+
+// Refresh flags from the whoami. The probe rides on the governing
+// credential (the stored key in paste mode, the cookie in session mode) —
+// under the D23 contract the response then carries flags for both. Only
+// the flags block is merged; identity/is_admin keep their boot-time values
+// (an admin key's anonymous-shaped whoami must never upgrade the page's
+// own state). Returns the flags object or null (probe failed / backend
+// does not serve them — callers degrade gracefully).
+async function refreshWhoamiFlags() {
+  try {
+    const r = await fetch('/api/oidc-session', {
+      credentials: 'same-origin',
+      headers: authHeaders(),
+    });
+    if (!r.ok) return null;
+    const j = await r.json();
+    if (j && j.flags && typeof j.flags === 'object') {
+      state.flags = j.flags;
+      return j.flags;
+    }
+  } catch (e) { /* panel just stays in its current state */ }
+  return null;
+}
+
+function memoryDatasetName() {
+  // null (unknown flags / older backend) → panel hidden;
+  // 'CTA' (sentinel) → unbound CTA; otherwise the bound dataset name.
+  const f = state.flags;
+  if (!f || typeof f !== 'object') return null;
+  if (f.memory_dataset !== undefined) return f.memory_dataset || 'CTA';
+  if (f.memoryDataset !== undefined) return f.memoryDataset || 'CTA';
+  return null;
+}
+
+function canCreateDatasets() {
+  const f = state.flags || {};
+  if (f.can_create_datasets !== undefined) return f.can_create_datasets !== false;
+  if (f.canCreateDatasets !== undefined) return f.canCreateDatasets !== false;
+  return true;   // flags absent (older backend) → let the server 403 speak
+}
+
+function renderMemoryPanel() {
+  const panel = document.getElementById('memory-panel');
+  if (!panel) return;
+  const name = memoryDatasetName();
+  if (!name) { panel.style.display = 'none'; panel.innerHTML = ''; return; }
+  panel.style.display = 'flex';
+  if (name === 'CTA') {
+    const disabled = !canCreateDatasets();
+    const tip = disabled ? 'your key cannot create datasets — ask an admin' : '';
+    panel.className = 'memory-panel cta';
+    panel.innerHTML =
+      '<span class="memory-dot" style="background:var(--yellow)"></span>' +
+      '<span style="flex:1;min-width:200px"><b>Give your agent long-term memory</b>' +
+      '<div class="muted" style="margin-top:2px">Memories persist across sessions — your MCP client (opencode) reads and writes them automatically via the \u2605 binding.</div></span>' +
+      '<button class="btn btn-primary btn-sm" onclick="createMemoryDataset(this)"' +
+      (disabled ? ' disabled title="' + escHtml(tip) + '"' : ' title="One click: create + select + bind as your \u2605 memory dataset"') +
+      '>Create memory dataset</button>' +
+      (state.keyMode === 'session'
+        ? ' <a href="/oauth/login?next=/" class="muted" style="font-size:.75rem;text-decoration:none">switch identity</a>'
+        : '');
+    return;
+  }
+  // Bound state — compact, one line, green-dot like the SSO banner.
+  panel.className = 'memory-panel';
+  panel.innerHTML =
+    '<span class="memory-dot"></span>' +
+    '<span><b>\u2605 Long-term memory:</b> ' + escHtml(String(name)) +
+    (canCreateDatasets()
+      ? ' <a href="#" onclick="switchAppTab(\'access\');return false" style="color:var(--accent);font-size:.8rem;text-decoration:none;margin-left:8px">Manage</a>'
+      : '') +
+    '</span>' +
+    '<span class="muted" style="margin-left:auto;font-size:.75rem">Memories persist across sessions — your MCP client (opencode) reads and writes them automatically.</span>';
+}
+
+// The one-click flow. ALWAYS resumable: _memoryFlow + a completed-steps
+// record make a retry re-run only the missing steps; an existing dataset
+// (409) or a previously-created name counts as created.
+async function createMemoryDataset(btn) {
+  if (_memoryFlow) return;
+  const suggested = (state.identity ? state.identity + '-' : '') + 'memory';
+  const name = prompt('Name for your memory dataset:', suggested);
+  if (name === null) return;                       // user cancelled
+  const clean = String(name).trim().replace(/\s+/g, '_');
+  if (!clean) { toast('Enter a dataset name', 'error'); return; }
+  if (btn) btn.disabled = true;
+  _memoryFlow = true;
+  try {
+    // (b) create — idempotent: an existing dataset (or a prior attempt that
+    // already created it) skips straight to select+bind.
+    if (!_memoryDone.created) {
+      try {
+        await api('POST', '/api/datasets', {
+          name: clean,
+          description: 'Personal long-term memory for ' + (state.identity || 'this identity'),
+        });
+        _memoryDone.created = true;
+      } catch (e) {
+        const msg = String((e && e.message) || '');
+        if (!(e && (e.status === 409 || /exist/i.test(msg)))) { throw e; }
+        _memoryDone.created = true;   // already there — fine for memory
+      }
+    }
+    // (c) self-select (no password: memory datasets are personal).
+    if (!_memoryDone.selected) {
+      await api('POST', '/api/datasets/' + clean + '/select', {});
+      _memoryDone.selected = true;
+    }
+    // (d) bind the ★.
+    if (!_memoryDone.bound) {
+      await api('POST', '/api/access/memory-dataset', { dataset: clean });
+      _memoryDone.bound = true;
+    }
+    // (e) refresh the whoami and flip the panel to the bound state.
+    await refreshWhoamiFlags();
+    _memoryDone = {};
+    toast('\u2605 \'' + clean + '\' is now your long-term memory dataset');
+    await listDatasets();
+    renderMemoryPanel();
+  } catch (e) {
+    if (e && e.status === 401) { handleAuthRejected('Your credentials were rejected by the server'); return; }
+    toast((e && e.message) || 'Memory dataset setup failed — try again', 'error');
+  } finally {
+    _memoryFlow = false;
+    if (btn) btn.disabled = false;
+  }
+}
+</script>
+<script>
+// =======================================================================
+// Admin tab — the /access "User keys" panel (D17 mint/grant/revoke, D21
+// observed-identity rows with blocked/oidc fields) plus full-power dataset
+// management: delete ANY dataset and toggle the 🌐 GLOBAL public flag on
+// ANY dataset (owner-or-admin enforcement is server-side; the tab only
+// renders for admin credentials).
+// =======================================================================
+
+let clients = [];
+
+function getAdminClients() {
+  // Returns true when the governing credential carries admin semantics.
+  return api('GET', '/api/admin/clients', undefined, 15000)
+    .then(res => { clients = Array.isArray(res.clients) ? res.clients : []; return true; })
+    .catch(() => { clients = []; return false; });
+}
+
+async function loadClients() {
+  if (!state.isAdmin) { renderClients(); return; }
+  try {
+    const res = await api('GET', '/api/admin/clients');
+    clients = Array.isArray(res.clients) ? res.clients : [];
+  } catch (e) {
+    if (e.status === 401) { handleAuthRejected('Your credentials were rejected by the server'); return; }
+    if (e.status === 403) { state.isAdmin = false; showAdminTab(false); return; }
+    toast(e.message || 'Could not load clients', 'error');
+  }
+  renderClients();
+}
+
+async function ensureAdminLoaded(force) {
+  if (state.isAdmin) await loadClients();
+  if (force) { try { await listDatasets(); } catch (e) { /* keep the last list */ } }
+  renderAdminDatasets();
+}
+
+function renderClients() {
+  const container = document.getElementById('client-list');
+  if (!container) return;
+  if (!state.isAdmin) { container.innerHTML = ''; return; }
+  const filterEl = document.getElementById('client-filter');
+  const q = ((filterEl && filterEl.value) || '').trim().toLowerCase();
+  const rows = clients.filter(c => !q || String(c.name).toLowerCase().includes(q));
+  if (!rows.length) {
+    container.innerHTML = '<div class="empty-state">' +
+      (clients.length === 0
+        ? 'No per-user keys yet — mint the first one.'
+        : 'No clients match the filter.') + '</div>';
+    return;
+  }
+  container.innerHTML = rows.map(c => {
+    const chips = clientGrantsOf(c).map(g =>
+      '<span class="ds-chip' + (g.name === '*' ? ' wild' : '') + (g.mode === 'ro' ? ' ro' : '') + '">' +
+      escHtml(g.name + (g.mode === 'ro' ? ' (ro)' : '')) + '</span>'
+    ).join('') || '<span class="muted">no datasets granted</span>';
+    const src = '<span class="src-tag">' + escHtml(c.source || 'overlay') + '</span>';
+    // D21 fields when present in the clients payload: blocked flag + oidc alias.
+    const flags = (c.blocked ? ' <span class="src-tag" style="color:var(--red);border-color:var(--red)">blocked</span>' : '') +
+      (c.oidc ? ' <span class="src-tag" style="color:var(--accent);border-color:var(--accent)">oidc:' + escHtml(c.oidc) + '</span>' : '');
+    const envManaged = c.source === 'env'
+      ? '<span class="muted" title="Defined in RAG_API_KEY_CLIENTS — edit it in the env">env-managed</span>'
+      : '<button class="btn btn-outline btn-sm" onclick="toggleGrant(this)" data-name="' + escHtml(c.name) + '">Grants…</button>' +
+        '<button class="btn btn-outline btn-sm" onclick="toggleClientBlocked(this)" data-name="' + escHtml(c.name) + '" data-want="' + (c.blocked ? '0' : '1') + '">' + (c.blocked ? 'Unblock' : 'Block') + '</button>' +
+        '<button class="btn btn-outline btn-sm" onclick="promptOidcBind(this)" data-name="' + escHtml(c.name) + '" data-current="' + escHtml(c.oidc || '') + '" title="Bind this key to a JWT identity (preferred_username); empty clears the binding">OIDC…</button>' +
+        '<button class="btn btn-outline btn-sm" onclick="revokeClient(this)" data-name="' + escHtml(c.name) + '">Revoke</button>';
+    return '<div class="client-item" data-cname="' + escHtml(c.name) + '">' +
+      '<div style="flex:1">' +
+      '<div class="client-name">' + escHtml(c.name) + ' ' + src + flags + ' <span class="client-meta">' + escHtml(c.key_masked || '') + '</span></div>' +
+      '<div class="client-datasets">' + chips + '</div>' +
+      '</div>' +
+      '<div class="dataset-actions">' + envManaged + '</div>' +
+      '<form class="grant-form" onsubmit="submitGrant(event, this)">' +
+      '<div class="grant-picker" data-cname="' + escHtml(c.name) + '">' +
+      '<label>Grants (search, tick a dataset, choose ro/rw — * = all)</label>' +
+      '<input type="text" class="gp-search" placeholder="Filter datasets…" oninput="filterGrantPicker(this)" autocomplete="off">' +
+      '<div class="gp-list">' + buildGrantPickerRows(c) + '</div>' +
+      '<div class="gp-hint">ro = read-only · rw = read-write · unchecked rows revoke</div>' +
+      '</div>' +
+      '<button type="submit" class="btn btn-primary btn-sm">Save</button>' +
+      '<button type="button" class="btn btn-outline btn-sm" onclick="toggleGrant(this)">Cancel</button>' +
+      '<div class="row-error" id="gerr-' + escHtml(c.name) + '"></div>' +
+      '</form>' +
+      '</div>';
+  }).join('');
+}
+
+// D26 read-only grants: normalise a client row to {name, mode} entries.
+// New rows carry c.grants = [{name, mode}]; legacy rows only have the flat
+// c.datasets string list (all rw). '*' stays a plain string (rw-all).
+function clientGrantsOf(c) {
+  if (Array.isArray(c.grants)) return c.grants;
+  return (c.datasets || []).map(d => ({ name: d, mode: 'rw' }));
+}
+
+// Build the dropdown body of the grant picker: a pinned "All datasets (*)"
+// row plus one row per cluster dataset. Each row is a checkbox + name +
+// public/password badges + a ro/rw segmented toggle. Missing/odd entries
+// in the cluster list are skipped; if nothing loaded yet, say so instead.
+function buildGrantPickerRows(c) {
+  if (!datasets.length) {
+    return '<div class="gp-empty">No datasets visible — load the Datasets tab first</div>';
+  }
+  const granted = {};
+  clientGrantsOf(c).forEach(g => {
+    if (g && g.name) granted[g.name] = (g.mode === 'ro' ? 'ro' : 'rw');
+  });
+  const row = (name, mode, label) => {
+    const isWild = name === '*';
+    return '<div class="gp-row' + (isWild ? ' gp-head' : '') + '" data-ds="' + escHtml(name) + '">' +
+      '<input type="checkbox" class="gp-chk" data-ds="' + escHtml(name) + '"' +
+      (granted[name] ? ' checked' : '') + '>' +
+      '<label class="gp-name">' + escHtml(label) + '</label>' +
+      '<span class="gp-toggle">' +
+      '<button type="button" class="' + (mode === 'ro' ? 'on' : '') + '" data-mode="ro" onclick="setGrantMode(this)">ro</button>' +
+      '<button type="button" class="' + (mode !== 'ro' ? 'on' : '') + '" data-mode="rw" onclick="setGrantMode(this)">rw</button>' +
+      '</span>' +
+      '</div>';
+  };
+  let html = row('*', granted['*'] || 'rw', 'All datasets (*)');
+  datasets.forEach(d => {
+    if (!d || !d.name) return;
+    const badges = (d.public ? '<span class="gp-badge" title="Public dataset">🌐</span>' : '') +
+      (d.has_password ? '<span class="gp-badge" title="Password-protected">🔒</span>' : '');
+    html += '<div class="gp-row" data-ds="' + escHtml(d.name) + '">' +
+      '<input type="checkbox" class="gp-chk" data-ds="' + escHtml(d.name) + '"' + (granted[d.name] ? ' checked' : '') + '>' +
+      '<label class="gp-name">' + escHtml(d.name) + '</label>' + badges +
+      '<span class="gp-toggle">' +
+      '<button type="button" class="' + (granted[d.name] === 'ro' ? 'on' : '') + '" data-mode="ro" onclick="setGrantMode(this)">ro</button>' +
+      '<button type="button" class="' + (granted[d.name] !== 'ro' ? 'on' : '') + '" data-mode="rw" onclick="setGrantMode(this)">rw</button>' +
+      '</span>' +
+      '</div>';
+  });
+  return html;
+}
+
+// ro/rw segmented toggle inside a picker row: exactly one side lit.
+function setGrantMode(btn) {
+  const toggle = btn.closest('.gp-toggle');
+  if (!toggle) return;
+  toggle.querySelectorAll('button').forEach(b =>
+    b.classList.toggle('on', b === btn));
+}
+
+// Case-insensitive substring filter over the picker rows (name in data-ds).
+function filterGrantPicker(input) {
+  const picker = input.closest('.grant-picker');
+  if (!picker) return;
+  const q = (input.value || '').trim().toLowerCase();
+  const list = picker.querySelector('.gp-list');
+  if (!list) return;
+  list.querySelectorAll('.gp-row').forEach(rowEl => {
+    const name = (rowEl.dataset.ds || '').toLowerCase();
+    // The pinned '*' row always stays visible so the filter can't strand it.
+    rowEl.style.display = (!q || name === '*' || name.includes(q)) ? '' : 'none';
+  });
+}
+
+// D26: collect the picker state into the wire shape. Granted entries go out
+// as {name, mode} objects; the ONLY plain string is an rw-mode '*' wildcard
+// (wire-compatible with the legacy list). '*' checked with ro = ro-all
+// ({name:'*',mode:'ro'}); '*' unchecked (or its mode never mattered) revokes
+// the wildcard. A ticked dataset's mode always serialises — ro/rw is data.
+function collectGrantDatasets(picker) {
+  const out = [];
+  const wildRow = picker.querySelector('.gp-row[data-ds="*"]');
+  const wildChk = wildRow && wildRow.querySelector('.gp-chk:checked');
+  if (wildChk) {
+    const wildBtn = wildRow.querySelector('.gp-toggle button.on');
+    out.push(wildBtn && wildBtn.dataset.mode === 'ro' ? { name: '*', mode: 'ro' } : '*');
+  }
+  picker.querySelectorAll('.gp-chk:checked').forEach(chk => {
+    if (chk.dataset.ds === '*') return;
+    const rowEl = chk.closest('.gp-row');
+    const modeBtn = rowEl.querySelector('.gp-toggle button.on');
+    out.push({ name: chk.dataset.ds, mode: (modeBtn && modeBtn.dataset.mode === 'ro') ? 'ro' : 'rw' });
+  });
+  return out;
+}
+
+function openMintForm() {
+  document.getElementById('mint-form').style.display = 'block';
+  document.getElementById('mint-result').style.display = 'none';
+  document.getElementById('mint-name').focus();
+}
+
+function closeMintForm() {
+  document.getElementById('mint-form').style.display = 'none';
+  document.getElementById('mint-form-el').reset();
+}
+
+async function submitMint(event) {
+  event.preventDefault();
+  const name = document.getElementById('mint-name').value.trim();
+  const ds = document.getElementById('mint-datasets').value
+    .split(',').map(s => s.trim()).filter(Boolean);
+  if (!name) return;
+  const btn = document.getElementById('mint-submit');
+  btn.disabled = true;
+  try {
+    const res = await api('POST', '/api/admin/clients', { name: name, datasets: ds });
+    // The mint response carries the FULL key exactly once — show it with a
+    // copy affordance and make the user actively dismiss it.
+    const box = document.getElementById('mint-result');
+    box.style.display = 'block';
+    box.innerHTML =
+      '<div>' + escHtml(res.message || 'Client minted.') + ' Hand the key to the user — it is shown <b>only once</b>:</div>' +
+      '<div class="key-reveal" id="minted-key">' + escHtml(res.key) + '</div>' +
+      '<div style="margin-top:6px"><button class="btn btn-outline btn-sm" onclick="copyMintedKey()">Copy key</button> ' +
+      '<button class="btn btn-outline btn-sm" onclick="dismissMinted()">Done — I saved it</button></div>';
+    toast(res.message || "Client '" + name + "' minted");
+    await loadClients();
+  } catch (e) {
+    if (e.status === 401) { handleAuthRejected('Your credentials were rejected by the server'); return; }
+    toast(e.message || 'Mint failed', 'error');
+  }
+  btn.disabled = false;
+}
+
+function copyMintedKey() {
+  const key = document.getElementById('minted-key');
+  if (!key) return;
+  navigator.clipboard.writeText(key.textContent)
+    .then(() => toast('Key copied to clipboard'))
+    .catch(() => toast('Copy failed — select the key manually', 'error'));
+}
+
+function dismissMinted() {
+  const box = document.getElementById('mint-result');
+  box.style.display = 'none';
+  box.innerHTML = '';
+  closeMintForm();
+}
+
+function toggleGrant(btn) {
+  const item = btn.closest('.client-item');
+  if (!item) return;
+  const form = item.querySelector('.grant-form');
+  if (form) form.classList.toggle('open');
+}
+
+// D21 client flags: blocked / oidc alias (PATCH /api/admin/clients/{name}).
+async function toggleClientBlocked(btn) {
+  const name = btn.dataset.name;
+  const want = btn.dataset.want === '1';
+  if (!name) return;
+  btn.disabled = true;
+  try {
+    const res = await api('PATCH', '/api/admin/clients/' + encodeURIComponent(name), { blocked: want });
+    toast(res.message || (want ? "'" + name + "' blocked" : "'" + name + "' unblocked"));
+    await loadClients();
+  } catch (e) {
+    btn.disabled = false;
+    toast(e.message || 'Flag update failed', 'error');
+  }
+}
+
+async function promptOidcBind(btn) {
+  const name = btn.dataset.name;
+  if (!name) return;
+  const val = prompt('Bind this key to a JWT identity (preferred_username). Empty clears the binding.', btn.dataset.current || '');
+  if (val === null) return;
+  try {
+    const res = await api('PATCH', '/api/admin/clients/' + encodeURIComponent(name), { oidc: val.trim() });
+    toast(res.message || 'OIDC binding updated');
+    await loadClients();
+  } catch (e) {
+    toast(e.message || 'OIDC binding failed', 'error');
+  }
+}
+
+async function submitGrant(event, form) {
+  event.preventDefault();
+  const item = form.closest('.client-item');
+  const name = item ? item.dataset.cname : null;
+  if (!name) return;
+  const picker = form.querySelector('.grant-picker');
+  const ds = picker ? collectGrantDatasets(picker) : [];
+  const errEl = document.getElementById('gerr-' + escHtml(name));
+  if (errEl) errEl.classList.remove('show');
+  try {
+    const res = await api('PATCH', '/api/admin/clients/' + encodeURIComponent(name), { datasets: ds });
+    toast(res.message || ("Grants updated for '" + name + "'"));
+    await loadClients();
+  } catch (e) {
+    if (e.status === 401) { handleAuthRejected('Your credentials were rejected by the server'); return; }
+    if (errEl) {
+      errEl.textContent = e.message || 'Update failed';
+      errEl.classList.add('show');
+    } else {
+      toast(e.message || 'Update failed', 'error');
+    }
+  }
+}
+
+async function revokeClient(btn) {
+  const name = btn.dataset.name;
+  if (!name) return;
+  if (!confirm("Revoke '" + name + "'? Its key stops authenticating immediately.")) return;
+  try {
+    const res = await api('DELETE', '/api/admin/clients/' + encodeURIComponent(name));
+    toast(res.message || ("Client '" + name + "' revoked"));
+    await loadClients();
+  } catch (e) {
+    if (e.status === 401) { handleAuthRejected('Your credentials were rejected by the server'); return; }
+    toast(e.message || 'Revoke failed', 'error');
+  }
+}
+
+// Full-power dataset management (D23): every dataset, delete + 🌐 publish.
+function renderAdminDatasets() {
+  const container = document.getElementById('admin-dataset-list');
+  if (!container || !state.isAdmin) return;
+  if (!datasets.length) { container.innerHTML = '<div class="empty-state">No datasets.</div>'; return; }
+  container.innerHTML = datasets.map(d => {
+    const lock = d.has_password ? (datasetPasswords[d.name] ? '🔓' : '🔒') : '';
+    return `<div class="dataset-item" data-name="${escHtml(d.name)}">
+      <div class="dataset-info">
+        <div class="dataset-name">${lock}${d.public ? ' 🌐' : ''} ${escHtml(d.name)}</div>
+        <div class="dataset-meta">${d.document_count || 0} docs${d.created_by ? ' · by ' + escHtml(d.created_by) : ''}</div>
+      </div>
+      <div class="dataset-actions">
+        <button class="btn btn-outline btn-sm" onclick="adminTogglePublic(this)" data-name="${escHtml(d.name)}" data-want="${d.public ? '0' : '1'}" title="${d.public ? 'Unpublish — granted keys only again' : 'Publish GLOBAL — every minted key can read/search it'}">${d.public ? '🌐 Unpublish' : '🌐 Publish'}</button>
+        <button class="btn btn-danger btn-sm" onclick="adminDeleteDataset(this)" data-name="${escHtml(d.name)}">Delete</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function adminTogglePublic(btn) {
+  const name = btn.dataset.name;
+  const want = btn.dataset.want === '1';
+  if (!name) return;
+  btn.disabled = true;
+  try {
+    const res = await api('POST', `/api/admin/datasets/${name}/public`, { public: want });
+    toast(res.message || (want ? 'Dataset is now GLOBAL (all minted keys)' : 'Dataset is private again'));
+    await listDatasets();
+    renderAdminDatasets();
+  } catch (e) {
+    btn.disabled = false;
+    toast(e.message, 'error');
+  }
+}
+
+async function adminDeleteDataset(btn) {
+  const name = btn.dataset.name;
+  if (!name) return;
+  if (!confirm(`Delete dataset "${name}"? This cannot be undone.`)) return;
+  btn.disabled = true;
+  const pw = datasetPasswords[name];
+  try {
+    await api('DELETE', `/api/datasets/${name}`, undefined, undefined,
+      pw ? { 'X-Dataset-Password': pw } : {});
+    toast(`Deleted "${name}"`);
+    if (selectedDataset === name) {
+      selectedDataset = null;
+      document.getElementById('selected-info').style.display = 'none';
+    }
+    await listDatasets();
+    renderAdminDatasets();
+    refreshDatasets().catch(function () {});
+  } catch (e) {
+    btn.disabled = false;
+    toast(e.message, 'error');
+  }
+}
+</script>
+<script>
+// =======================================================================
+// Stats tab — read-only GET /api/stats (identity-filtered server-side).
+// Renders {datasets:{total,visible_to_you,documents,storage_bytes},
+// models:[{name,url,healthy}], jobs:{active_uploads,recent_failures}} and
+// polls every 30s WHILE the tab is active. 404 (older backend) → the tab
+// hides itself instead of erroring.
+// =======================================================================
+
+let _statsInterval = null;
+
+function startStatsPolling() {
+  stopStatsPolling();
+  renderStats();
+  _statsInterval = setInterval(renderStats, 30000);
+}
+
+function stopStatsPolling() {
+  if (_statsInterval) { clearInterval(_statsInterval); _statsInterval = null; }
+}
+
+function statsCard(label, value, sub) {
+  return `<div style="background:var(--surface-2);padding:16px;border-radius:4px">
+    <div class="muted" style="margin-bottom:6px">${escHtml(label)}</div>
+    <div style="font-size:1.4rem;font-weight:600">${escHtml(String(value))}</div>
+    ${sub ? `<div class="muted" style="margin-top:4px">${escHtml(sub)}</div>` : ''}
+  </div>`;
+}
+
+async function renderStats() {
+  const body = document.getElementById('stats-body');
+  if (!body) return;
+  let s;
+  try {
+    s = await api('GET', '/api/stats', undefined, 15000);
+  } catch (e) {
+    if (e.status === 404) { showStatsTab(false); stopStatsPolling(); return; }
+    body.innerHTML = `<div style="color:var(--red)">${escHtml(e.message)}</div>`;
+    return;
+  }
+  const ds = (s && s.datasets) || {};
+  const jobs = (s && s.jobs) || {};
+  const models = Array.isArray(s && s.models) ? s.models : [];
+  const gen = document.getElementById('stats-generated');
+  if (gen) {
+    let genText = '';
+    if (s.generated_at) {
+      try { genText = 'generated ' + new Date(s.generated_at).toLocaleTimeString(); }
+      catch (e) { genText = ''; }
+    }
+    gen.textContent = genText;
+  }
+  const docsVal = ds.documents != null ? Number(ds.documents).toLocaleString() : '—';
+  // D23 addendum: surface the identity's ★ memory binding on the stats
+  // identity line when the backend reports it (stats.memory.dataset).
+  const mem = (s && s.memory && s.memory.dataset) || null;
+  const memLine = mem
+    ? `<div class="muted" style="margin-top:10px"><span class="memory-dot"></span> Identity: ${escHtml(String(state.identity || 'unknown'))}${state.source ? ' (' + escHtml(state.source) + ')' : ''} · ★ long-term memory: <b>${escHtml(String(mem))}</b></div>`
+    : (state.identity
+      ? `<div class="muted" style="margin-top:10px">Identity: ${escHtml(state.identity)}${state.source ? ' (' + escHtml(state.source) + ')' : ''}</div>`
+      : '');
+  body.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:16px">
+      ${statsCard('Datasets (deployment)', ds.total != null ? ds.total : '—')}
+      ${statsCard('Visible to you', ds.visible_to_you != null ? ds.visible_to_you : '—')}
+      ${statsCard('Documents', docsVal)}
+      ${statsCard('Storage', formatBytes(ds.storage_bytes || 0))}
+      ${statsCard('Active uploads', jobs.active_uploads != null ? jobs.active_uploads : '—')}
+      ${statsCard('Recent failures', jobs.recent_failures != null ? jobs.recent_failures : '—',
+        jobs.recent_failures ? 'check the upload history' : '')}
+    </div>
+    ${statsPvcSection(s)}
+    <div style="margin-top:18px">
+      <div class="muted" style="margin-bottom:8px">Model endpoints</div>
+      ${models.length ? models.map(m => {
+        const healthy = m.healthy === true;
+        const color = healthy ? 'var(--green)' : 'var(--red)';
+        return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
+          <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${color};flex-shrink:0"></span>
+          <span style="font-weight:500;min-width:120px">${escHtml(String(m.name != null ? m.name : 'model'))}</span>
+          <span class="muted" style="word-break:break-all">${escHtml(String(m.url != null ? m.url : ''))}</span>
+          <span style="margin-left:auto;color:${color};font-size:.8rem;flex-shrink:0">${healthy ? 'healthy' : 'unhealthy'}</span>
+        </div>`;
+      }).join('') : '<div class="muted">No model endpoints reported.</div>'}
+    </div>
+    ${memLine}`;
+}
+
+// D23 (2026-10): the PVC-capacity section — the old /manage page's headline
+// info (file-storage PVC + Qdrant DB PVC: total/used/free/utilization with
+// color-coded bars), restored into the Stats tab from /api/stats'
+// storage_pvc/qdrant_pvc blocks.  Read-only numbers, same as
+// /api/admin/health reports; absent blocks (older backend / not mounted)
+// render nothing rather than an error.
+function pvcCard(title, pvc, note) {
+  if (!pvc || !pvc.total_bytes) return '';
+  const pct = Number(pvc.used_percent) || 0;
+  const color = pct > 80 ? 'var(--red)' : (pct > 50 ? 'var(--accent)' : 'var(--green)');
+  return `<div style="background:var(--surface-2);padding:16px;border-radius:6px;border:1px solid var(--border)">
+    <div style="font-weight:500;margin-bottom:8px">${escHtml(title)}</div>
+    <div style="height:6px;background:var(--border);border-radius:3px;margin-bottom:10px;overflow:hidden">
+      <div style="width:${Math.min(pct,100)}%;height:100%;background:${color};transition:width .5s"></div>
+    </div>
+    <table style="width:100%;font-size:.82rem">
+      <tr><td style="padding:3px 0;color:var(--text-muted)">Total</td><td style="text-align:right">${formatBytes(pvc.total_bytes)}</td></tr>
+      <tr><td style="padding:3px 0;color:var(--text-muted)">Used</td><td style="text-align:right">${formatBytes(pvc.used_bytes)}</td></tr>
+      <tr><td style="padding:3px 0;color:var(--text-muted)">Free</td><td style="text-align:right">${formatBytes(pvc.free_bytes)}</td></tr>
+      <tr><td style="padding:3px 0;color:var(--text-muted)">Utilization</td><td style="text-align:right;color:${color}">${pct}%</td></tr>
+    </table>
+    <div style="font-size:.72rem;color:var(--text-muted);margin-top:8px">${escHtml(note || '')}</div>
+  </div>`;
+}
+
+function statsPvcSection(s) {
+  const file = pvcCard('File Storage PVC', s && s.storage_pvc,
+    'PVC mounted at /data — uploaded files (images, videos, audio, PDFs)');
+  const qd = pvcCard('Qdrant DB PVC', s && s.qdrant_pvc,
+    'Qdrant StatefulSet PVC — vector index & payloads');
+  if (!file && !qd) return '';
+  return `<div style="margin-top:18px;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px">${file}${qd}</div>`;
+}
+</script>
+<script>
+// =======================================================================
+// Inspector tab (D27) — direct MCP tool calls as THIS session.
+//
+// GET /api/inspector/tools  → the sidecar's tools/list catalog + which
+//                             credential envelope the proxy forwards.
+// POST /api/inspector/call  → one tools/call {name, arguments} round trip.
+//
+// The proxy forwards the session's own credential (pasted key / SSO JWT /
+// forwarded token) server-side — the key material never crosses into this
+// page's reach beyond what paste mode already holds, and the SSO session's
+// JWT never does at all. Tool-level failures render as the tool's own
+// error text (the call round trip succeeded); proxy failures surface as
+// the api() error toast / inline error.
+// =======================================================================
+
+const _inspector = {
+  loaded: false, loading: false,
+  tools: [], credential: 'none', endpoint: '',
+  selected: null,           // the selected tool's catalog entry
+  argsError: '', result: null,
+};
+
+const _INSPECTOR_CRED_LABELS = {
+  'api-key': 'forwarding: session API key',
+  'bearer-token': 'forwarding: bearer credential',
+  'forwarded-jwt': 'forwarding: forwarded token',
+  'sso-jwt': 'forwarding: SSO identity',
+  'proxy-identity': 'proxy identity — no forwardable credential',
+  'none': 'no session credential',
+};
+
+async function ensureInspectorLoaded(force) {
+  if (_inspector.loading) return;
+  if (_inspector.loaded && !force) { renderInspectorCred(); return; }
+  _inspector.loading = true;
+  const list = document.getElementById('inspector-tool-list');
+  if (list && !_inspector.loaded) list.innerHTML = '<div class="empty-state"><span class="spinner"></span></div>';
+  try {
+    const meta = await api('GET', '/api/inspector/tools', undefined, 30000);
+    _inspector.tools = Array.isArray(meta && meta.tools) ? meta.tools : [];
+    _inspector.credential = (meta && meta.session_credential) || 'none';
+    _inspector.endpoint = (meta && meta.endpoint) || '';
+    _inspector.loaded = true;
+    renderInspectorCred();
+    renderInspectorTools();
+  } catch (e) {
+    if (e.status === 401 || e.status === 403) { handleAuthRejected('Your credentials were rejected by the server'); return; }
+    if (list) list.innerHTML = `<div class="empty-state" style="color:var(--red)">${escHtml(e.message || 'Could not load the tool catalog')}</div>
+      <div class="empty-state"><button class="btn btn-outline btn-sm" onclick="ensureInspectorLoaded(true)">Retry</button></div>`;
+  } finally {
+    _inspector.loading = false;
+  }
+}
+
+function renderInspectorCred() {
+  const chip = document.getElementById('inspector-cred-chip');
+  if (!chip) return;
+  const label = _INSPECTOR_CRED_LABELS[_inspector.credential] || _INSPECTOR_CRED_LABELS.none;
+  chip.textContent = label;
+  chip.style.display = 'inline-block';
+  chip.title = 'The credential envelope forwarded to the MCP endpoint with every call — never the credential itself.';
+  const ep = document.getElementById('inspector-endpoint');
+  if (ep) ep.textContent = _inspector.endpoint || 'the deployment MCP endpoint';
+}
+
+function renderInspectorTools() {
+  const list = document.getElementById('inspector-tool-list');
+  if (!list) return;
+  const q = ((document.getElementById('inspector-filter') || {}).value || '').trim().toLowerCase();
+  const rows = _inspector.tools.filter(t => {
+    if (!q) return true;
+    return String(t.name || '').toLowerCase().includes(q) ||
+      String(t.description || '').toLowerCase().includes(q);
+  });
+  if (!rows.length) {
+    list.innerHTML = `<div class="empty-state">${_inspector.tools.length === 0
+      ? 'No tools reported by the MCP endpoint.'
+      : 'No tools match the filter.'}</div>`;
+    return;
+  }
+  list.innerHTML = rows.map(t => {
+    const active = _inspector.selected && _inspector.selected.name === t.name;
+    return `<div data-inspector-tool="${escHtml(String(t.name || ''))}" onclick="selectInspectorTool(this.dataset.inspectorTool)"
+      style="padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--border);${active ? 'background:var(--surface-2);border-left:2px solid var(--accent)' : ''}">
+      <div style="font-size:.82rem;font-weight:600">${escHtml(String(t.name || 'unnamed tool'))}</div>
+      <div class="muted" style="font-size:.72rem;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">${escHtml(String(t.description || '').split('\n')[0])}</div>
+    </div>`;
+  }).join('');
+}
+
+// Seed an arguments skeleton from the tool's inputSchema: schema defaults
+// when given, type-shaped placeholders otherwise, and dataset_name prefilled
+// with the first dataset visible to this identity (a pure convenience —
+// the server enforces the ACL either way).
+function inspectorSeedArgs(tool) {
+  const schema = (tool && tool.inputSchema) || {};
+  const props = (schema.properties && typeof schema.properties === 'object') ? schema.properties : {};
+  const required = Array.isArray(schema.required) ? schema.required : [];
+  const args = {};
+  const firstDs = (typeof accessDatasets !== 'undefined' && accessDatasets.length && accessDatasets[0] && accessDatasets[0].name) ? String(accessDatasets[0].name) : '';
+  Object.keys(props).forEach(prop => {
+    const p = (props && typeof props === 'object') ? props[prop] : {};
+    if (p && p.default !== undefined && p.default !== null) { args[prop] = p.default; return; }
+    const type = Array.isArray(p.type) ? p.type[0] : p.type;
+    if (type === 'boolean') args[prop] = false;
+    else if (type === 'integer' || type === 'number') args[prop] = (required.includes(prop) ? 0 : null);
+    else if (type === 'array') args[prop] = [];
+    else if (type === 'object') args[prop] = {};
+    else if (prop === 'dataset_name' && firstDs) args[prop] = firstDs;
+    else args[prop] = '';
+    if (!required.includes(prop) && args[prop] === '') delete args[prop];
+  });
+  return args;
+}
+
+function selectInspectorTool(name) {
+  const tool = _inspector.tools.find(t => String(t.name || '') === String(name));
+  if (!tool) return;
+  _inspector.selected = tool;
+  _inspector.result = null;
+  _inspector.argsError = '';
+  renderInspectorTools();
+  renderInspectorDetail();
+}
+
+function renderInspectorDetail() {
+  const el = document.getElementById('inspector-detail');
+  if (!el) return;
+  const tool = _inspector.selected;
+  if (!tool) { el.innerHTML = '<div class="empty-state">Select a tool on the left to inspect it.</div>'; return; }
+  const schema = tool.inputSchema || {};
+  const props = (schema.properties && typeof schema.properties === 'object') ? schema.properties : {};
+  const required = Array.isArray(schema.required) ? schema.required : [];
+  const propRows = Object.keys(props).map(prop => {
+    const p = props[prop] || {};
+    const type = Array.isArray(p.type) ? p.type.join('|') : (p.type || 'any');
+    const req = required.includes(prop) ? ' <span style="color:var(--red)">*</span>' : '';
+    return `<tr><td style="padding:2px 10px 2px 0;white-space:nowrap;font-family:var(--mono,monospace);font-size:.75rem">${escHtml(prop)}${req}</td>
+      <td class="muted" style="padding:2px 0;font-size:.72rem;white-space:nowrap">${escHtml(String(type))}</td>
+      <td class="muted" style="padding:2px 0;font-size:.72rem">${escHtml(String(p.description || ''))}</td></tr>`;
+  }).join('');
+  el.innerHTML = `
+    <div style="margin-bottom:6px">
+      <span style="font-weight:600;font-size:.95rem">${escHtml(String(tool.name || ''))}</span>
+      ${required.length ? '<span class="muted" style="font-size:.72rem;margin-left:8px"><span style="color:var(--red)">*</span> required</span>' : ''}
+    </div>
+    <div class="muted" style="font-size:.8rem;white-space:pre-wrap;margin-bottom:10px">${escHtml(String(tool.description || 'No description.'))}</div>
+    ${propRows ? `<table style="margin-bottom:12px;border-collapse:collapse"><tbody>${propRows}</tbody></table>` : ''}
+    <label for="inspector-args" style="font-size:.78rem">Arguments (JSON)</label>
+    <textarea id="inspector-args" spellcheck="false" rows="10"
+      style="width:100%;font-family:var(--mono,monospace);font-size:.78rem;padding:10px;border:1px solid var(--border);border-radius:4px;background:var(--surface-2);color:var(--text);resize:vertical">${escHtml(JSON.stringify(inspectorSeedArgs(tool), null, 2))}</textarea>
+    <div id="inspector-args-error" class="error-text" style="${_inspector.argsError ? '' : 'display:none'}">${escHtml(_inspector.argsError)}</div>
+    <div style="display:flex;gap:8px;margin-top:10px;align-items:center;flex-wrap:wrap">
+      <button class="btn btn-primary btn-sm" id="inspector-run-btn" onclick="runInspectorTool()">Run tool</button>
+      <button class="btn btn-outline btn-sm" onclick="resetInspectorArgs()">Reset arguments</button>
+    </div>
+    <div id="inspector-result"></div>`;
+}
+
+function resetInspectorArgs() {
+  if (!_inspector.selected) return;
+  _inspector.argsError = '';
+  renderInspectorDetail();
+}
+
+function _inspectorExtractText(result) {
+  // The human-readable layer: every text content block of a CallToolResult,
+  // in order. Images/audio/resource blocks are summarized as placeholders —
+  // the raw JSON below carries them verbatim.
+  const blocks = result && Array.isArray(result.content) ? result.content : [];
+  const parts = [];
+  blocks.forEach(b => {
+    if (!b || typeof b !== 'object') return;
+    if (b.type === 'text' && typeof b.text === 'string') parts.push(b.text);
+    else if (b.type === 'image') parts.push('[image content block]');
+    else if (b.type === 'audio') parts.push('[audio content block]');
+    else if (b.type === 'resource') parts.push('[embedded resource]');
+    else if (b.type) parts.push(`[${b.type} content block]`);
+  });
+  return parts.join('\n');
+}
+
+async function runInspectorTool() {
+  const tool = _inspector.selected;
+  if (!tool) return;
+  const ta = document.getElementById('inspector-args');
+  const errEl = document.getElementById('inspector-args-error');
+  const resEl = document.getElementById('inspector-result');
+  let args = {};
+  if (ta && ta.value.trim() !== '') {
+    try { args = JSON.parse(ta.value); }
+    catch (e) {
+      _inspector.argsError = 'Arguments are not valid JSON: ' + e.message;
+      if (errEl) { errEl.textContent = _inspector.argsError; errEl.style.display = ''; }
+      return;
+    }
+  }
+  if (errEl) { errEl.style.display = 'none'; }
+  _inspector.argsError = '';
+  const btn = document.getElementById('inspector-run-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Running…'; }
+  if (resEl) resEl.innerHTML = '<div class="empty-state"><span class="spinner"></span></div>';
+  try {
+    const out = await api('POST', '/api/inspector/call', { name: tool.name, arguments: args });
+    _inspector.result = out;
+    renderInspectorResult();
+  } catch (e) {
+    if (e.status === 401 || e.status === 403) { handleAuthRejected('Your credentials were rejected by the server'); return; }
+    if (resEl) resEl.innerHTML = `<div style="color:var(--red);margin-top:12px;font-size:.82rem">${escHtml(e.message || 'The call failed')}</div>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Run tool'; }
+  }
+}
+
+function renderInspectorResult() {
+  const resEl = document.getElementById('inspector-result');
+  if (!resEl) return;
+  const out = _inspector.result;
+  if (!out) { resEl.innerHTML = ''; return; }
+  const ok = out.ok !== false;
+  const color = ok ? 'var(--green)' : 'var(--red)';
+  const text = _inspectorExtractText(out.result);
+  const rawJson = JSON.stringify(out.result != null ? out.result : out.error, null, 2);
+  resEl.innerHTML = `
+    <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px">
+        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color}"></span>
+        <span style="font-size:.82rem;font-weight:600">${ok ? 'ok' : 'error'}</span>
+        <span class="muted" style="font-size:.75rem">${escHtml(String(out.duration_ms != null ? out.duration_ms + ' ms' : ''))}</span>
+      </div>
+      ${text ? `<pre style="white-space:pre-wrap;word-break:break-word;background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:12px;font-size:.78rem;margin:0 0 10px;max-height:420px;overflow:auto">${escHtml(text)}</pre>` : ''}
+      <details${text ? '' : ' open'}>
+        <summary class="muted" style="cursor:pointer;font-size:.75rem">Raw MCP result</summary>
+        <pre style="white-space:pre-wrap;word-break:break-word;background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:12px;font-size:.72rem;margin:8px 0 0;max-height:420px;overflow:auto">${escHtml(rawJson)}</pre>
+      </details>
+    </div>`;
+}
+
+// Identity change → the catalog (and the forwarded-credential chip) belong
+// to the OLD session; drop them so the next tab entry re-probes.
+function resetInspector() {
+  _inspector.loaded = false;
+  _inspector.tools = [];
+  _inspector.credential = 'none';
+  _inspector.endpoint = '';
+  _inspector.selected = null;
+  _inspector.result = null;
+  _inspector.argsError = '';
+}
+</script>
+<script>
+// D23 SPA boot — one identity probe, then the resolved tab.
+(function () {
+  var form = document.getElementById('signin-key-form');
+  if (form) form.addEventListener('submit', connectWithKey);
+})();
+bootSPA().catch(function (e) { console.warn('SPA boot failed', e); });
 </script>
 </body>
 </html>
