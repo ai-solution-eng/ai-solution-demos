@@ -1,6 +1,6 @@
 # porting.md
 
-Design journal for the agentic-finetune-v2 framework. Each entry captures
+Design journal for the agentic-finetune framework. Each entry captures
 what shipped, what broke, and why we chose what we chose. New entries at the
 top. For install and user-facing docs see **README.md**.
 

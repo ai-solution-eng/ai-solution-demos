@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "agentic-finetune-v2.mergeExportTemplateConfigMapName" . }}
+  name: {{ include "agentic-finetune.mergeExportTemplateConfigMapName" . }}
   labels:
-    {{- include "agentic-finetune-v2.labels" . | nindent 4 }}
+    {{- include "agentic-finetune.labels" . | nindent 4 }}
 data:
   # Merge-export Job template. Orchestrator reads this, substitutes
   # runtime placeholders (see the tokens below in the format used by
@@ -15,10 +15,10 @@ data:
     metadata:
       name: $((JOB_NAME))
       labels:
-        {{- include "agentic-finetune-v2.labels" . | nindent 8 }}
-        agentic-finetune-v2/component: merge-export
-        agentic-finetune-v2/merge-id: "$((MERGE_ID))"
-        agentic-finetune-v2/training-id: "$((TRAINING_ID))"
+        {{- include "agentic-finetune.labels" . | nindent 8 }}
+        agentic-finetune/component: merge-export
+        agentic-finetune/merge-id: "$((MERGE_ID))"
+        agentic-finetune/training-id: "$((TRAINING_ID))"
     spec:
       # Merge (~2 min) + 6GB upload (~3-5 min) + boto3 install (~15s):
       # target ~10 minutes typical, cap at 30 min for safety margin.
@@ -28,12 +28,12 @@ data:
       template:
         metadata:
           labels:
-            {{- include "agentic-finetune-v2.selectorLabels" . | nindent 12 }}
-            agentic-finetune-v2/component: merge-export
-            agentic-finetune-v2/merge-id: "$((MERGE_ID))"
+            {{- include "agentic-finetune.selectorLabels" . | nindent 12 }}
+            agentic-finetune/component: merge-export
+            agentic-finetune/merge-id: "$((MERGE_ID))"
         spec:
           restartPolicy: Never
-          serviceAccountName: {{ include "agentic-finetune-v2.serviceAccountName" . }}
+          serviceAccountName: {{ include "agentic-finetune.serviceAccountName" . }}
           {{- with .Values.trainingJob.gpu.nodeSelector }}
           nodeSelector:
             {{- toYaml . | nindent 12 }}
@@ -48,7 +48,7 @@ data:
               type: RuntimeDefault
           containers:
             - name: merge-export
-              image: "{{ include "agentic-finetune-v2.image.llamaFactory" . }}"
+              image: "{{ include "agentic-finetune.image.llamaFactory" . }}"
               imagePullPolicy: {{ .Values.images.llamaFactory.pullPolicy }}
               command:
                 - python3
@@ -106,8 +106,8 @@ data:
           volumes:
             - name: workspace
               persistentVolumeClaim:
-                claimName: {{ include "agentic-finetune-v2.workspacePvcName" . }}
+                claimName: {{ include "agentic-finetune.workspacePvcName" . }}
             - name: merge-export-script
               configMap:
-                name: {{ include "agentic-finetune-v2.mergeExportScriptConfigMapName" . }}
+                name: {{ include "agentic-finetune.mergeExportScriptConfigMapName" . }}
                 defaultMode: 0755

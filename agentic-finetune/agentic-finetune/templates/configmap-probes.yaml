@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "agentic-finetune-v2.fullname" . }}-probes
+  name: {{ include "agentic-finetune.fullname" . }}-probes
   labels:
-    {{- include "agentic-finetune-v2.labels" . | nindent 4 }}
+    {{- include "agentic-finetune.labels" . | nindent 4 }}
 data:
   # Bundled probe sets. The seed initContainer copies these to /workspace/probes/
   # at install time. Custom-eval Jobs read them from there.

@@ -1,19 +1,19 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "agentic-finetune-v2.fullname" . }}-config
+  name: {{ include "agentic-finetune.fullname" . }}-config
   labels:
-    {{- include "agentic-finetune-v2.labels" . | nindent 4 }}
+    {{- include "agentic-finetune.labels" . | nindent 4 }}
 data:
   # Runtime configuration the orchestrator loads at startup.
   config.yaml: |
     workspace_dir: /workspace
-    job_template_path: /etc/agentic-finetune-v2/job-template.yaml
-    lf_config_template_path: /etc/agentic-finetune-v2/lf-config-template.yaml
-    custom_eval_job_template_path: /etc/agentic-finetune-v2/custom-eval-job-template.yaml
-    merge_export_job_template_path: /etc/agentic-finetune-v2/merge-export-job-template.yaml
-    batch_inference_adapter_job_template_path: /etc/agentic-finetune-v2/batch-inference-adapter-job-template.yaml
-    batch_inference_endpoint_job_template_path: /etc/agentic-finetune-v2/batch-inference-endpoint-job-template.yaml
+    job_template_path: /etc/agentic-finetune/job-template.yaml
+    lf_config_template_path: /etc/agentic-finetune/lf-config-template.yaml
+    custom_eval_job_template_path: /etc/agentic-finetune/custom-eval-job-template.yaml
+    merge_export_job_template_path: /etc/agentic-finetune/merge-export-job-template.yaml
+    batch_inference_adapter_job_template_path: /etc/agentic-finetune/batch-inference-adapter-job-template.yaml
+    batch_inference_endpoint_job_template_path: /etc/agentic-finetune/batch-inference-endpoint-job-template.yaml
 
     defaults:
       base_model: {{ .Values.orchestrator.defaults.baseModel | quote }}
@@ -28,5 +28,5 @@ data:
 
     job_template:
       namespace: {{ .Release.Namespace | quote }}
-      service_account: {{ include "agentic-finetune-v2.serviceAccountName" . | quote }}
-      pvc_name: {{ include "agentic-finetune-v2.workspacePvcName" . | quote }}
+      service_account: {{ include "agentic-finetune.serviceAccountName" . | quote }}
+      pvc_name: {{ include "agentic-finetune.workspacePvcName" . | quote }}

@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "agentic-finetune-v2.customEvalTemplateConfigMapName" . }}
+  name: {{ include "agentic-finetune.customEvalTemplateConfigMapName" . }}
   labels:
-    {{- include "agentic-finetune-v2.labels" . | nindent 4 }}
+    {{- include "agentic-finetune.labels" . | nindent 4 }}
 data:
   # Custom-eval Job template. Orchestrator reads this, substitutes
   # runtime placeholders (see the tokens below in the format used by
@@ -23,11 +23,11 @@ data:
     metadata:
       name: $((JOB_NAME))
       labels:
-        {{- include "agentic-finetune-v2.labels" . | nindent 8 }}
-        agentic-finetune-v2/component: custom-eval
-        agentic-finetune-v2/eval-id: "$((EVAL_ID))"
+        {{- include "agentic-finetune.labels" . | nindent 8 }}
+        agentic-finetune/component: custom-eval
+        agentic-finetune/eval-id: "$((EVAL_ID))"
       annotations:
-        agentic-finetune-v2/probe-set: "$((PROBE_SET))"
+        agentic-finetune/probe-set: "$((PROBE_SET))"
     spec:
       # Same lifecycle policy as training Jobs. 1-hour TTL, no auto-retry,
       # 2-hour activeDeadline (custom eval on 20 probes typically ~2-5 minutes,
@@ -38,12 +38,12 @@ data:
       template:
         metadata:
           labels:
-            {{- include "agentic-finetune-v2.selectorLabels" . | nindent 12 }}
-            agentic-finetune-v2/component: custom-eval
-            agentic-finetune-v2/eval-id: "$((EVAL_ID))"
+            {{- include "agentic-finetune.selectorLabels" . | nindent 12 }}
+            agentic-finetune/component: custom-eval
+            agentic-finetune/eval-id: "$((EVAL_ID))"
         spec:
           restartPolicy: Never
-          serviceAccountName: {{ include "agentic-finetune-v2.serviceAccountName" . }}
+          serviceAccountName: {{ include "agentic-finetune.serviceAccountName" . }}
           {{- with .Values.trainingJob.gpu.nodeSelector }}
           nodeSelector:
             {{- toYaml . | nindent 12 }}
@@ -58,7 +58,7 @@ data:
               type: RuntimeDefault
           containers:
             - name: custom-eval
-              image: "{{ include "agentic-finetune-v2.image.llamaFactory" . }}"
+              image: "{{ include "agentic-finetune.image.llamaFactory" . }}"
               imagePullPolicy: {{ .Values.images.llamaFactory.pullPolicy }}
               command:
                 - python3
@@ -90,8 +90,8 @@ data:
           volumes:
             - name: workspace
               persistentVolumeClaim:
-                claimName: {{ include "agentic-finetune-v2.workspacePvcName" . }}
+                claimName: {{ include "agentic-finetune.workspacePvcName" . }}
             - name: custom-eval-script
               configMap:
-                name: {{ include "agentic-finetune-v2.customEvalScriptConfigMapName" . }}
+                name: {{ include "agentic-finetune.customEvalScriptConfigMapName" . }}
                 defaultMode: 0755

@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "agentic-finetune-v2.batchInferenceEndpointTemplateConfigMapName" . }}
+  name: {{ include "agentic-finetune.batchInferenceEndpointTemplateConfigMapName" . }}
   labels:
-    {{- include "agentic-finetune-v2.labels" . | nindent 4 }}
+    {{- include "agentic-finetune.labels" . | nindent 4 }}
 data:
   # Endpoint-source batch inference Job template.
   # Different container shape from adapter mode:
@@ -18,9 +18,9 @@ data:
     metadata:
       name: $((JOB_NAME))
       labels:
-        {{- include "agentic-finetune-v2.labels" . | nindent 8 }}
-        agentic-finetune-v2/component: batch-inference-endpoint
-        agentic-finetune-v2/run-id: "$((RUN_ID))"
+        {{- include "agentic-finetune.labels" . | nindent 8 }}
+        agentic-finetune/component: batch-inference-endpoint
+        agentic-finetune/run-id: "$((RUN_ID))"
     spec:
       ttlSecondsAfterFinished: {{ .Values.trainingJob.ttlSecondsAfterFinished }}
       backoffLimit: 0
@@ -30,12 +30,12 @@ data:
       template:
         metadata:
           labels:
-            {{- include "agentic-finetune-v2.selectorLabels" . | nindent 12 }}
-            agentic-finetune-v2/component: batch-inference-endpoint
-            agentic-finetune-v2/run-id: "$((RUN_ID))"
+            {{- include "agentic-finetune.selectorLabels" . | nindent 12 }}
+            agentic-finetune/component: batch-inference-endpoint
+            agentic-finetune/run-id: "$((RUN_ID))"
         spec:
           restartPolicy: Never
-          serviceAccountName: {{ include "agentic-finetune-v2.serviceAccountName" . }}
+          serviceAccountName: {{ include "agentic-finetune.serviceAccountName" . }}
           securityContext:
             runAsNonRoot: false
             seccompProfile:
@@ -47,7 +47,7 @@ data:
               # previously used python:3.11-slim with runtime pip install, but
               # slim's minimal networking layer produced empty ConnectError
               # against MLIS TLS deployments — see porting.md §19.
-              image: "{{ include "agentic-finetune-v2.image.orchestrator" . }}"
+              image: "{{ include "agentic-finetune.image.orchestrator" . }}"
               imagePullPolicy: {{ .Values.images.orchestrator.pullPolicy }}
               command:
                 - python3
@@ -94,8 +94,8 @@ data:
           volumes:
             - name: workspace
               persistentVolumeClaim:
-                claimName: {{ include "agentic-finetune-v2.workspacePvcName" . }}
+                claimName: {{ include "agentic-finetune.workspacePvcName" . }}
             - name: batch-inference-endpoint-script
               configMap:
-                name: {{ include "agentic-finetune-v2.batchInferenceEndpointScriptConfigMapName" . }}
+                name: {{ include "agentic-finetune.batchInferenceEndpointScriptConfigMapName" . }}
                 defaultMode: 0755

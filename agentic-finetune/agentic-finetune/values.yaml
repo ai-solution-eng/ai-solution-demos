@@ -1,4 +1,4 @@
-# Default values for agentic-finetune-v2.
+# Default values for agentic-finetune.
 # Every value here is intentional. Comments call out PCAI-specific constraints.
 
 # Naming
@@ -9,16 +9,16 @@ fullnameOverride: ""
 
 # Images
 #
-# Two sidecar containers in the agentic-finetune-v2 pod, plus the LlamaFactory
+# Two sidecar containers in the agentic-finetune pod, plus the LlamaFactory
 # image which is referenced (not deployed) and pulled by each training Job.
 
 images:
   orchestrator:
-    repository: docker.io/caovd/agentic-finetune-v2-orchestrator
+    repository: docker.io/caovd/agentic-finetune-orchestrator
     tag: "0.4.3"
     pullPolicy: IfNotPresent
   mcpServer:
-    repository: docker.io/caovd/agentic-finetune-v2-mcp-server
+    repository: docker.io/caovd/agentic-finetune-mcp-server
     tag: "0.4.3"
     pullPolicy: IfNotPresent
   # The LlamaFactory image is used by each spawned training Job, not by this
@@ -69,7 +69,7 @@ workspace:
     # place. This preserves the HuggingFace model cache (~6GB for
     # Qwen2.5-3B) and any registered adapters across reinstalls. To start
     # fresh, set this to false before uninstall, or run
-    # `kubectl delete pvc agentic-finetune-v2-workspace -n <ns>` after.
+    # `kubectl delete pvc agentic-finetune-workspace -n <ns>` after.
     keepOnUninstall: true
     # Pre-install hook that mounts the PVC and waits for it to bind. Default
     # off: gl4f-filesystem on AIE 1.10 binds fast enough that this Job exceeds
@@ -162,7 +162,7 @@ mcpServer:
 # mcpo container — MCP-to-OpenAPI bridge required by Open-WebUI's
 # Tool Servers UI. The bridge wraps our MCP server and re-exposes the
 # same six tools as an OpenAPI endpoint Open-WebUI can register.
-# Open-WebUI URL: http://agentic-finetune-v2.<ns>.svc.cluster.local:<port>/openapi.json
+# Open-WebUI URL: http://agentic-finetune.<ns>.svc.cluster.local:<port>/openapi.json
 
 mcpo:
   enabled: true
@@ -209,7 +209,7 @@ mcpo:
 #
 # Create the Secret before install:
 #   kubectl create secret generic minio-credentials \
-#     -n agentic-finetune-v2 \
+#     -n agentic-finetune \
 #     --from-literal=access-key='<ACCESS_KEY>' \
 #     --from-literal=secret-key='<SECRET_KEY>' \
 #     --from-literal=endpoint='http://minio.minio.svc.cluster.local:9000' \
@@ -242,7 +242,7 @@ s3:
 #
 # Create the Secret before install:
 #   kubectl create secret generic mlis-token \
-#     -n agentic-finetune-v2 \
+#     -n agentic-finetune \
 #     --from-literal=token='<mlis-managed-access-token>'
 
 mlis:
@@ -318,7 +318,7 @@ ezua:
   virtualService:
     enabled: true
     # IMPORTANT — ${DOMAIN_NAME} is substituted by the AIE platform at install time.
-    endpoint: "agentic-finetune-v2.${DOMAIN_NAME}"
+    endpoint: "agentic-finetune.${DOMAIN_NAME}"
     istioGateway: "istio-system/ezaf-gateway"
     # MCP SSE is a long-poll stream; match LlamaFactory's chart and use a long timeout.
     timeout: "86400s"

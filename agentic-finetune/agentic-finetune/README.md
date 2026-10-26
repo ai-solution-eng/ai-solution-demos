@@ -1,4 +1,4 @@
-# agentic-finetune-v2
+# agentic-finetune
 
 An agent layer in front of LlamaFactory. Drive a complete fine-tuning loop
 (discover datasets → train a LoRA → evaluate → register) from Open-WebUI by
@@ -42,10 +42,10 @@ Two paths — UI or CLI. Both produce the same result.
 
 1. Package the chart:
    ```bash
-   helm package charts/agentic-finetune-v2
+   helm package charts/agentic-finetune
    ```
 2. In AIE: **Tools & Frameworks → Import Framework**.
-3. Fill in the wizard: name `agentic-finetune-v2`, version `0.1.0`, category
+3. Fill in the wizard: name `agentic-finetune`, version `0.1.0`, category
    *Data Science*, upload `ezua/icon.png` as the logo, upload the packaged
    `.tgz` as the chart.
 4. Choose a target namespace and install name. Set **Wait** to true so the
@@ -56,8 +56,8 @@ Two paths — UI or CLI. Both produce the same result.
 ### Via the CLI (for dev / CI)
 
 ```bash
-helm install agentic-finetune-v2 charts/agentic-finetune-v2 \
-  --namespace agentic-finetune-v2 \
+helm install agentic-finetune charts/agentic-finetune \
+  --namespace agentic-finetune \
   --create-namespace \
   --wait --timeout 10m
 ```
@@ -66,10 +66,10 @@ The `${DOMAIN_NAME}` placeholder in `ezua.virtualService.endpoint` is substitute
 the AIE platform automatically. For CLI installs, override it explicitly:
 
 ```bash
-helm install agentic-finetune-v2 charts/agentic-finetune-v2 \
-  --namespace agentic-finetune-v2 \
+helm install agentic-finetune charts/agentic-finetune \
+  --namespace agentic-finetune \
   --create-namespace \
-  --set ezua.virtualService.endpoint=agentic-finetune-v2.your-cluster.example.com \
+  --set ezua.virtualService.endpoint=agentic-finetune.your-cluster.example.com \
   --wait --timeout 10m
 ```
 
@@ -81,7 +81,7 @@ In Open-WebUI:
 
 1. **Settings → Tools → Add MCP Server**
 2. Transport: **SSE**
-3. URL: the value printed by the install (e.g. `https://agentic-finetune-v2.example.pcai.local/sse`)
+3. URL: the value printed by the install (e.g. `https://agentic-finetune.example.pcai.local/sse`)
 4. After connecting, the agent should enumerate six tools:
    `list_datasets`, `dataset_prep`, `launch_training`, `get_job_status`,
    `run_eval`, `register_model`.
@@ -99,7 +99,7 @@ The agent should:
 2. Call `dataset_prep` to validate.
 3. Call `launch_training` — this creates a K8s `Job` named `ft-...`. Watch with:
    ```bash
-   kubectl -n <ns> get jobs -l agentic-finetune-v2/component=trainer -w
+   kubectl -n <ns> get jobs -l agentic-finetune/component=trainer -w
    ```
 4. Poll `get_job_status` until the loss is reported.
 5. Call `run_eval` against the trained adapter. Reports `passed/total`.
@@ -110,14 +110,14 @@ Typical end-to-end on one H100: ~5–8 minutes for 50 LoRA steps on `alpaca_demo
 ## Uninstall
 
 ```bash
-helm uninstall agentic-finetune-v2 -n agentic-finetune-v2
+helm uninstall agentic-finetune -n agentic-finetune
 ```
 
 The workspace PVC is retained by default — it holds adapters, registry files,
 and Job artifacts. Delete it manually if you want a clean slate:
 
 ```bash
-kubectl -n agentic-finetune-v2 delete pvc agentic-finetune-v2-workspace
+kubectl -n agentic-finetune delete pvc agentic-finetune-workspace
 ```
 
 ## Key values
@@ -130,7 +130,7 @@ kubectl -n agentic-finetune-v2 delete pvc agentic-finetune-v2-workspace
 | `orchestrator.defaults.baseModel` | `Qwen/Qwen2.5-3B-Instruct` | Default student. The agent can override per call. |
 | `trainingJob.gpu.count` | `1` | GPUs per training Job. requests == limits enforced. |
 | `trainingJob.activeDeadlineSeconds` | `7200` | Hard cap per training run. |
-| `ezua.virtualService.endpoint` | `agentic-finetune-v2.${DOMAIN_NAME}` | Hostname; `${DOMAIN_NAME}` substituted by the AIE platform. |
+| `ezua.virtualService.endpoint` | `agentic-finetune.${DOMAIN_NAME}` | Hostname; `${DOMAIN_NAME}` substituted by the AIE platform. |
 | `ezua.virtualService.istioGateway` | `istio-system/ezaf-gateway` | Same gateway the LF chart uses. |
 | `ezua.virtualService.timeout` | `"86400s"` | SSE long-poll — matches LF chart convention. |
 

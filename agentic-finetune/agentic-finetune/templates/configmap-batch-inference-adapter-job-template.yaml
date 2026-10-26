@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "agentic-finetune-v2.batchInferenceAdapterTemplateConfigMapName" . }}
+  name: {{ include "agentic-finetune.batchInferenceAdapterTemplateConfigMapName" . }}
   labels:
-    {{- include "agentic-finetune-v2.labels" . | nindent 4 }}
+    {{- include "agentic-finetune.labels" . | nindent 4 }}
 data:
   # Adapter-source batch inference Job template. Same structural pattern as
   # custom-eval — LF image, GPU, workspace mount. Container command runs
@@ -15,9 +15,9 @@ data:
     metadata:
       name: $((JOB_NAME))
       labels:
-        {{- include "agentic-finetune-v2.labels" . | nindent 8 }}
-        agentic-finetune-v2/component: batch-inference-adapter
-        agentic-finetune-v2/run-id: "$((RUN_ID))"
+        {{- include "agentic-finetune.labels" . | nindent 8 }}
+        agentic-finetune/component: batch-inference-adapter
+        agentic-finetune/run-id: "$((RUN_ID))"
     spec:
       ttlSecondsAfterFinished: {{ .Values.trainingJob.ttlSecondsAfterFinished }}
       backoffLimit: 0
@@ -27,12 +27,12 @@ data:
       template:
         metadata:
           labels:
-            {{- include "agentic-finetune-v2.selectorLabels" . | nindent 12 }}
-            agentic-finetune-v2/component: batch-inference-adapter
-            agentic-finetune-v2/run-id: "$((RUN_ID))"
+            {{- include "agentic-finetune.selectorLabels" . | nindent 12 }}
+            agentic-finetune/component: batch-inference-adapter
+            agentic-finetune/run-id: "$((RUN_ID))"
         spec:
           restartPolicy: Never
-          serviceAccountName: {{ include "agentic-finetune-v2.serviceAccountName" . }}
+          serviceAccountName: {{ include "agentic-finetune.serviceAccountName" . }}
           {{- with .Values.trainingJob.gpu.nodeSelector }}
           nodeSelector:
             {{- toYaml . | nindent 12 }}
@@ -47,7 +47,7 @@ data:
               type: RuntimeDefault
           containers:
             - name: batch-inference-adapter
-              image: "{{ include "agentic-finetune-v2.image.llamaFactory" . }}"
+              image: "{{ include "agentic-finetune.image.llamaFactory" . }}"
               imagePullPolicy: {{ .Values.images.llamaFactory.pullPolicy }}
               command:
                 - python3
@@ -78,8 +78,8 @@ data:
           volumes:
             - name: workspace
               persistentVolumeClaim:
-                claimName: {{ include "agentic-finetune-v2.workspacePvcName" . }}
+                claimName: {{ include "agentic-finetune.workspacePvcName" . }}
             - name: batch-inference-adapter-script
               configMap:
-                name: {{ include "agentic-finetune-v2.batchInferenceAdapterScriptConfigMapName" . }}
+                name: {{ include "agentic-finetune.batchInferenceAdapterScriptConfigMapName" . }}
                 defaultMode: 0755

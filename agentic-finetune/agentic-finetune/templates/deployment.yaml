@@ -1,9 +1,9 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "agentic-finetune-v2.fullname" . }}
+  name: {{ include "agentic-finetune.fullname" . }}
   labels:
-    {{- include "agentic-finetune-v2.labels" . | nindent 4 }}
+    {{- include "agentic-finetune.labels" . | nindent 4 }}
 spec:
   # Single-replica intentionally — both containers share /workspace PVC (RWO),
   # and the agent loop is single-user in D0. Scale-out is a post-D3 concern.
@@ -12,11 +12,11 @@ spec:
     type: Recreate     # avoid two replicas contending for the RWO PVC
   selector:
     matchLabels:
-      {{- include "agentic-finetune-v2.selectorLabels" . | nindent 6 }}
+      {{- include "agentic-finetune.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "agentic-finetune-v2.labels" . | nindent 8 }}
+        {{- include "agentic-finetune.labels" . | nindent 8 }}
         {{- if .Values.ezua.kyverno.enabled }}
         {{- with .Values.ezua.kyverno.labels }}
         {{- toYaml . | nindent 8 }}
@@ -42,7 +42,7 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:
-      serviceAccountName: {{ include "agentic-finetune-v2.serviceAccountName" . }}
+      serviceAccountName: {{ include "agentic-finetune.serviceAccountName" . }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -64,7 +64,7 @@ spec:
         # chown the copies to uid 1000 for the orchestrator to read them.
         # Idempotent: skips already-seeded content.
         - name: seed
-          image: {{ include "agentic-finetune-v2.image.llamaFactory" . | quote }}
+          image: {{ include "agentic-finetune.image.llamaFactory" . | quote }}
           imagePullPolicy: {{ .Values.images.llamaFactory.pullPolicy }}
           command: ["/bin/bash", "-c"]
           args:
@@ -89,7 +89,7 @@ spec:
               fi
 
               # --- Probe sets from the chart's ConfigMap ---
-              PROBES_SRC=/etc/agentic-finetune-v2-probes
+              PROBES_SRC=/etc/agentic-finetune-probes
               PROBES_DST=/workspace/probes
               if [ -f "$PROBES_DST/instruction_following_basic.jsonl" ] && \
                  [ -f "$PROBES_DST/tool_calling_basic.jsonl" ] && \
@@ -122,12 +122,12 @@ spec:
             - name: workspace
               mountPath: /workspace
             - name: probes-bundle
-              mountPath: /etc/agentic-finetune-v2-probes
+              mountPath: /etc/agentic-finetune-probes
       {{- end }}
       containers:
         # orchestrator — FastAPI, REST endpoints, owns the K8s client
         - name: orchestrator
-          image: {{ include "agentic-finetune-v2.image.orchestrator" . | quote }}
+          image: {{ include "agentic-finetune.image.orchestrator" . | quote }}
           imagePullPolicy: {{ .Values.images.orchestrator.pullPolicy }}
           ports:
             - name: rest
@@ -137,7 +137,7 @@ spec:
             - name: ORCHESTRATOR_PORT
               value: {{ .Values.orchestrator.port | quote }}
             - name: ORCHESTRATOR_CONFIG_PATH
-              value: /etc/agentic-finetune-v2/config.yaml
+              value: /etc/agentic-finetune/config.yaml
             - name: WORKSPACE_DIR
               value: /workspace
             - name: NAMESPACE
@@ -182,7 +182,7 @@ spec:
             - name: workspace
               mountPath: /workspace
             - name: config
-              mountPath: /etc/agentic-finetune-v2
+              mountPath: /etc/agentic-finetune
               readOnly: true
             - name: tmp
               mountPath: /tmp
@@ -208,7 +208,7 @@ spec:
             {{- toYaml .Values.orchestrator.securityContext | nindent 12 }}
         # mcp-server — FastMCP over SSE, talks to orchestrator on localhost
         - name: mcp-server
-          image: {{ include "agentic-finetune-v2.image.mcpServer" . | quote }}
+          image: {{ include "agentic-finetune.image.mcpServer" . | quote }}
           imagePullPolicy: {{ .Values.images.mcpServer.pullPolicy }}
           ports:
             - name: mcp
@@ -292,39 +292,39 @@ spec:
       volumes:
         - name: workspace
           persistentVolumeClaim:
-            claimName: {{ include "agentic-finetune-v2.workspacePvcName" . }}
+            claimName: {{ include "agentic-finetune.workspacePvcName" . }}
         - name: config
           projected:
             sources:
               - configMap:
-                  name: {{ include "agentic-finetune-v2.fullname" . }}-config
+                  name: {{ include "agentic-finetune.fullname" . }}-config
                   items:
                     - key: config.yaml
                       path: config.yaml
               - configMap:
-                  name: {{ include "agentic-finetune-v2.jobTemplateConfigMapName" . }}
+                  name: {{ include "agentic-finetune.jobTemplateConfigMapName" . }}
                   items:
                     - key: job-template.yaml
                       path: job-template.yaml
                     - key: lf-config-template.yaml
                       path: lf-config-template.yaml
               - configMap:
-                  name: {{ include "agentic-finetune-v2.customEvalTemplateConfigMapName" . }}
+                  name: {{ include "agentic-finetune.customEvalTemplateConfigMapName" . }}
                   items:
                     - key: custom-eval-job-template.yaml
                       path: custom-eval-job-template.yaml
               - configMap:
-                  name: {{ include "agentic-finetune-v2.mergeExportTemplateConfigMapName" . }}
+                  name: {{ include "agentic-finetune.mergeExportTemplateConfigMapName" . }}
                   items:
                     - key: merge-export-job-template.yaml
                       path: merge-export-job-template.yaml
               - configMap:
-                  name: {{ include "agentic-finetune-v2.batchInferenceAdapterTemplateConfigMapName" . }}
+                  name: {{ include "agentic-finetune.batchInferenceAdapterTemplateConfigMapName" . }}
                   items:
                     - key: batch-inference-adapter-job-template.yaml
                       path: batch-inference-adapter-job-template.yaml
               - configMap:
-                  name: {{ include "agentic-finetune-v2.batchInferenceEndpointTemplateConfigMapName" . }}
+                  name: {{ include "agentic-finetune.batchInferenceEndpointTemplateConfigMapName" . }}
                   items:
                     - key: batch-inference-endpoint-job-template.yaml
                       path: batch-inference-endpoint-job-template.yaml
@@ -332,7 +332,7 @@ spec:
           emptyDir: {}
         - name: probes-bundle
           configMap:
-            name: {{ include "agentic-finetune-v2.fullname" . }}-probes
+            name: {{ include "agentic-finetune.fullname" . }}-probes
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

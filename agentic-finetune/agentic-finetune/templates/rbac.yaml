@@ -2,9 +2,9 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ include "agentic-finetune-v2.fullname" . }}
+  name: {{ include "agentic-finetune.fullname" . }}
   labels:
-    {{- include "agentic-finetune-v2.labels" . | nindent 4 }}
+    {{- include "agentic-finetune.labels" . | nindent 4 }}
 rules:
   # Job lifecycle: orchestrator creates Jobs and watches them to completion.
   - apiGroups: ["batch"]
@@ -29,15 +29,15 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ include "agentic-finetune-v2.fullname" . }}
+  name: {{ include "agentic-finetune.fullname" . }}
   labels:
-    {{- include "agentic-finetune-v2.labels" . | nindent 4 }}
+    {{- include "agentic-finetune.labels" . | nindent 4 }}
 subjects:
   - kind: ServiceAccount
-    name: {{ include "agentic-finetune-v2.serviceAccountName" . }}
+    name: {{ include "agentic-finetune.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ include "agentic-finetune-v2.fullname" . }}
+  name: {{ include "agentic-finetune.fullname" . }}
 {{- end }}

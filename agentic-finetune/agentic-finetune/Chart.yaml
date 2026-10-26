@@ -1,5 +1,5 @@
 apiVersion: v2
-name: agentic-finetune-v2
+name: agentic-finetune
 description: An agent layer in front of LlamaFactory on PCAI. Exposes an MCP server
   so an LLM agent in Open-WebUI can drive a complete fine-tuning loop end-to-end —
   discover datasets, train a LoRA adapter, evaluate it two ways (in-training perplexity
