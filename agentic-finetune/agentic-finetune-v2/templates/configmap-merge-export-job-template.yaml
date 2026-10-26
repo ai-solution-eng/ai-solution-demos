@@ -1,0 +1,113 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "agentic-finetune-v2.mergeExportTemplateConfigMapName" . }}
+  labels:
+    {{- include "agentic-finetune-v2.labels" . | nindent 4 }}
+data:
+  # Merge-export Job template. Orchestrator reads this, substitutes
+  # runtime placeholders (see the tokens below in the format used by
+  # the orchestrator's _substitute function), applies via K8s Python client.
+
+  merge-export-job-template.yaml: |
+    apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: $((JOB_NAME))
+      labels:
+        {{- include "agentic-finetune-v2.labels" . | nindent 8 }}
+        agentic-finetune-v2/component: merge-export
+        agentic-finetune-v2/merge-id: "$((MERGE_ID))"
+        agentic-finetune-v2/training-id: "$((TRAINING_ID))"
+    spec:
+      # Merge (~2 min) + 6GB upload (~3-5 min) + boto3 install (~15s):
+      # target ~10 minutes typical, cap at 30 min for safety margin.
+      ttlSecondsAfterFinished: {{ .Values.trainingJob.ttlSecondsAfterFinished }}
+      backoffLimit: 0
+      activeDeadlineSeconds: 1800
+      template:
+        metadata:
+          labels:
+            {{- include "agentic-finetune-v2.selectorLabels" . | nindent 12 }}
+            agentic-finetune-v2/component: merge-export
+            agentic-finetune-v2/merge-id: "$((MERGE_ID))"
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "agentic-finetune-v2.serviceAccountName" . }}
+          {{- with .Values.trainingJob.gpu.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.trainingJob.gpu.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            runAsNonRoot: false   # LF image runs as root by default
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: merge-export
+              image: "{{ include "agentic-finetune-v2.image.llamaFactory" . }}"
+              imagePullPolicy: {{ .Values.images.llamaFactory.pullPolicy }}
+              command:
+                - python3
+                - /etc/merge-export/run_merge_export.py
+                - $((CONFIG_PATH))
+              env:
+                - name: HF_HOME
+                  value: /workspace/.cache/huggingface
+                - name: TRANSFORMERS_CACHE
+                  value: /workspace/.cache/huggingface/hub
+                {{- if .Values.s3.credentialsSecret }}
+                # S3 credentials for the upload step. Same Secret the
+                # orchestrator uses — kept consistent so a rotation
+                # applies to both call sites.
+                - name: S3_ENDPOINT
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.s3.credentialsSecret }}
+                      key: {{ .Values.s3.keys.endpoint }}
+                - name: S3_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.s3.credentialsSecret }}
+                      key: {{ .Values.s3.keys.accessKey }}
+                - name: S3_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.s3.credentialsSecret }}
+                      key: {{ .Values.s3.keys.secretKey }}
+                - name: S3_BUCKET
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.s3.credentialsSecret }}
+                      key: {{ .Values.s3.keys.bucket }}
+                {{- end }}
+                {{- with .Values.trainingJob.env }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+              resources:
+                # Merge uses GPU for the safetensors conversion (bf16 dequant
+                # to fp32 during merge). Same GPU allocation as training.
+                requests:
+                  cpu: {{ .Values.trainingJob.resources.cpu.request | quote }}
+                  memory: {{ .Values.trainingJob.resources.memory.request | quote }}
+                  {{ .Values.trainingJob.gpu.resourceName }}: {{ .Values.trainingJob.gpu.count }}
+                limits:
+                  cpu: {{ .Values.trainingJob.resources.cpu.limit | quote }}
+                  memory: {{ .Values.trainingJob.resources.memory.limit | quote }}
+                  {{ .Values.trainingJob.gpu.resourceName }}: {{ .Values.trainingJob.gpu.count }}
+              volumeMounts:
+                - name: workspace
+                  mountPath: /workspace
+                - name: merge-export-script
+                  mountPath: /etc/merge-export
+          volumes:
+            - name: workspace
+              persistentVolumeClaim:
+                claimName: {{ include "agentic-finetune-v2.workspacePvcName" . }}
+            - name: merge-export-script
+              configMap:
+                name: {{ include "agentic-finetune-v2.mergeExportScriptConfigMapName" . }}
+                defaultMode: 0755

@@ -1,0 +1,22 @@
+apiVersion: v2
+name: agentic-finetune-v2
+description: An agent layer in front of LlamaFactory on PCAI. Exposes an MCP server
+  so an LLM agent in Open-WebUI can drive a complete fine-tuning loop end-to-end —
+  discover datasets, train a LoRA adapter, evaluate it two ways (in-training perplexity
+  on a held-out split, plus optional task-specific pass-rate on a bundled probe set),
+  and register the result. Each training run and each custom eval run is spawned as
+  its own Kubernetes Job using the LlamaFactory image.
+type: application
+version: 0.4.3
+appVersion: 0.4.3
+kubeVersion: '>=1.27.0-0'
+keywords:
+- agent
+- mcp
+- fine-tuning
+- lora
+- llamafactory
+- pcai
+annotations:
+  category: AI/ML
+  licenses: Apache-2.0

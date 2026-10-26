@@ -1,0 +1,20 @@
+{"id": "math_001", "prompt": "What is 23 times 47? Reply with just the number.", "scorer": "numeric", "expected": 1081, "tolerance": 0}
+{"id": "math_002", "prompt": "If a train travels 60 miles per hour for 2.5 hours, how many miles does it travel? Reply with just the number.", "scorer": "numeric", "expected": 150, "tolerance": 0}
+{"id": "math_003", "prompt": "What is 15 percent of 200? Reply with just the number.", "scorer": "numeric", "expected": 30, "tolerance": 0}
+{"id": "math_004", "prompt": "A store sells apples for $0.50 each. How much do 12 apples cost in dollars? Reply with just the number.", "scorer": "numeric", "expected": 6, "tolerance": 0}
+{"id": "math_005", "prompt": "What is 144 divided by 12? Reply with just the number.", "scorer": "numeric", "expected": 12, "tolerance": 0}
+{"id": "math_006", "prompt": "If a rectangle has length 8 and width 5, what is its area? Reply with just the number.", "scorer": "numeric", "expected": 40, "tolerance": 0}
+{"id": "math_007", "prompt": "What is the square root of 169? Reply with just the number.", "scorer": "numeric", "expected": 13, "tolerance": 0}
+{"id": "math_008", "prompt": "A recipe calls for 3 cups of flour to make 12 cookies. How many cups do you need for 36 cookies? Reply with just the number.", "scorer": "numeric", "expected": 9, "tolerance": 0}
+{"id": "math_009", "prompt": "What is 2 to the power of 10? Reply with just the number.", "scorer": "numeric", "expected": 1024, "tolerance": 0}
+{"id": "math_010", "prompt": "If you save $25 per week, how much have you saved after 8 weeks? Reply with just the number in dollars.", "scorer": "numeric", "expected": 200, "tolerance": 0}
+{"id": "math_011", "prompt": "How many minutes are in 3.5 hours? Reply with just the number.", "scorer": "numeric", "expected": 210, "tolerance": 0}
+{"id": "math_012", "prompt": "A circle has radius 7. What is its approximate area (use pi as 3.14159)? Reply with just the number, rounded to two decimals.", "scorer": "numeric", "expected": 153.94, "tolerance": 0.5}
+{"id": "math_013", "prompt": "If 5 workers can build a wall in 20 days, how many days would 10 workers take at the same rate? Reply with just the number.", "scorer": "numeric", "expected": 10, "tolerance": 0}
+{"id": "math_014", "prompt": "What is 7 factorial (7!)? Reply with just the number.", "scorer": "numeric", "expected": 5040, "tolerance": 0}
+{"id": "math_015", "prompt": "Convert 100 kilometers to miles (1 km = 0.621 miles). Reply with just the number.", "scorer": "numeric", "expected": 62.1, "tolerance": 0.2}
+{"id": "math_016", "prompt": "A shirt originally costs $80 and is on sale for 25 percent off. What is the sale price in dollars? Reply with just the number.", "scorer": "numeric", "expected": 60, "tolerance": 0}
+{"id": "math_017", "prompt": "What is the sum of the first 10 positive integers (1+2+...+10)? Reply with just the number.", "scorer": "numeric", "expected": 55, "tolerance": 0}
+{"id": "math_018", "prompt": "If a car travels 240 miles on 8 gallons of gas, what is the miles per gallon? Reply with just the number.", "scorer": "numeric", "expected": 30, "tolerance": 0}
+{"id": "math_019", "prompt": "A triangle has base 10 and height 6. What is its area? Reply with just the number.", "scorer": "numeric", "expected": 30, "tolerance": 0}
+{"id": "math_020", "prompt": "How many seconds are in 5 minutes? Reply with just the number.", "scorer": "numeric", "expected": 300, "tolerance": 0}

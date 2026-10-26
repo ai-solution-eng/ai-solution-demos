@@ -1,0 +1,97 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "agentic-finetune-v2.customEvalTemplateConfigMapName" . }}
+  labels:
+    {{- include "agentic-finetune-v2.labels" . | nindent 4 }}
+data:
+  # Custom-eval Job template. Orchestrator reads this, substitutes
+  # runtime placeholders (see the tokens below in the format used by
+  # the orchestrator's _substitute function), applies via K8s Python client.
+  #
+  # Same structural pattern as job-template.yaml (training Jobs) — same
+  # workspace mount, same GPU allocation, same proxy env, same restart /
+  # backoff policy. The differences are:
+  #   1. Container command runs run_custom_eval.py (from a second ConfigMap
+  #      mount) instead of llamafactory-cli.
+  #   2. Component label is "custom-eval" instead of "trainer" so kubectl
+  #      selectors can distinguish the two Job kinds cleanly.
+
+  custom-eval-job-template.yaml: |
+    apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: $((JOB_NAME))
+      labels:
+        {{- include "agentic-finetune-v2.labels" . | nindent 8 }}
+        agentic-finetune-v2/component: custom-eval
+        agentic-finetune-v2/eval-id: "$((EVAL_ID))"
+      annotations:
+        agentic-finetune-v2/probe-set: "$((PROBE_SET))"
+    spec:
+      # Same lifecycle policy as training Jobs. 1-hour TTL, no auto-retry,
+      # 2-hour activeDeadline (custom eval on 20 probes typically ~2-5 minutes,
+      # so 2h is a huge safety margin).
+      ttlSecondsAfterFinished: {{ .Values.trainingJob.ttlSecondsAfterFinished }}
+      backoffLimit: {{ .Values.trainingJob.backoffLimit }}
+      activeDeadlineSeconds: {{ .Values.trainingJob.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            {{- include "agentic-finetune-v2.selectorLabels" . | nindent 12 }}
+            agentic-finetune-v2/component: custom-eval
+            agentic-finetune-v2/eval-id: "$((EVAL_ID))"
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "agentic-finetune-v2.serviceAccountName" . }}
+          {{- with .Values.trainingJob.gpu.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.trainingJob.gpu.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            runAsNonRoot: false   # LF image runs as root by default
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: custom-eval
+              image: "{{ include "agentic-finetune-v2.image.llamaFactory" . }}"
+              imagePullPolicy: {{ .Values.images.llamaFactory.pullPolicy }}
+              command:
+                - python3
+                - /etc/custom-eval/run_custom_eval.py
+                - $((CONFIG_PATH))
+              env:
+                - name: HF_HOME
+                  value: /workspace/.cache/huggingface
+                - name: TRANSFORMERS_CACHE
+                  value: /workspace/.cache/huggingface/hub
+                {{- with .Values.trainingJob.env }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+              resources:
+                # PCAI / Kyverno: GPU requests MUST equal limits exactly.
+                requests:
+                  cpu: {{ .Values.trainingJob.resources.cpu.request | quote }}
+                  memory: {{ .Values.trainingJob.resources.memory.request | quote }}
+                  {{ .Values.trainingJob.gpu.resourceName }}: {{ .Values.trainingJob.gpu.count }}
+                limits:
+                  cpu: {{ .Values.trainingJob.resources.cpu.limit | quote }}
+                  memory: {{ .Values.trainingJob.resources.memory.limit | quote }}
+                  {{ .Values.trainingJob.gpu.resourceName }}: {{ .Values.trainingJob.gpu.count }}
+              volumeMounts:
+                - name: workspace
+                  mountPath: /workspace
+                - name: custom-eval-script
+                  mountPath: /etc/custom-eval
+          volumes:
+            - name: workspace
+              persistentVolumeClaim:
+                claimName: {{ include "agentic-finetune-v2.workspacePvcName" . }}
+            - name: custom-eval-script
+              configMap:
+                name: {{ include "agentic-finetune-v2.customEvalScriptConfigMapName" . }}
+                defaultMode: 0755

@@ -1,0 +1,101 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "agentic-finetune-v2.batchInferenceEndpointTemplateConfigMapName" . }}
+  labels:
+    {{- include "agentic-finetune-v2.labels" . | nindent 4 }}
+data:
+  # Endpoint-source batch inference Job template.
+  # Different container shape from adapter mode:
+  #   - Lightweight python image (no torch/transformers needed)
+  #   - No GPU allocation — just runs an httpx client
+  #   - MLIS token injected from Secret as env var
+  #   - Installs httpx at runtime (5s) to avoid a custom image
+
+  batch-inference-endpoint-job-template.yaml: |
+    apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: $((JOB_NAME))
+      labels:
+        {{- include "agentic-finetune-v2.labels" . | nindent 8 }}
+        agentic-finetune-v2/component: batch-inference-endpoint
+        agentic-finetune-v2/run-id: "$((RUN_ID))"
+    spec:
+      ttlSecondsAfterFinished: {{ .Values.trainingJob.ttlSecondsAfterFinished }}
+      backoffLimit: 0
+      # 100 prompts @ ~1s each with concurrency 4 = ~30s typical.
+      # Cap at 15 min to allow for slow MLIS deployments.
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            {{- include "agentic-finetune-v2.selectorLabels" . | nindent 12 }}
+            agentic-finetune-v2/component: batch-inference-endpoint
+            agentic-finetune-v2/run-id: "$((RUN_ID))"
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "agentic-finetune-v2.serviceAccountName" . }}
+          securityContext:
+            runAsNonRoot: false
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: batch-inference-endpoint
+              # 0.3.3: use the orchestrator image, which has httpx pre-installed
+              # and known-working TLS handling for MLIS (HPE internal CA). We
+              # previously used python:3.11-slim with runtime pip install, but
+              # slim's minimal networking layer produced empty ConnectError
+              # against MLIS TLS deployments — see porting.md §19.
+              image: "{{ include "agentic-finetune-v2.image.orchestrator" . }}"
+              imagePullPolicy: {{ .Values.images.orchestrator.pullPolicy }}
+              command:
+                - python3
+                - /etc/batch-inference-endpoint/run_batch_inference_endpoint.py
+                - $((CONFIG_PATH))
+              env:
+                {{- if .Values.mlis.credentialsSecret }}
+                - name: MLIS_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.mlis.credentialsSecret }}
+                      key: {{ .Values.mlis.keys.token }}
+                {{- end }}
+                # 0.3.5: endpoint mode hits in-cluster MLIS URLs. Corporate
+                # proxy env vars (typically inherited via trainingJob.env)
+                # would route requests through HPE's external proxy, which
+                # cannot reach cluster IPs and RSTs the connection. Clear
+                # them explicitly here. The script also pops these at
+                # startup as a belt-and-suspenders defense.
+                - name: HTTPS_PROXY
+                  value: ""
+                - name: HTTP_PROXY
+                  value: ""
+                - name: https_proxy
+                  value: ""
+                - name: http_proxy
+                  value: ""
+                # Intentionally not inheriting trainingJob.env — endpoint
+                # Jobs are network-egress-only and shouldn't pick up
+                # training-specific configuration.
+              resources:
+                # No GPU. Just enough CPU + memory for httpx.
+                requests:
+                  cpu: "100m"
+                  memory: "256Mi"
+                limits:
+                  cpu: "500m"
+                  memory: "512Mi"
+              volumeMounts:
+                - name: workspace
+                  mountPath: /workspace
+                - name: batch-inference-endpoint-script
+                  mountPath: /etc/batch-inference-endpoint
+          volumes:
+            - name: workspace
+              persistentVolumeClaim:
+                claimName: {{ include "agentic-finetune-v2.workspacePvcName" . }}
+            - name: batch-inference-endpoint-script
+              configMap:
+                name: {{ include "agentic-finetune-v2.batchInferenceEndpointScriptConfigMapName" . }}
+                defaultMode: 0755
