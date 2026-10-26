@@ -1,19 +1,19 @@
-agentic-finetune has been installed in namespace {{ .Release.Namespace }}.
+agentic-finetune-v2 has been installed in namespace {{ .Release.Namespace }}.
 
 What's running:
 
-  Deployment: {{ include "agentic-finetune.fullname" . }}
+  Deployment: {{ include "agentic-finetune-v2.fullname" . }}
     └── three containers:
         ├── orchestrator (FastAPI on :{{ .Values.orchestrator.port }} — pod-local)
         ├── mcp-server   (MCP Streamable HTTP on :{{ .Values.mcpServer.port }})
         └── mcpo         (MCP→OpenAPI bridge on :{{ .Values.mcpo.port }})
 
-  PVC: {{ include "agentic-finetune.workspacePvcName" . }}
+  PVC: {{ include "agentic-finetune-v2.workspacePvcName" . }}
     storageClass: {{ .Values.workspace.pvc.storageClassName }}
     size:         {{ .Values.workspace.pvc.size }}
 
   Service:
-    kubectl -n {{ .Release.Namespace }} get svc {{ include "agentic-finetune.fullname" . }}
+    kubectl -n {{ .Release.Namespace }} get svc {{ include "agentic-finetune-v2.fullname" . }}
 
 {{- if .Values.ezua.virtualService.enabled }}
   External (Istio VirtualService):
@@ -21,12 +21,12 @@ What's running:
 
   In-cluster registration URL for Open-WebUI:
     Open-WebUI → Admin Settings → Integrations → Manage Tool Servers → "+"
-    URL:        http://{{ include "agentic-finetune.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.mcpo.port }}/openapi.json
+    URL:        http://{{ include "agentic-finetune-v2.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.mcpo.port }}/openapi.json
     Type:       OpenAPI
     Auth:       None
 {{- else }}
   Ingress is NOT enabled. Use port-forward to test:
-    kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "agentic-finetune.fullname" . }} {{ .Values.mcpo.port }}:{{ .Values.mcpo.port }}
+    kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "agentic-finetune-v2.fullname" . }} {{ .Values.mcpo.port }}:{{ .Values.mcpo.port }}
 {{- end }}
 
 To verify the agent loop, ask in Open-WebUI:

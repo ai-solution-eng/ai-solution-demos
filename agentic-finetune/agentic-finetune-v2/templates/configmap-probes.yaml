@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "agentic-finetune-v2.fullname" . }}-probes
+  labels:
+    {{- include "agentic-finetune-v2.labels" . | nindent 4 }}
+data:
+  # Bundled probe sets. The seed initContainer copies these to /workspace/probes/
+  # at install time. Custom-eval Jobs read them from there.
+  #
+  # Each file: 20 probes × ~200 bytes ≈ 4 KiB. All three well under the
+  # ConfigMap 1 MiB limit. In 0.3.x we plan to add user-uploaded probe sets
+  # via a workspace-scoped upload API; those won't live in this ConfigMap.
+  instruction_following_basic.jsonl: |
+{{ .Files.Get "data/probes/instruction_following_basic.jsonl" | indent 4 }}
+  tool_calling_basic.jsonl: |
+{{ .Files.Get "data/probes/tool_calling_basic.jsonl" | indent 4 }}
+  math_word_problems_basic.jsonl: |
+{{ .Files.Get "data/probes/math_word_problems_basic.jsonl" | indent 4 }}

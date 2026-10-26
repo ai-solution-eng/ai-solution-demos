@@ -2,9 +2,9 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ include "agentic-finetune.workspacePvcName" . }}
+  name: {{ include "agentic-finetune-v2.workspacePvcName" . }}
   labels:
-    {{- include "agentic-finetune.labels" . | nindent 4 }}
+    {{- include "agentic-finetune-v2.labels" . | nindent 4 }}
   {{- if .Values.workspace.pvc.keepOnUninstall }}
   annotations:
     # Preserve the workspace volume on helm uninstall so the HF model cache

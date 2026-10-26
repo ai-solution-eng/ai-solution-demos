@@ -71,7 +71,7 @@ own paths. The trainer Job's container therefore does **not** set
 `runAsNonRoot: true`. If your PCAI cluster's Kyverno policy denies even the
 training Job for this reason, the workaround is to either rebuild the LF image
 with a non-root user, or add a per-namespace policy exception for the
-`agentic-finetune/component: trainer` label.
+`agentic-finetune-v2/component: trainer` label.
 
 ## 6. RBAC scoped to the release namespace
 
@@ -95,7 +95,7 @@ mirroring the convention used by `ai-solution-eng/frameworks/llama-factory/0.1.0
 ezua:
   virtualService:
     enabled: true
-    endpoint: "agentic-finetune.${DOMAIN_NAME}"
+    endpoint: "agentic-finetune-v2.${DOMAIN_NAME}"
     istioGateway: "istio-system/ezaf-gateway"
     timeout: "86400s"
   kyverno:
@@ -168,17 +168,24 @@ also reach HuggingFace if needed.
 - **For non-HPE clusters:** replace the proxy hostname with your cluster's
   egress proxy, or empty the list if you have direct internet.
 
-## 12. EVAL_MODE=stub default
+## 12. Eval is a metrics reader, not a separate Job
 
-Real eval spawns a second GPU Job that loads the base model + LoRA adapter
-for inference on three probes. That's 3-5 minutes per call and depends on
-HF egress working from the eval Job. For D0 demos we ship `EVAL_MODE=stub`
-as the default — instant synthetic 3/3 pass results, identical contract.
+LlamaFactory evaluates the LoRA adapter against a held-out 10% split during
+training (via `eval_dataset` + `eval_strategy: steps`), writing per-step
+eval loss into `trainer_log.jsonl` and the final eval loss into
+`all_results.json`. The orchestrator's `run_eval` reads these files from the
+shared workspace volume — no inference, no second GPU Job, no proxy concerns.
 
-- **Where:** `values.yaml` → `orchestrator.env`
-- **Flip to real:** set `orchestrator.env[0].value: "real"`
-- **Caveat:** real eval inherits the same proxy env as the trainer Job; if
-  trainer egress works, real eval should too.
+Perplexity is computed as `exp(final_eval_loss)`. Lower is better fit to the
+held-out split. This measures distribution fit, not real-world quality —
+the agent's system prompt has explicit guidance to narrate this honestly.
+
+- **Where:** `app/eval.py`, `templates/configmap-job-template.yaml`
+- **EVAL_MODE=stub:** preserved for demo recordings where instant deterministic
+  results are wanted. `EVAL_MODE=real` (the default) reads the actual files.
+- **What replaces task-quality eval:** chart 0.2.2+ adds a separate
+  `run_custom_eval` tool that spawns one GPU Job to score the adapter against
+  a bundled probe set. See §15.
 
 ## 13. Dataset seeding via initContainer (not a separate Job)
 
@@ -276,44 +283,159 @@ kubectl delete pvc rwx-probe -n default
 
 On AIE clusters using `gl4f-filesystem` (VAST CSI over NFS), RWX works.
 
-### Upgrading from chart < 0.1.13
+### What's deleted vs. kept on uninstall
 
-Charts 0.1.0 through 0.1.12 created the workspace PVC with `ReadWriteOnce`.
-PVC spec is immutable for bound claims, so a `helm upgrade` from those
-versions to 0.1.13+ will fail with:
+The PVC is annotated with `helm.sh/resource-policy: keep`, so uninstalling
+the framework via the AIE UI:
 
-```
-PersistentVolumeClaim "..." is invalid: spec: Forbidden:
-spec is immutable after creation except resources.requests
-and volumeAttributesClassName for bound claims
-```
-
-**Manual upgrade procedure:**
-
-```bash
-# 1. Uninstall the existing release. If the chart < 0.1.13 doesn't carry the
-#    helm.sh/resource-policy=keep annotation, this also deletes the PVC.
-#    (If it does have the annotation, delete the PVC explicitly in step 2.)
-
-# 2. Confirm the old PVC is gone. If it still exists, delete it manually:
-kubectl delete pvc agentic-finetune-workspace -n agentic-finetune --ignore-not-found
-
-# 3. Install chart 0.1.13. A fresh PVC is created with ReadWriteMany.
-#    The seed initContainer repopulates /workspace/data automatically.
-```
-
-The HuggingFace model cache is lost in this upgrade. Re-downloading on the
-first training run takes ~5 minutes for Qwen2.5-3B. There is no way around
-this — RWO and RWX volumes are physically different objects on the storage
-backend.
-
-### What's deleted vs. kept on uninstall going forward
-
-Chart 0.1.13+ annotates the PVC with `helm.sh/resource-policy: keep`, so:
-
-- `helm uninstall agentic-finetune` removes the Deployment, Service,
-  ConfigMaps, RBAC, ClusterPolicy, and VirtualService.
-- The workspace PVC **survives**. HF cache, jobs.json, models.json, and
-  any registered adapters are preserved.
-- To wipe the workspace: `kubectl delete pvc agentic-finetune-workspace -n agentic-finetune`,
+- Removes the Deployment, Service, ConfigMaps, RBAC, ClusterPolicy, and
+  VirtualService.
+- Leaves the workspace PVC **in place**. HF cache, jobs.json, models.json,
+  and any registered adapters are preserved.
+- To wipe the workspace: `kubectl delete pvc agentic-finetune-v2-workspace -n <namespace>`,
   or set `workspace.pvc.keepOnUninstall: false` before uninstall.
+
+## 15. `dataset_dir: /workspace/data` is required in the LF training config
+
+LlamaFactory defaults to reading `dataset_info.json` from `/app/data/`
+(the bundled location inside the LF image). For 0.1.x and earlier this
+happened to work because we used only datasets that the LF image ships
+with — `alpaca_en_demo`, `glaive_toolcall_en_demo`, etc.
+
+Starting with 0.2.x, `prepare_split` writes new dataset entries
+(`<name>_train`, `<name>_eval`) into `/workspace/data/dataset_info.json`.
+These do NOT exist in the bundled `/app/data/` copy. Without an explicit
+`dataset_dir`, LF reads the bundled file and fails with:
+
+```
+ValueError: Undefined dataset alpaca_en_demo_train in dataset_info.json.
+```
+
+The fix: every rendered LF training config must include
+`dataset_dir: /workspace/data`. This forces LF to consult the workspace
+copy (which the seed initContainer maintains AND which prepare_split
+writes to).
+
+- **Where:** `templates/configmap-job-template.yaml` → `lf-config-template.yaml`
+- **Symptom:** Training pod errors in ~60 seconds with the message above
+- **Lesson:** Any time we generate new dataset entries at runtime, they
+  must live in the directory LF actually reads. Default search paths are
+  the LF image's read-only `/app/data/`; our PVC is `/workspace/data/`.
+
+## 16. Custom eval is a separate Job (0.2.3+)
+
+In 0.2.2 we made §12 stand: eval is a metrics reader, not a Job. That's still
+true for `run_eval`, which reads LlamaFactory's in-training perplexity artifacts
+from disk. It is NOT true for `run_custom_eval` (0.2.3), which spawns a separate
+Kubernetes Job to score the trained adapter against a task-specific probe set.
+
+Two evals coexist. They answer different questions:
+
+| Tool | Runs when? | What data? | What answer? |
+|---|---|---|---|
+| `run_eval` | during training | held-out 10% of training data | "did training converge?" |
+| `run_custom_eval` | after training | held-out probes model never saw | "is it good for the task?" |
+
+### Architecture
+
+- **Job template:** `templates/configmap-custom-eval-job-template.yaml`. Same
+  substitution-token pattern (`$((EVAL_ID))`, `$((JOB_NAME))`, `$((PROBE_SET))`,
+  `$((CONFIG_PATH))`) as the training Job template.
+- **Container:** LlamaFactory image (already has torch + transformers + peft +
+  jsonschema). Command runs `python3 /etc/custom-eval/run_custom_eval.py`.
+- **Container script:** Shipped via ConfigMap
+  `templates/configmap-custom-eval-script.yaml`, which reads the file
+  `data/custom-eval-script/run_custom_eval.py` from the chart at helm install
+  time using `.Files.Get`. Script size: ~11 KB (ConfigMap limit is 1 MiB).
+- **Probe sets:** Three bundled JSONL files in `data/probes/`, shipped via
+  ConfigMap `templates/configmap-probes.yaml`. Seeded onto the workspace by
+  the initContainer at `/workspace/probes/<set>.jsonl`.
+
+### Why script-in-ConfigMap instead of custom image?
+
+Two reasons.
+
+1. **Nothing to build.** The LF image already has every Python dep the script
+   needs. Baking a custom image would mean maintaining a Dockerfile that
+   duplicates most of the LF image just to add ~11 KB of Python.
+2. **Faster iteration.** Editing the script and bumping the chart patch is a
+   values.yaml change; editing an image is a build + push + pull cycle.
+   Since the script is essentially deterministic scoring logic that rarely
+   needs perf work, ConfigMap-mount is the right trade-off.
+
+### Scoring is duplicated between orchestrator and Job
+
+The four scorer functions (`substring`, `regex`, `json_schema`, `numeric`)
+appear in TWO places:
+
+- `orchestrator/app/custom_eval.py` — used for scorer sanity tests and
+  future in-process fallback if we ever add one.
+- `data/custom-eval-script/run_custom_eval.py` — the version that actually
+  runs against real model output inside the eval Job.
+
+They must stay behavioral-equivalent. When editing a scorer, edit both,
+and add matching tests to `orchestrator/tests/test_smoke.py`.
+
+### Probe set discovery
+
+- **0.2.3:** bundled only. Three sets, seeded by initContainer. Any other
+  name to `launch_custom_eval` returns 400.
+- **0.3.x:** user-uploaded probe sets are planned. Will require an upload
+  endpoint + workspace-scoped storage + path safety validation. Not in 0.2.3.
+
+### Deterministic generation
+
+The script runs `model.generate` with `do_sample=False`, `num_beams=1`.
+Same input → same output. Pass-rate is deterministic modulo K8s scheduling
+noise. This is a *feature* — customers running the same eval twice should
+get the same number, not two similar numbers.
+
+Chat template is applied if the tokenizer defines one. This matches the
+format used during LlamaFactory SFT. Skipping this step causes a pretrained
+Instruct model to underperform because its response wrapper (e.g.
+`<|im_start|>assistant\n`) is missing.
+
+### Job lifecycle policy
+
+Same as training Jobs: `backoffLimit: 0` (no auto-retry), `ttlSecondsAfterFinished: 3600`
+(1-hour cleanup), `activeDeadlineSeconds: 7200` (2-hour cap). Custom eval on
+20 probes typically completes in 2-5 minutes on H200 (mostly model loading);
+the deadline is safety only.
+
+### Debugging
+
+If the eval Job fails, artifacts to check:
+
+```
+/workspace/jobs/<training_id>/custom_eval/<probe_set>/
+    config.json          # what the orchestrator handed to the script
+    results.jsonl        # per-probe outcomes (streamed as they complete)
+    summary.json         # final summary (written last; missing = crashed early)
+```
+
+The `results.jsonl` streams incrementally, so if the Job crashes mid-run
+you can still see how far it got. Look at the last `passed=false` entry's
+`score_reason` field for the first failure mode.
+
+## 17. Custom-eval script sets `trust_remote_code=False` (0.2.5+)
+
+The `run_custom_eval.py` script loads models with `trust_remote_code=False`
+in both `AutoModelForCausalLM.from_pretrained` and `AutoTokenizer.from_pretrained`.
+
+**Why:** With `trust_remote_code=True`, transformers additionally fetches
+model-shipped generation helpers like `custom_generate/generate.py` from the
+HF Hub. That fetch hits a CDN endpoint whose certificate is not covered by
+the CA bundle in the LlamaFactory image, so through a corporate proxy the
+request fails with `SSL: CERTIFICATE_VERIFY_FAILED`. The retry logic in
+`huggingface_hub` then compounds the problem by attempting to reuse a
+closed httpx client, raising `RuntimeError: Cannot send a request, as the
+client has been closed`.
+
+**Cost of the fix:** none for models Qwen/Phi/Llama/Mistral and similar
+that use built-in causal-LM generation. If we ever need to support a model
+that ships mandatory custom code (rare), we'll have to either bundle its
+CA chain into the LF image or vendor the custom_generate script.
+
+**How to spot this failure in the wild:** eval Job pod exits with status
+Error after ~20-30 seconds; last log line before the traceback mentions
+`SSL: CERTIFICATE_VERIFY_FAILED` and `custom_generate/generate.py`.

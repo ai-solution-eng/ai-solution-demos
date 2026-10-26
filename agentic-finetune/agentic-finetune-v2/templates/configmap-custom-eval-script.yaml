@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "agentic-finetune-v2.customEvalScriptConfigMapName" . }}
+  labels:
+    {{- include "agentic-finetune-v2.labels" . | nindent 4 }}
+data:
+  # The custom-eval Job mounts this ConfigMap at /etc/custom-eval/ so the
+  # LlamaFactory image (which has torch + transformers + peft + jsonschema)
+  # can run our lightweight inference-and-scoring script.
+  #
+  # We keep the script in the chart so upgrading the chart automatically
+  # ships new scorer logic without needing to rebuild a custom image.
+  # Trade-off: ConfigMap max size is 1 MiB. Script is currently ~9 KB.
+  run_custom_eval.py: |
+{{ .Files.Get "data/custom-eval-script/run_custom_eval.py" | indent 4 }}

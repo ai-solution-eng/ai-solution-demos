@@ -18,7 +18,7 @@ metadata:
     "helm.sh/hook-weight": "-5"
     "helm.sh/hook-delete-policy": before-hook-creation
   labels:
-    {{- include "agentic-finetune.labels" . | nindent 4 }}
+    {{- include "agentic-finetune-v2.labels" . | nindent 4 }}
 spec:
   background: false
   rules:

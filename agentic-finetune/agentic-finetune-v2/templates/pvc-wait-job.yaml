@@ -1,6 +1,6 @@
 {{- if and .Values.workspace.pvc.create .Values.workspace.pvc.waitJob.enabled -}}
 # A pre-install Helm hook that blocks until the workspace PVC is Bound.
-# This is the documented workaround for the PVC race condition Daniel keeps
+# This is the documented workaround for the PVC race condition that
 # hitting on PCAI with the gl4f-filesystem dynamic provisioner: without this
 # wait, the main Deployment can come up before provisioning finishes and the
 # pod hangs in ContainerCreating with a confusing "unable to attach volume"
@@ -14,9 +14,9 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ include "agentic-finetune.fullname" . }}-pvc-wait
+  name: {{ include "agentic-finetune-v2.fullname" . }}-pvc-wait
   labels:
-    {{- include "agentic-finetune.labels" . | nindent 4 }}
+    {{- include "agentic-finetune-v2.labels" . | nindent 4 }}
   annotations:
     "helm.sh/hook": pre-install,pre-upgrade
     "helm.sh/hook-weight": "5"
@@ -28,11 +28,11 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "agentic-finetune.selectorLabels" . | nindent 8 }}
+        {{- include "agentic-finetune-v2.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: pvc-wait
     spec:
       restartPolicy: OnFailure
-      serviceAccountName: {{ include "agentic-finetune.serviceAccountName" . }}
+      serviceAccountName: {{ include "agentic-finetune-v2.serviceAccountName" . }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -70,5 +70,5 @@ spec:
       volumes:
         - name: workspace
           persistentVolumeClaim:
-            claimName: {{ include "agentic-finetune.workspacePvcName" . }}
+            claimName: {{ include "agentic-finetune-v2.workspacePvcName" . }}
 {{- end }}

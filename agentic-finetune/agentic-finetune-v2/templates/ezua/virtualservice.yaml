@@ -2,9 +2,9 @@
 apiVersion: networking.istio.io/v1beta1
 kind: VirtualService
 metadata:
-  name: {{ include "agentic-finetune.fullname" . }}
+  name: {{ include "agentic-finetune-v2.fullname" . }}
   labels:
-    {{- include "agentic-finetune.labels" . | nindent 4 }}
+    {{- include "agentic-finetune-v2.labels" . | nindent 4 }}
 spec:
   hosts:
     - {{ .Values.ezua.virtualService.endpoint | quote }}
@@ -24,7 +24,7 @@ spec:
             prefix: /docs
       route:
         - destination:
-            host: {{ include "agentic-finetune.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
+            host: {{ include "agentic-finetune-v2.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
             port:
               number: {{ .Values.mcpo.port }}
       timeout: {{ .Values.ezua.virtualService.timeout }}
@@ -40,7 +40,7 @@ spec:
             prefix: /sse
       route:
         - destination:
-            host: {{ include "agentic-finetune.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
+            host: {{ include "agentic-finetune-v2.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
             port:
               number: {{ .Values.service.port }}
       timeout: {{ .Values.ezua.virtualService.timeout }}
@@ -52,7 +52,7 @@ spec:
             prefix: /
       route:
         - destination:
-            host: {{ include "agentic-finetune.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
+            host: {{ include "agentic-finetune-v2.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
             port:
               number: {{ .Values.orchestrator.port }}
       timeout: {{ .Values.ezua.virtualService.timeout }}
