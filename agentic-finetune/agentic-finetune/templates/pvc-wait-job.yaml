@@ -14,9 +14,9 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ include "agentic-finetune-v2.fullname" . }}-pvc-wait
+  name: {{ include "agentic-finetune.fullname" . }}-pvc-wait
   labels:
-    {{- include "agentic-finetune-v2.labels" . | nindent 4 }}
+    {{- include "agentic-finetune.labels" . | nindent 4 }}
   annotations:
     "helm.sh/hook": pre-install,pre-upgrade
     "helm.sh/hook-weight": "5"
@@ -28,11 +28,11 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "agentic-finetune-v2.selectorLabels" . | nindent 8 }}
+        {{- include "agentic-finetune.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: pvc-wait
     spec:
       restartPolicy: OnFailure
-      serviceAccountName: {{ include "agentic-finetune-v2.serviceAccountName" . }}
+      serviceAccountName: {{ include "agentic-finetune.serviceAccountName" . }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -70,5 +70,5 @@ spec:
       volumes:
         - name: workspace
           persistentVolumeClaim:
-            claimName: {{ include "agentic-finetune-v2.workspacePvcName" . }}
+            claimName: {{ include "agentic-finetune.workspacePvcName" . }}
 {{- end }}

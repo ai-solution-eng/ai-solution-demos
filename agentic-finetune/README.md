@@ -1,4 +1,4 @@
-# agentic-finetune-v2
+# agentic-finetune
 
 Agentic LLM fine-tuning on HPE Private Cloud AI. Register customer training
 data, prep it, train a LoRA adapter, evaluate, merge, export, and run batch
@@ -50,27 +50,27 @@ H200 GPUs. Scheduled through standard K8s Jobs; no bespoke scheduler.
 **1. Build and push images** (replace `caovd` with your Docker Hub user):
 
 ```bash
-tar -xzf agentic-finetune-v2-images-0.4.3.tar.gz
+tar -xzf agentic-finetune-images-0.4.3.tar.gz
 cd images
 DOCKERHUB_USER=caovd VERSION=0.4.3 make build-orchestrator push-orchestrator
 DOCKERHUB_USER=caovd VERSION=0.4.3 make build-mcp-server push-mcp-server
 ```
 
-**2. Upload the chart** `agentic-finetune-v2-0.4.3.tgz` through the AIE UI
+**2. Upload the chart** `agentic-finetune-0.4.3.tgz` through the AIE UI
 (Import Framework → Upload → Install into a dedicated namespace, typically
-`agentic-finetune-v2`).
+`agentic-finetune`).
 
 **3. Wait for rollout:**
 
 ```bash
-kubectl rollout status deploy/agentic-finetune-v2 \
-  -n agentic-finetune-v2 --timeout=180s
+kubectl rollout status deploy/agentic-finetune \
+  -n agentic-finetune --timeout=180s
 ```
 
 **4. Register the MCP tool server in Open-WebUI** (Admin Panel → Settings →
 Integrations → Manage Tool Servers → `+`) pointing at the service URL from
 the chart (something like
-`http://agentic-finetune-v2.agentic-finetune-v2.svc.cluster.local:8080/mcp`).
+`http://agentic-finetune.agentic-finetune.svc.cluster.local:8080/mcp`).
 Enable the server.
 
 **5. Paste the system prompt** into the model that will drive the agent

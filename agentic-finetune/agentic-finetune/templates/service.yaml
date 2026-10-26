@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "agentic-finetune-v2.fullname" . }}
+  name: {{ include "agentic-finetune.fullname" . }}
   labels:
-    {{- include "agentic-finetune-v2.labels" . | nindent 4 }}
+    {{- include "agentic-finetune.labels" . | nindent 4 }}
 spec:
   type: {{ .Values.service.type }}
   ports:
@@ -26,4 +26,4 @@ spec:
       name: openapi
     {{- end }}
   selector:
-    {{- include "agentic-finetune-v2.selectorLabels" . | nindent 4 }}
+    {{- include "agentic-finetune.selectorLabels" . | nindent 4 }}

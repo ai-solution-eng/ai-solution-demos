@@ -71,7 +71,7 @@ own paths. The trainer Job's container therefore does **not** set
 `runAsNonRoot: true`. If your PCAI cluster's Kyverno policy denies even the
 training Job for this reason, the workaround is to either rebuild the LF image
 with a non-root user, or add a per-namespace policy exception for the
-`agentic-finetune-v2/component: trainer` label.
+`agentic-finetune/component: trainer` label.
 
 ## 6. RBAC scoped to the release namespace
 
@@ -95,7 +95,7 @@ mirroring the convention used by `ai-solution-eng/frameworks/llama-factory/0.1.0
 ezua:
   virtualService:
     enabled: true
-    endpoint: "agentic-finetune-v2.${DOMAIN_NAME}"
+    endpoint: "agentic-finetune.${DOMAIN_NAME}"
     istioGateway: "istio-system/ezaf-gateway"
     timeout: "86400s"
   kyverno:
@@ -292,7 +292,7 @@ the framework via the AIE UI:
   VirtualService.
 - Leaves the workspace PVC **in place**. HF cache, jobs.json, models.json,
   and any registered adapters are preserved.
-- To wipe the workspace: `kubectl delete pvc agentic-finetune-v2-workspace -n <namespace>`,
+- To wipe the workspace: `kubectl delete pvc agentic-finetune-workspace -n <namespace>`,
   or set `workspace.pvc.keepOnUninstall: false` before uninstall.
 
 ## 15. `dataset_dir: /workspace/data` is required in the LF training config

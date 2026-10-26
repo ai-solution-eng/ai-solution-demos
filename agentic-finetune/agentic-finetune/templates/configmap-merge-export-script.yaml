@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "agentic-finetune-v2.mergeExportScriptConfigMapName" . }}
+  name: {{ include "agentic-finetune.mergeExportScriptConfigMapName" . }}
   labels:
-    {{- include "agentic-finetune-v2.labels" . | nindent 4 }}
+    {{- include "agentic-finetune.labels" . | nindent 4 }}
 data:
   # The merge-export Job mounts this at /etc/merge-export/. Same pattern as
   # the custom-eval script — keeps the chart shipping over stock LF image
