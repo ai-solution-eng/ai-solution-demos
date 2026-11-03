@@ -1,22 +1,27 @@
 FROM --platform=linux/amd64 python:3.12-slim
+COPY --from=ghcr.io/astral-sh/uv:0.13.6 /uv /bin/uv
 
+RUN groupadd -g 10001 app && useradd -u 10001 -g app -M -d /app app
 WORKDIR /app
 
-# Install python dependencies
-COPY kafka-service/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Dependencies exactly as locked, in a virtualenv outside the app folder
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PROJECT_ENVIRONMENT=/opt/venv \
+    PATH=/opt/venv/bin:$PATH PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONPATH=/app
+COPY kafka-service/pyproject.toml kafka-service/uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
 
-# Copy common and kafka-service
-COPY common/ ./common/
-COPY kafka-service/main.py ./
+COPY --chown=10001:10001 common/ ./common/
+COPY --chown=10001:10001 kafka-service/main.py kafka-service/settings.py kafka-service/alerts.py ./
 
-ENV PYTHONPATH=/app
+# The app user owns the code so that Tilt's live update can replace it
+RUN chown app:app /app
+USER 10001
+
 EXPOSE 8000
 
 # Run dev if ENV=development, otherwise run production
 CMD if [ "$ENV" = "development" ]; then \
-      uvicorn main:app --host 0.0.0.0 --port 8000 --reload; \
+      uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --reload; \
     else \
-      uvicorn main:app --host 0.0.0.0 --port 8000; \
+      uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}; \
     fi
-

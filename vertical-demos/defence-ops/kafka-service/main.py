@@ -2,275 +2,192 @@
 
 import asyncio
 import json
-import os
-import random
-import time
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from collections.abc import AsyncGenerator
+from typing import Annotated, Any
 
-import httpx
 import structlog
-from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, TopicPartition
-from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
+from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
+from aiokafka.helpers import create_ssl_context
+from fastapi import Body, FastAPI, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
+from alerts import profile_for, sample_alerts
+from common.demo_config import load_demo_config
+from common.feeds import VideoName, feed_label
 from common.logging_config import setup_logging
+from settings import get_settings
 
 # Configure structured logging
 setup_logging("kafka-service")
 logger = structlog.get_logger(__name__)
+settings = get_settings()
 
 app = FastAPI(title="Kafka Service")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-ADMIN_URL = os.environ.get("ADMIN_SERVICE_URL", "http://app-ui:3000")
+stream_slots = asyncio.Semaphore(settings.max_stream_clients)
 
 
-async def get_kafka_config() -> Dict[str, Any]:
-    """Fetches Kafka configuration from the app-ui.
-    
-    Returns:
-        A dictionary containing the Kafka configuration.
+class KafkaNotConfiguredError(Exception):
+    """The broker, topic or credentials are missing."""
+
+
+async def get_kafka_target() -> tuple[str, str]:
+    """Reads the broker and topic: saved on System Config, else the chart's defaults.
+
+    Raises:
+        KafkaNotConfiguredError: Either is missing.
     """
-    urls = [ADMIN_URL, "http://app-ui:3000"]
-    last_error = None
+    config = await load_demo_config()
+    broker, topic = config.get("kafka_broker"), config.get("kafka_topic")
+    if not broker or not topic:
+        raise KafkaNotConfiguredError(
+            "Kafka broker or topic not configured. An administrator sets them on System Config, "
+            "or kafka.broker and kafka.topic in the app's Helm values."
+        )
+    return str(broker), str(topic)
 
-    for url in urls:
-        try:
-            logger.debug("fetching_config", url=url)
-            async with httpx.AsyncClient(verify=False) as client:
-                resp = await client.get(f"{url}/api/v1/admin/demo-config", timeout=2.0)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if data.get("status") == "success":
-                        logger.info("config_loaded_successfully", url=url)
-                        return data.get("data", {})
-                    else:
-                        logger.warning("config_response_error", url=url, status=data.get("status"))
-                else:
-                    logger.warning("config_http_error", url=url, status_code=resp.status_code)
-        except Exception as e:
-            last_error = str(e)
-            logger.debug("config_fetch_failed", url=url, error=str(e))
 
-    logger.error("all_config_fetches_failed", last_error=last_error)
-    return {}
+def connection_kwargs(broker: str) -> dict[str, Any]:
+    """Client options shared by the consumer and the producer.
+
+    Raises:
+        KafkaNotConfiguredError: A SASL protocol is set but the credentials are missing.
+    """
+    kwargs: dict[str, Any] = {
+        "bootstrap_servers": broker,
+        "security_protocol": settings.kafka_security_protocol,
+    }
+    if settings.kafka_security_protocol.startswith("SASL"):
+        if not settings.kafka_sasl_username or not settings.kafka_sasl_password:
+            raise KafkaNotConfiguredError(
+                "No Kafka credentials: set kafka.username and kafka.password, or "
+                "kafka.existingSecret, in the app's Helm values."
+            )
+        kwargs |= {
+            "sasl_mechanism": settings.kafka_sasl_mechanism,
+            "sasl_plain_username": settings.kafka_sasl_username,
+            "sasl_plain_password": settings.kafka_sasl_password.get_secret_value(),
+        }
+    if settings.kafka_security_protocol.endswith("SSL"):
+        kwargs["ssl_context"] = create_ssl_context(cafile=settings.kafka_ssl_cafile)
+    return kwargs
 
 
 @app.get("/health")
-async def health_check() -> Dict[str, str]:
-    """Health check endpoint.
-    
-    Returns:
-        A dictionary indicating the health status.
-    """
+async def health_check() -> dict[str, str]:
+    """Health check endpoint."""
     return {"status": "healthy"}
 
 
 @app.get("/api/v1/kafka/stream")
 async def kafka_stream(request: Request) -> EventSourceResponse:
     """Subscribes to the configured Kafka topic and pushes Server-Sent Events.
-    
+
     Args:
         request: The FastAPI request object to monitor for disconnection.
-        
+
     Returns:
         An EventSourceResponse for SSE streaming.
     """
-    logger.debug("kafka_stream_request_received")
-    config = await get_kafka_config()
-    broker = config.get("kafka_broker")
-    topic = config.get("kafka_topic")
+    try:
+        broker, topic = await get_kafka_target()
+        kwargs = connection_kwargs(broker)
+    except KafkaNotConfiguredError as e:
+        message = str(e)
 
-    username = config.get("kafka_username")
-    password = config.get("kafka_password")
+        async def not_configured() -> AsyncGenerator[dict[str, str], None]:
+            yield {"event": "error", "data": message}
 
-    if not broker or not topic:
-        logger.debug("kafka_not_configured", config_keys=list(config.keys()))
+        return EventSourceResponse(not_configured())
 
-        async def error_generator():
+    async def event_generator() -> AsyncGenerator[dict[str, str], None]:
+        if stream_slots.locked():
             yield {
                 "event": "error",
-                "data": (
-                    "Kafka Broker or Topic not configured. "
-                    "Please set them in Advanced Demo Settings."
-                ),
+                "data": f"Too many live alert streams open ({settings.max_stream_clients}). "
+                "Close other Ops Centre tabs and reload.",
             }
+            return
+        async with stream_slots:
+            consumer: AIOKafkaConsumer | None = None
+            try:
+                # Subscribed without a group id: no JoinGroup or rebalancing, and with no
+                # committed offsets it starts at the end. An unsubscribed consumer never asks the
+                # Data Fabric gateway for the topic's metadata, so it would find no partitions.
+                consumer = AIOKafkaConsumer(
+                    topic, **kwargs, auto_offset_reset="latest", enable_auto_commit=False
+                )
+                logger.info("starting_kafka_consumer", broker=broker, topic=topic)
+                await consumer.start()
 
-        return EventSourceResponse(error_generator())
-
-    async def event_generator() -> AsyncGenerator[Dict[str, str], None]:
-        consumer: Optional[AIOKafkaConsumer] = None
-        try:
-            # Setup consumer with manual assignment to avoid JoinGroup/rebalance issues
-            consumer_kwargs: Dict[str, Any] = {
-                "bootstrap_servers": broker,
-                "auto_offset_reset": "latest",
-                "enable_auto_commit": False,
-            }
-            if username and password:
-                consumer_kwargs["security_protocol"] = "SASL_PLAINTEXT"
-                consumer_kwargs["sasl_mechanism"] = "PLAIN"
-                consumer_kwargs["sasl_plain_username"] = username
-                consumer_kwargs["sasl_plain_password"] = password
-
-            logger.info("starting_kafka_consumer_manual", broker=broker, topic=topic)
-            consumer = AIOKafkaConsumer(**consumer_kwargs)
-            await consumer.start()
-
-            # Fetch partitions metadata for target topic
-            partitions = consumer.partitions_for_topic(topic)
-            if not partitions:
+                partitions = consumer.partitions_for_topic(topic)
                 for _ in range(10):
-                    await asyncio.sleep(0.2)
-                    partitions = consumer.partitions_for_topic(topic)
                     if partitions:
                         break
+                    await asyncio.sleep(0.2)
+                    partitions = consumer.partitions_for_topic(topic)
+                if not partitions:
+                    logger.error("no_topic_metadata", topic=topic)
+                    yield {"event": "error", "data": f"Error: no metadata for topic {topic}."}
+                    return
 
-            if not partitions:
-                logger.error("no_topic_metadata", topic=topic)
-                yield {"event": "error", "data": f"Error: Metadata for topic {topic} not found."}
-                return
+                yield {"event": "connected", "data": f"Connected to {topic}"}
 
-            # Manually assign all partitions of the topic
-            tp_list = [TopicPartition(topic, p) for p in partitions]
-            consumer.assign(tp_list)
-
-            # Ensure we start from the very latest message
-            await consumer.seek_to_end(*tp_list)
-
-            # Send initial connection success event
-            yield {"event": "connected", "data": f"Connected to {topic}"}
-
-            # Consume messages
-            async for msg in consumer:
-                if await request.is_disconnected():
-                    break
-                payload = msg.value.decode("utf-8")
-                yield {"event": "message", "data": payload}
-
-        except asyncio.CancelledError:
-            logger.info("sse_client_disconnected")
-        except Exception as e:
-            logger.error("kafka_consumer_error", error=str(e), exc_info=True)
-            yield {"event": "error", "data": f"Consumer Error: {str(e)}"}
-        finally:
-            if consumer:
-                await consumer.stop()
+                async for msg in consumer:
+                    if await request.is_disconnected():
+                        break
+                    if msg.value is not None:
+                        yield {"event": "message", "data": msg.value.decode("utf-8", "replace")}
+            except asyncio.CancelledError:
+                logger.info("sse_client_disconnected")
+            except Exception as e:
+                logger.error("kafka_consumer_error", error=str(e), exc_info=True)
+                yield {"event": "error", "data": f"Consumer Error: {e}"}
+            finally:
+                if consumer:
+                    await consumer.stop()
 
     return EventSourceResponse(event_generator())
 
 
+class GenerateRequest(BaseModel):
+    """Which feeds the operator has on screen, so the sample alerts can match them."""
+
+    feeds: list[VideoName] = Field(default_factory=list, max_length=4)
+
+
 @app.post("/api/v1/kafka/generate")
-async def generate_sample_messages() -> Any:
-    """Generates sample tactical alerts and produces them to Kafka.
-    
+async def generate_sample_messages(req: Annotated[GenerateRequest | None, Body()] = None) -> Any:
+    """Generates 3-5 sample tactical alerts about the given feeds and produces them to Kafka.
+
+    Args:
+        req: The feeds on screen; without any, or with none recognised, the alerts are general.
+
     Returns:
         A dictionary with status and message.
     """
-    config = await get_kafka_config()
-    broker = config.get("kafka_broker")
-    topic = config.get("kafka_topic")
-    username = config.get("kafka_username")
-    password = config.get("kafka_password")
+    feeds = req.feeds if req else []
+    try:
+        broker, topic = await get_kafka_target()
+        kwargs = connection_kwargs(broker)
+    except KafkaNotConfiguredError as e:
+        return JSONResponse(status_code=400, content={"status": "error", "message": str(e)})
 
-    if not broker or not topic:
-        return JSONResponse(
-            status_code=400, content={"status": "error", "message": "Kafka not configured"}
-        )
-
-    producer_kwargs: Dict[str, Any] = {
-        "bootstrap_servers": broker,
-    }
-    if username and password:
-        producer_kwargs["security_protocol"] = "SASL_PLAINTEXT"
-        producer_kwargs["sasl_mechanism"] = "PLAIN"
-        producer_kwargs["sasl_plain_username"] = username
-        producer_kwargs["sasl_plain_password"] = password
-
-    producer = AIOKafkaProducer(**producer_kwargs)
+    producer = AIOKafkaProducer(**kwargs)
     try:
         await producer.start()
-
-        severities = ["CRITICAL", "WARNING", "INFO"]
-        locations = [
-            "Sector 7G",
-            "North Perimeter",
-            "Command Centre",
-            "Fuel Depot",
-            "South Outpost",
-            "East Ridge",
-            "Observation Deck",
-            "Hangar A-1",
-            "Comms Relay",
-            "Tactical Bay",
-        ]
-        objects = [
-            "Unidentified drone",
-            "Inbound aircraft",
-            "Suspicious vehicle",
-            "Thermal signature",
-            "Unknown signal",
-        ]
-        areas = ["restricted airspace", "perimeter fence", "approach vector 4", "landing zone echo"]
-        systems = ["Pressure sensors", "Optical sensors", "Power grid", "Uplink signal", "Cooling"]
-        reports = ["Visual contact confirmed", "Lost contact", "Signal interference", "All clear"]
-
-        templates = [
-            lambda: f"{random.choice(objects)} detected in {random.choice(areas)}.",
-            lambda: f"{random.choice(systems)} anomaly reported.",
-            lambda: f"Intrusion alarm triggered near {random.choice(locations)}.",
-            lambda: f"Priority relay: {random.choice(reports)}.",
-            lambda: f"Automated scan of {random.choice(locations)} completed.",
-        ]
-
-        # Pick 3-5 random alerts
-        count = random.randint(3, 5)
-        to_send = []
-        for _ in range(count):
-            to_send.append(
-                {
-                    "severity": random.choice(severities),
-                    "location": random.choice(locations),
-                    "message": random.choice(templates)(),
-                }
-            )
-
-        for alert in to_send:
-            payload = {
-                "timestamp": time.time(),
-                "severity": alert["severity"],
-                "location": alert["location"],
-                "message": alert["message"],
-            }
-            await producer.send_and_wait(topic, json.dumps(payload).encode("utf-8"))
-            logger.info("sent_sample_alert", topic=topic, alert=alert["message"])
-
-        return {"status": "success", "message": f"Generated {len(to_send)} sample alerts"}
+        alerts = sample_alerts(feeds)
+        for alert in alerts:
+            await producer.send_and_wait(topic, json.dumps(alert).encode("utf-8"))
+            logger.info("sent_sample_alert", topic=topic, location=alert["location"])
+        matched = sorted({feed_label(f) for f in feeds if profile_for(f)})
+        about = f"for {', '.join(matched)}" if matched else "(general, no matching feed selected)"
+        return {"status": "success", "message": f"Generated {len(alerts)} alerts {about}"}
     except Exception as e:
         logger.error("producer_error", error=str(e), exc_info=True)
         return JSONResponse(
-            status_code=500, content={"status": "error", "message": f"Producer Error: {str(e)}"}
+            status_code=500, content={"status": "error", "message": f"Producer Error: {e}"}
         )
     finally:
         await producer.stop()
-
-
-if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=8000,
-        reload=True if os.environ.get("ENV") == "development" else False,
-    )
-

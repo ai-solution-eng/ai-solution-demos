@@ -1,0 +1,36 @@
+[project]
+name = "defence-ops-llm-service"
+version = "1.2.0"
+description = "Sends Ops Centre questions with video context to models behind LiteLLM or another OpenAI-compatible endpoint."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.162.0",
+    "httpx>=0.28.1",
+    "pydantic>=2.14.2",
+    "pydantic-settings>=2.16.2",
+    "structlog>=26.1.0",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[dependency-groups]
+dev = ["mypy>=2.4.1", "pytest>=9.2.0", "ruff>=0.17.3"]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = [".", ".."]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+mypy_path = ".."
+
+[tool.pytest.ini_options]
+pythonpath = [".", ".."]
+testpaths = ["tests"]

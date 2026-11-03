@@ -2,10 +2,13 @@
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;
   background: #0a0e17;
   color: #e2e8f0;
   padding: 16px;
-  overflow: hidden;
+  /* The dashboard fills the window; when the window is too small for it, the page scrolls. */
+  overflow-y: auto;
+  overflow-x: hidden;
   box-sizing: border-box;
 }
 .header {
@@ -69,7 +72,8 @@
   display: flex;
   gap: 20px;
   flex: 1;
-  min-height: 0;
+  /* Below this the feeds and chat get too small to use, so the page scrolls instead. */
+  min-height: 560px;
 }
 .leftPanel {
   flex: 1;
@@ -77,6 +81,7 @@
   flex-direction: column;
   gap: 20px;
   min-width: 400px;
+  min-height: 0;
 }
 .resizer {
   width: 12px;
@@ -138,9 +143,11 @@
 .videoGrid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr;
+  /* minmax(0, ...) lets the rows shrink below the videos' own size, so the alerts stay on screen. */
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
   gap: 16px;
   flex: 1;
+  min-height: 0;
 }
 .videoContainer {
   background: #0f172a;
@@ -204,6 +211,8 @@
 }
 .videoView {
   flex: 1;
+  min-height: 0;
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -242,6 +251,7 @@
   flex-direction: column;
   gap: 16px;
   min-width: 320px;
+  min-height: 0;
 }
 .promptContainer {
   background: #0f172a;
@@ -281,6 +291,7 @@
 }
 .chatContainer {
   flex: 1;
+  min-height: 0;
   background: #0f172a;
   border: 1px solid #1e293b;
   border-radius: 8px;
@@ -365,6 +376,8 @@
   gap: 8px;
 }
 .contextSelect {
+  box-sizing: border-box;
+  max-width: 100%;
   background: #0f172a;
   color: #94a3b8;
   border: 1px solid #334155;
@@ -382,6 +395,9 @@
   outline: none;
   font-size: 13px;
   width: 100%;
+  /* Padding and border inside the 100%, or the box sticks out past the panel's right edge. */
+  box-sizing: border-box;
+  min-width: 0;
 }
 .chatInput:focus {
   border-color: #38bdf8;
@@ -408,6 +424,25 @@
   justify-content: space-between;
   align-items: center;
   font-size: 12px;
+}
+.resetBtn {
+  margin-left: auto;
+  background: transparent;
+  color: #94a3b8;
+  border: 1px solid #334155;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.resetBtn:hover {
+  color: #e2e8f0;
+  border-color: #64748b;
 }
 .generateBtn {
   background: rgba(245, 158, 11, 0.1);
@@ -489,4 +524,88 @@
   font-size: 0.95em;
   border-radius: 0 4px 4px 0;
   color: #94a3b8;
+}
+
+.thinkSegment summary {
+  cursor: pointer;
+  font-style: normal;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.thinkingDisabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.thinkingDisabled input {
+  cursor: not-allowed;
+}
+
+.notice {
+  font-size: 0.85em;
+  color: #f59e0b;
+  margin-top: 8px;
+}
+
+/* Quick questions above the chat box: one click fills it, and it can still be edited. */
+.suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.suggestionBtn {
+  background: rgba(56, 189, 248, 0.08);
+  color: #7dd3fc;
+  border: 1px solid #1e3a5f;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-family: monospace;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.suggestionBtn:hover:not(:disabled) {
+  background: rgba(56, 189, 248, 0.18);
+  border-color: #38bdf8;
+}
+.suggestionBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Narrow windows: panels stack and the page scrolls, instead of squeezing side by side. */
+@media (max-width: 1000px) {
+  .mainContent {
+    flex-direction: column;
+    flex: none;
+    min-height: 0;
+  }
+  .leftPanel {
+    min-width: 0;
+    flex: none;
+  }
+  .videoGrid {
+    flex: none;
+    grid-template-rows: 220px 220px;
+  }
+  .kafkaTerminal {
+    flex: 0 0 220px;
+    margin-top: 0;
+  }
+  .resizer {
+    display: none;
+  }
+  .rightPanel {
+    /* Overrides the drag-to-resize width set inline. */
+    width: auto !important;
+    min-width: 0;
+    height: 680px;
+    flex: none;
+  }
+}
+@media (max-width: 600px) {
+  .videoGrid {
+    grid-template-columns: 1fr;
+    grid-template-rows: repeat(4, 200px);
+  }
 }

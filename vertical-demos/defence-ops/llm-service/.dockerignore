@@ -42,3 +42,6 @@ helm/
 # Data
 data/
 config.json
+
+# Git metadata
+.git
