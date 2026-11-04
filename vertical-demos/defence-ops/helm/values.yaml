@@ -1,37 +1,161 @@
+# Platform settings. On HPE Private Cloud AI, the Import Framework fills in the ${...} placeholders:
+# keep them as they are. For a plain `helm install`, set the real values instead.
 ezua:
+  # The cluster's domain. The Keycloak issuer is https://keycloak.<domainName>/realms/UA.
+  domainName: "${DOMAIN_NAME}"
+  oidc:
+    # The client PCAI's sign-in uses: the audience of the ID token the app checks to recognise
+    # administrators. The app only verifies that token, so it needs no client secret.
+    client_id: "${OIDC_CLIENT_ID}"
   virtualService:
     endpoint: "defence-ops.${DOMAIN_NAME}"
     istioGateway: "istio-system/ezaf-gateway"
-
-namespace: defence-ops
+  # SSO at the ingress through oauth2-proxy. The policy lives in istio-system, so the Tilt dev loop
+  # turns it off.
+  authorizationPolicy:
+    enabled: true
 
 global:
-  imagePullPolicy: Always
-  env: "production" # development, production
+  # development runs Next.js and uvicorn with live reload; production runs the built app.
+  appEnv: production
+  # Extra environment variables for every container, as a list of Kubernetes EnvVar objects.
+  extraEnv: []
+  image:
+    # Tag for every image that does not set its own.
+    tag: "1.4.0"
+    pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+serviceAccount:
+  create: true
+  name: ""
+
+# Models come from an OpenAI-compatible endpoint: a LiteLLM proxy with a virtual key for this app,
+# or one model served directly, such as an HPE MLIS deployment with its token.
+llm:
+  # Without the /v1 suffix
+  baseUrl: http://litellm.litellm.svc.cluster.local:4000
+  # The app's key for that endpoint. Either give it here, and the chart stores it in a Secret, or
+  # name a Secret that already holds it (existingSecret wins when both are set).
+  apiKey: ""
+  existingSecret:
+    name: ""
+    key: api-key
+  # Model to use until an administrator picks one on System Config; it must take images.
+  model: ""
+  # Frames sent to a model that takes images but not video
+  maxImages: 5
+  # What the model accepts, as true or false; empty leaves it unknown. LiteLLM declares these in each
+  # model's model_info, and what it declares wins. A model served directly declares nothing, so set
+  # them here: unknown means still frames rather than video, and no thinking switch.
+  capabilities:
+    vision: ""
+    video: ""
+    reasoning: ""
+
+# Live alerts from a Kafka broker (optional: without one the dashboard runs without the ticker).
+kafka:
+  # Defaults until an administrator sets them on System Config: host:port[,host:port] and topic.
+  broker: ""
+  topic: ""
+  securityProtocol: SASL_PLAINTEXT
+  # PLAIN, SCRAM-SHA-256 or SCRAM-SHA-512
+  saslMechanism: PLAIN
+  # Credentials for the SASL protocols. Either give them here, and the chart stores them in a
+  # Secret, or name a Secret that holds them under the keys username and password.
+  username: ""
+  password: ""
+  existingSecret:
+    name: ""
+
+# Who may change System Config. oidc verifies the Keycloak ID token that PCAI's sign-in forwards
+# and needs adminRole among the user's realm roles; open lets anyone, for the Tilt dev loop only.
+settings:
+  auth: oidc
+  adminRole: admin
+  # Where the app fetches Keycloak's signing keys: its in-cluster Service, as PCAI's oauth2-proxy
+  # does, so it needs no trust in the ingress certificate. Empty means the issuer's public URL.
+  oidcJwksUrl: http://keycloak.keycloak.svc.cluster.local/realms/UA/protocol/openid-connect/certs
+
+# Only the Istio ingress gateway may reach the pod, so nothing in the cluster can go round SSO.
+networkPolicy:
+  enabled: true
+  ingressGateway:
+    namespace: istio-system
+    podLabels:
+      istio: ingressgateway
+
+securityContext:
+  # The Tilt dev loop turns this off so that it can sync files into the containers.
+  readOnlyRootFilesystem: true
+
+# Holds config.json, which the settings page writes and the services read. The claim keeps the name
+# app-data so that upgrades from chart 0.0.x keep the saved settings.
+persistence:
+  claimName: app-data
+  size: 100Mi
+
+# All four services share one pod, so each listens on its own port. Each image's tag defaults to
+# global.image.tag. Resource requests are calculated from peak use measured on a PCAI cluster on
+# 2026-11-02. Under the UI's frame and video-context calls for every video, then three all-video
+# requests at once: kafka-service 68 MiB, llm-service 124 MiB, video-service 449 MiB and about 2
+# CPU cores. app-ui (built, `next start`) peaked at 257 MiB in the 1.0.1 release. Limits leave
+# headroom above that.
 appUi:
-  image: erdincka/defence-ops-app-ui:latest
-  replicas: 1
-  service:
-    type: ClusterIP
-    port: 3000
-
-videoService:
-  image: erdincka/defence-ops-video-service:latest
-  replicas: 1
-  service:
-    type: ClusterIP
-    port: 8000
-
-llmService:
-  image: erdincka/defence-ops-llm-service:latest
-  replicas: 1
-  service:
-    type: ClusterIP
-    port: 8000
+  image:
+    repository: erdincka/defence-ops-app-ui
+    tag: ""
+  port: 3000
+  probePath: /
+  resources:
+    requests:
+      cpu: 100m
+      memory: 384Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
 
 kafkaService:
-  image: erdincka/defence-ops-kafka-service:latest
-  replicas: 1
-  service:
-    type: ClusterIP
-    port: 8000
+  image:
+    repository: erdincka/defence-ops-kafka-service
+    tag: ""
+  port: 8001
+  probePath: /health
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+llmService:
+  image:
+    repository: erdincka/defence-ops-llm-service
+    tag: ""
+  port: 8002
+  probePath: /health
+  resources:
+    requests:
+      cpu: 50m
+      memory: 192Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+videoService:
+  image:
+    repository: erdincka/defence-ops-video-service
+    tag: ""
+  port: 8003
+  probePath: /health
+  # Custom uploads live on a scratch volume until the pod restarts
+  maxUploadMB: 200
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "4"
+      memory: 4Gi

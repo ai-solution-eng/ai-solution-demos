@@ -1,14 +1,16 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: app-data
+  name: {{ .Values.persistence.claimName }}
   namespace: {{ .Release.Namespace }}
   labels:
-    app: app-data
     {{- include "defence-ops.labels" . | nindent 4 }}
+  annotations:
+    # Keep the saved settings if the release is uninstalled.
+    helm.sh/resource-policy: keep
 spec:
   accessModes:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 100Mi
+      storage: {{ .Values.persistence.size }}

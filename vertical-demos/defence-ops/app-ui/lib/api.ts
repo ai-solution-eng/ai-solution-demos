@@ -1,57 +1,116 @@
-const getBaseUrl = (defaultLocal: string) => {
-  if (typeof window !== 'undefined') {
-    // In browser: if not on localhost, use relative paths to support custom domains via Istio/VirtualService
-    if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
-      return '';
-    }
-  }
-  // Fallback to local development URL
-  return defaultLocal;
-};
+import { z } from "zod";
 
-const ADMIN_URL = getBaseUrl('http://localhost:8002');
-const LLM_URL = getBaseUrl('http://localhost:8003');
+// All services sit behind the same hostname (Istio VirtualService), so paths are relative.
 
-async function safeJson(response: Response) {
-  const text = await response.text();
-  
-  if (!response.ok) {
-    let errorMessage = `Request failed (${response.status})`;
-    try {
-      const errorJson = JSON.parse(text);
-      errorMessage = errorJson.message || errorJson.detail || errorMessage;
-    } catch {
-      // Not JSON, use the raw text if short or generic message
-      if (text.length > 0 && text.length < 500) {
-        errorMessage = text;
-      }
-    }
-    throw new Error(errorMessage);
-  }
+export const demoConfigSchema = z.object({
+  llm_model: z.string(),
+  kafka_broker: z.string(),
+  kafka_topic: z.string(),
+});
+export type DemoConfig = z.infer<typeof demoConfigSchema>;
 
-  try {
-    return JSON.parse(text);
-  } catch (_err) {
-    console.error('Failed to parse response as JSON:', text);
-    throw new Error(`Invalid response from server: ${text.substring(0, 50)}...`);
+const demoConfigResponse = z.object({
+  data: demoConfigSchema,
+  meta: z.object({ can_edit: z.boolean(), reason: z.string().nullable() }),
+});
+export type DemoConfigResponse = z.infer<typeof demoConfigResponse>;
+
+export const llmModelSchema = z.object({
+  id: z.string(),
+  vision: z.boolean().nullable(),
+  video: z.boolean().nullable(),
+  reasoning: z.boolean().nullable(),
+});
+export type LlmModel = z.infer<typeof llmModelSchema>;
+
+const modelsResponse = z.object({
+  data: z.object({ models: z.array(llmModelSchema), selected: z.string().nullable() }),
+});
+export type ModelsResponse = z.infer<typeof modelsResponse>["data"];
+
+export interface Alert {
+  timestamp?: number;
+  severity: string;
+  location?: string;
+  message: string;
+}
+
+export interface ChatRequest {
+  message: string;
+  system_prompt: string;
+  videos: string[];
+  kafka_context: Alert[];
+  enable_thinking: boolean;
+}
+
+const chatResponse = z.object({
+  data: z.object({
+    reply: z.string(),
+    reasoning: z.string().nullable(),
+    model: z.string(),
+    context: z.enum(["video", "frames", "none"]),
+    thinking: z.boolean(),
+    notices: z.array(z.string()),
+  }),
+});
+export type ChatReply = z.infer<typeof chatResponse>["data"];
+
+const messageResponse = z.object({ message: z.string() });
+
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
   }
 }
 
-export const api = {
-  getDemoConfig: () => fetch(`${ADMIN_URL}/api/v1/admin/demo-config`).then(safeJson),
-  saveDemoConfig: (config: Record<string, unknown>) => 
-    fetch(`${ADMIN_URL}/api/v1/admin/demo-config`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(config)
-    }).then(safeJson),
-  getModels: () => fetch(`${LLM_URL}/api/v1/models`).then(safeJson),
-  getDiscoveredEndpoints: () => fetch(`${LLM_URL}/api/v1/llm/discovered-endpoints`).then(safeJson),
-  discoverModels: (endpoint: string, api_key?: string) => 
-    fetch(`${LLM_URL}/api/v1/llm/discover-models`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ endpoint, api_key })
-    }).then(safeJson),
-};
+// Next.js routes answer {message}; FastAPI answers {detail}, a string or a validation list.
+function errorMessage(body: unknown): string | undefined {
+  if (typeof body !== "object" || body === null) return undefined;
+  const record = body as Record<string, unknown>;
+  if (typeof record.message === "string") return record.message;
+  if (typeof record.detail === "string") return record.detail;
+  if (Array.isArray(record.detail)) {
+    return record.detail
+      .map((d) => (typeof d === "object" && d !== null && "msg" in d ? String((d as { msg: unknown }).msg) : ""))
+      .filter(Boolean)
+      .join("; ");
+  }
+  return undefined;
+}
 
+async function request<T>(path: string, schema: z.ZodType<T>, init?: RequestInit): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(path, init);
+  } catch {
+    throw new ApiError(`Could not reach ${path}; check the connection and reload.`, 0);
+  }
+  const body: unknown = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new ApiError(errorMessage(body) ?? `Request to ${path} failed (HTTP ${res.status})`, res.status);
+  }
+  const parsed = schema.safeParse(body);
+  if (!parsed.success) {
+    throw new ApiError(`Unexpected response from ${path}`, res.status);
+  }
+  return parsed.data;
+}
+
+const json = (body: unknown): RequestInit => ({
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(body),
+});
+
+export const api = {
+  getDemoConfig: () => request("/api/v1/admin/demo-config", demoConfigResponse),
+  saveDemoConfig: (config: DemoConfig) =>
+    request("/api/v1/admin/demo-config", messageResponse, json(config)).then((r) => r.message),
+  getModels: (refresh = false) =>
+    request(`/api/v1/llm/models${refresh ? "?refresh=true" : ""}`, modelsResponse).then((r) => r.data),
+  chat: (payload: ChatRequest) => request("/api/v1/llm/chat", chatResponse, json(payload)).then((r) => r.data),
+};

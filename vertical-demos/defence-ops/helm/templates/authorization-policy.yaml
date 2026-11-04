@@ -1,3 +1,4 @@
+{{- if .Values.ezua.authorizationPolicy.enabled }}
 apiVersion: security.istio.io/v1beta1
 kind: AuthorizationPolicy
 metadata:
@@ -18,3 +19,4 @@ spec:
   selector:
     matchLabels:
       istio: "ingressgateway"
+{{- end }}
