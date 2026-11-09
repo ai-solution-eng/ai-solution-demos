@@ -67,11 +67,17 @@ If you want to define a custom password for the admin user define that ib line 3
 
 **1.2 Load db file**
 
-If you care to adapt the data for example to a different industry or specific locations take a look at create_manufacturing_data.py script and adapt before executing. Execute the create_manufacturing_data.py script with python create_manufacturing_data.py . After execution you have a .db file you can use as for the following steps.
+Choose a dataset and generate its SQLite database:
 
-Open your Jupyter Notebook server and upload the .db file and the loaddata.py. You will need to add the password you provided when Importing Postgres to line 9. of loaddata.py Also be aware if you adapt the db_name in line 13 you will need to change in the step of Connect Database to AIE in the URL manufacturing to whatever you decide for as a dbname.
+- Manufacturing: run `python create_manufacturing_data.py` to create `manufacturing_example_data.db`.
+- Retail: run `python create_retail_data.py` to create `retail_example_data.db`.
 
-When you have uploaded those to files open a terminal in the JupyterNotebook Server. Execute ls to make sure you can see both files at this location. Install the library psycopg2 via *pip installpsycopg2* and then execute the loaddata.py with *python loaddata.py*
+Upload the generated database and its matching loader to your Jupyter Notebook server:
+
+- Manufacturing: `manufacturing_example_data.db` and `loaddata.py` load into the PostgreSQL database `manufacturing`.
+- Retail: `retail_example_data.db` and `loaddata_retail.py` load into the separate PostgreSQL database `retail`.
+
+Set the PostgreSQL password in the chosen loader, install `psycopg2` with `pip install psycopg2`, then run the matching loader from the directory containing the `.db` file: `python loaddata.py` for manufacturing or `python loaddata_retail.py` for retail.
 
 **1.3 Connect Database to AIE**
 
@@ -86,6 +92,8 @@ When you have uploaded those to files open a terminal in the JupyterNotebook Ser
   - Connection Password*: YOURDEFINEDPASSWORD
   - Click on PostgreSQl Advanced Settings
   - Case Insensitive Name Matching: Tick
+
+For the retail database, create a separate PostgreSQL connection using `jdbc:postgresql://postgresql.postgres.svc.cluster.local:5432/retail` and a suitable name such as `retaildb`.
 
 **1.4 Explore the Data Catalog**
 
@@ -207,6 +215,8 @@ Underneath Tools tick the *PrestoMCP Tool* and click Save&Create.
 
 
 ### **4. Dashboard**
+
+The dashboard assets and cached-asset queries in this section are for the manufacturing dataset only. No retail dashboard or retail-specific dashboard queries are currently provided. To use the retail dataset in Superset, connect to the `retail` database as described in section 1.3 and create your own datasets and visualizations.
 
 **4.1 Superset Installation**
 
