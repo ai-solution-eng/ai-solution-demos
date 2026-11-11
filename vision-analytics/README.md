@@ -155,6 +155,7 @@ Before you can analyse frames, you must configure the VLM endpoint:
 2.  Upload a video file, and  configure the prompt to specify what you want the vision language model to do
     * default prompt: `Did a car run a redlight in this video?`
     * The best prompt to use for [video](assets/fmv_clip.mp4) is: `Describe the vehicles in this video.`
+3.  (Optional) Set **num_frames**, **fps** and **max_duration**. The app samples the video with ffmpeg to these settings before sending it, so they work with vLLM servers that reject per-request `media_io_kwargs` (recent releases such as vLLM 0.31, unless started with `--trust-request-mm-kwargs`). The model server may still sample fewer frames under its own limits.
 5.  When the model completes its analysis, it will send its response to the **LLM Response** field
 
 ### Analyzing a Stream

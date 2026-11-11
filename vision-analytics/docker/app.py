@@ -444,40 +444,150 @@ def video_to_data_url(path: str) -> str:
     return f"data:{mime};base64,{b64}"
 
 
-def normalize_video_for_gpu(input_path: str) -> str:
-    """Normalize video to a standard format (H.264, yuv420p) for GPU compatibility."""
-    if not input_path or not os.path.exists(input_path):
-        return input_path
-        
-    temp_dir = tempfile.gettempdir()
-    # Create a stable output path based on file path, size, and modification time to avoid redundant conversions
-    # and ensure fresh normalization if the file changes even with the same name.
+FFPROBE_TIMEOUT_SECONDS = 30
+FFMPEG_TIMEOUT_SECONDS = 300
+
+
+def _parse_frame_rate(value: str) -> Optional[float]:
+    """Turn an ffprobe frame rate such as "30000/1001" into frames per second, or None if unknown."""
+    try:
+        numerator, _, denominator = value.partition("/")
+        rate = float(numerator) / float(denominator or 1)
+    except (ValueError, ZeroDivisionError):
+        return None
+    return rate if rate > 0 else None
+
+
+def probe_video(path: str) -> Tuple[Optional[float], Optional[float]]:
+    """
+    Read a video's duration and frame rate with ffprobe.
+
+    Args:
+        path: Path of the video file.
+
+    Returns:
+        A tuple of (duration in seconds, frames per second); either is None if ffprobe cannot read it.
+    """
+    ffprobe_path = shutil.which("ffprobe") or "/usr/bin/ffprobe"
+    cmd = [
+        ffprobe_path, "-v", "error", "-select_streams", "v:0",
+        "-show_entries", "stream=avg_frame_rate:format=duration",
+        "-of", "json",
+        path,
+    ]
+    try:
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=FFPROBE_TIMEOUT_SECONDS)
+        info = json.loads(result.stdout)
+    except (OSError, subprocess.SubprocessError, ValueError) as e:
+        logging.warning(f"Could not read the duration and frame rate of {path}: {e}")
+        return None, None
+
+    try:
+        duration: Optional[float] = float(info.get("format", {}).get("duration", ""))
+    except ValueError:
+        duration = None
+    streams = info.get("streams") or [{}]
+    frame_rate = _parse_frame_rate(str(streams[0].get("avg_frame_rate", "")))
+    return (duration if duration and duration > 0 else None), frame_rate
+
+
+def plan_frame_sampling(
+    duration: Optional[float],
+    source_fps: Optional[float],
+    num_frames: int,
+    fps: float,
+    max_duration: float,
+) -> Tuple[float, float]:
+    """
+    Work out how much of a video to keep and at what frame rate.
+
+    The clip is cut to max_duration seconds and sampled at fps, but never faster than the
+    source, which would only repeat frames. If that gives more than num_frames frames, the
+    frame rate is lowered so that num_frames frames are spread evenly over the whole clip.
+    When the duration is unknown, ffmpeg's frame cap applies instead.
+
+    Args:
+        duration: The video's duration in seconds, or None if unknown.
+        source_fps: The video's own frame rate, or None if unknown.
+        num_frames: The most frames to keep.
+        fps: The frame rate to sample at.
+        max_duration: The most seconds to keep, from the start of the video.
+
+    Returns:
+        A tuple of (seconds to keep, frame rate to sample at).
+    """
+    sample_fps = min(fps, source_fps) if source_fps else fps
+    clip_seconds = min(duration, max_duration) if duration else max_duration
+    if duration and clip_seconds * sample_fps > num_frames:
+        return clip_seconds, num_frames / clip_seconds
+    return clip_seconds, sample_fps
+
+
+def prepare_video_for_model(input_path: str, num_frames: int, fps: float, max_duration: float) -> str:
+    """
+    Sample a video with ffmpeg so the request carries only the frames the model should see.
+
+    The app samples here because recent vLLM releases (0.31, for one) reject per-request media_io_kwargs unless
+    the server runs with --trust-request-mm-kwargs, which a shared endpoint should not. The output
+    is H.264 in yuv420p with even dimensions and no audio, which also avoids NVCV INVALID_DATA_TYPE
+    errors from GPU video decoders. The model server may still sample fewer frames under its own limits.
+
+    Args:
+        input_path: Path of the source video.
+        num_frames: The most frames to keep.
+        fps: The frame rate to sample at.
+        max_duration: The most seconds to keep, from the start of the video.
+
+    Returns:
+        The path of the prepared video in the temporary directory (reused while the source
+        file and the settings stay the same).
+
+    Raises:
+        RuntimeError: If ffmpeg cannot sample the video.
+    """
+    duration, source_fps = probe_video(input_path)
+    clip_seconds, sample_fps = plan_frame_sampling(duration, source_fps, num_frames, fps, max_duration)
+
     file_stat = os.stat(input_path)
-    cache_key = f"{input_path}_{file_stat.st_mtime}_{file_stat.st_size}"
-    path_hash = hashlib.md5(cache_key.encode()).hexdigest()[:8]
-    output_path = os.path.join(temp_dir, f"gpu_compat_{path_hash}.mp4")
-    
-    # If already normalized and exists, return it
+    cache_key = (
+        f"{input_path}_{file_stat.st_mtime}_{file_stat.st_size}"
+        f"_{num_frames}_{sample_fps:.6f}_{clip_seconds:.3f}"
+    )
+    path_hash = hashlib.md5(cache_key.encode()).hexdigest()[:12]
+    output_path = os.path.join(tempfile.gettempdir(), f"model_input_{path_hash}.mp4")
     if os.path.exists(output_path):
         return output_path
-        
-    logging.info(f"Normalizing video for GPU compatibility (vLLM/PCAI): {input_path}")
+
+    # ffmpeg writes to a part file first, so a failed run never leaves a broken cached video.
+    part_path = os.path.join(tempfile.gettempdir(), f"model_input_{path_hash}.part.mp4")
+    ffmpeg_path = shutil.which("ffmpeg") or "/usr/bin/ffmpeg"
+    cmd = [
+        ffmpeg_path, "-y", "-t", f"{clip_seconds:.3f}", "-i", input_path,
+        "-vf", f"fps={sample_fps:.6f},scale=trunc(iw/2)*2:trunc(ih/2)*2",
+        "-frames:v", str(num_frames),
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "ultrafast", "-crf", "25",
+        "-an", part_path,
+    ]
+    logging.info(
+        f"Sampling {input_path}: first {clip_seconds:.1f}s at {sample_fps:.3f} fps, at most {num_frames} frames"
+    )
     try:
-        ffmpeg_path = shutil.which("ffmpeg") or "/usr/bin/ffmpeg"
-        # Command to ensure H.264, yuv420p (8-bit), remove audio to save bandwidth, ultrafast for low latency
-        cmd = [
-            ffmpeg_path, "-y", "-i", input_path,
-            "-c:v", "libx264", "-pix_fmt", "yuv420p",
-            "-an", "-preset", "ultrafast", "-crf", "25",
-            output_path
-        ]
-        # Run with timeout to prevent hangs
-        subprocess.run(cmd, check=True, capture_output=True, timeout=120)
-        logging.info(f"Normalization successful: {output_path}")
-        return output_path
-    except Exception as e:
-        logging.warning(f"Video normalization failed (will try original): {e}")
-        return input_path
+        subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=FFMPEG_TIMEOUT_SECONDS)
+        os.replace(part_path, output_path)
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(
+            f"Sampling the video took longer than {FFMPEG_TIMEOUT_SECONDS} s. "
+            "Lower max_duration, or trim the video and try again."
+        ) from e
+    except subprocess.CalledProcessError as e:
+        last_line = (e.stderr or "").strip().splitlines()[-1:] or ["no output"]
+        raise RuntimeError(
+            f"ffmpeg could not read this video ({last_line[0]}). Convert it to MP4 (H.264) and try again."
+        ) from e
+    finally:
+        if os.path.exists(part_path):
+            os.remove(part_path)
+    return output_path
 
 
 def analyse_video_with_vllm(
@@ -485,19 +595,22 @@ def analyse_video_with_vllm(
     prompt: str,
     model_override: str,
     num_frames: int,
-    fps: int,
-    max_duration: int,
+    fps: float,
+    max_duration: float,
 ) -> Tuple[str, str]:
     """
-    Analyse a video using the Vision Language Model via vLLM's media interface.
-    
+    Analyse a video with the Vision Language Model.
+
+    The app samples the frames itself (see prepare_video_for_model) and sends the result as a
+    data URL. It sends no per-request media_io_kwargs, which recent vLLM releases reject by default.
+
     Args:
         video_input: The video source (path or Gradio input).
         prompt: The user prompt for analysis.
         model_override: Optional model ID to override the default.
-        num_frames: Maximum number of frames to extract.
-        fps: Target frames per second for extraction.
-        max_duration: Maximum duration in seconds to consider.
+        num_frames: The most frames to send.
+        fps: The frame rate to sample at.
+        max_duration: The most seconds to analyse, from the start of the video.
         
     Returns:
         A tuple of (text response from the model, duration string).
@@ -511,9 +624,11 @@ def analyse_video_with_vllm(
     if not vid_path or not os.path.exists(vid_path):
         return "Please upload a valid video file.", ""
 
+    if int(num_frames) < 1 or float(fps) <= 0 or float(max_duration) <= 0:
+        return "num_frames, fps and max_duration must all be above zero.", ""
+
     try:
-        # Normalize for GPU compatibility before creating data URL (fixes NVCV INVALID_DATA_TYPE)
-        vid_path = normalize_video_for_gpu(vid_path)
+        vid_path = prepare_video_for_model(vid_path, int(num_frames), float(fps), float(max_duration))
         data_url = video_to_data_url(vid_path)
         chosen_model = model_override.strip() or (model_id or "")
         if not chosen_model:
@@ -539,15 +654,6 @@ def analyse_video_with_vllm(
             ],
             temperature=0.1,
             extra_headers={"Cache-Control": "no-cache"},
-            extra_body={
-                "media_io_kwargs": {
-                    "video": {
-                        "num_frames": int(num_frames),
-                        "fps": int(fps),
-                        "max_duration": int(max_duration),
-                    }
-                }
-            },
         )
         duration = time.time() - start_time
         return resp.choices[0].message.content, f"⏱️ {duration:.2f}s"
@@ -868,7 +974,7 @@ def build_ui():
             Deliver rich, real-time visual understanding across **Images**, **Videos**, and **RTSP live streams**—all running on your enterprise‑grade **[HPE Private Cloud AI](https://www.hpe.com/us/en/private-cloud-ai.html)** platform.
             **What you can do here**
             - **Image Understanding:** Select/Upload an image, preview it, and analyse with your prompt.
-            - **Video Understanding:** Select/Upload a video and control extraction knobs (**num_frames**, **fps**, **max_duration**). The app passes your video to PCAI's served endpoint using a secure data URL and vLLM media I/O hints.
+            - **Video Understanding:** Select/Upload a video and control extraction knobs (**num_frames**, **fps**, **max_duration**). The app samples your video to those settings and passes it to PCAI's served endpoint as a data URL.
             - **RTSP Stream:** View and analyse live network streams; capture a frame and ask questions in natural language.
             """
         )
@@ -1041,17 +1147,17 @@ def build_ui():
                     outputs=[video_in, video_prompt]
                 )
 
-                gr.Markdown("Upload a video, tweak *num_frames / fps / max_duration*, and run analysis. The video will be passed to the model as a data: URL.")
+                gr.Markdown("Upload a video, set *num_frames / fps / max_duration*, and run analysis. The app samples the video to these settings and sends it to the model as a data: URL. The model server may sample fewer frames under its own limits.")
                 video_in.render()                
                 video_prompt.render()
 
                 with gr.Row():
                     model_override = gr.Textbox(label="Model ID (override, optional)", placeholder="e.g. Qwen/Qwen2.5-VL-32B-Instruct-AWQ")
                 with gr.Row():
-                    num_frames = gr.Slider(1, 10000, value=7860, step=1, label="num_frames (hard cap on extracted frames)")
+                    num_frames = gr.Slider(1, 512, value=64, step=1, label="num_frames (most frames to send, spread evenly over the clip)")
                 with gr.Row():
-                    fps = gr.Slider(1, 60, value=1, step=1, label="fps (target extraction FPS)")
-                    max_duration = gr.Slider(1, 100000, value=10000, step=1, label="max_duration (seconds cap)")
+                    fps = gr.Slider(1, 60, value=1, step=1, label="fps (frames per second to sample)")
+                    max_duration = gr.Slider(1, 3600, value=600, step=1, label="max_duration (seconds to analyse, from the start)")
 
                 run_video_btn = gr.Button("Analyse Video", variant="primary")
                 
