@@ -40,18 +40,13 @@ This demo is ideal for customers looking to analyse images, video, or live strea
 
 ### 1. Model Deployment in HPE PCAI
 
-This application requires a Vision Language Model to be deployed and running within the HPE Machine Learning Inference Software Tool. The prompt is specifically tailored for:
-
-*   **Model:** `Qwen/Qwen2.5-VL-32B-Instruct-AWQ`
-*   **Details:** [Hugging Face Model Card](https://huggingface.co/Qwen/Qwen2.5-VL-32B-Instruct-AWQ)
+This application needs a Vision Language Model (VLM) served through an OpenAI-compatible chat completions API, for example a vLLM or NVIDIA NIM deployment in HPE Machine Learning Inference Software (MLIS), or a gateway such as LiteLLM in front of one. Image and RTSP analysis send images; video analysis sends a sampled video as `video_url` content, so pick a model that accepts video if you want that tab.
 
 Before deploying this application, you must:
-1.  Deploy the `Qwen/Qwen2.5-VL-32B-Instruct-AWQ` model in your HPE PCAI environment.
-2. Set the HUGGINGFACE_HUB_TOKEN in the Advanced Packaged Model Tab. 
-2. When creating the packaged model, here is the configuration to have this model deployed on a single L40s:
-`--model Qwen/Qwen2.5-VL-32B-Instruct-AWQ --port 8080 --quantization awq_marlin --dtype float16 \ --max-model-len 8192 --max-num-seqs 1` 
-2.  Obtain the **API Base URL** from MLIS (the model's inference endpoint).
-3.  Generate and copy an **API Key** from MLIS for accessing the model.
+1.  Deploy a VLM in your HPE PCAI environment. As an example, the prompts were first tuned with `Qwen/Qwen2.5-VL-32B-Instruct-AWQ` ([model card](https://huggingface.co/Qwen/Qwen2.5-VL-32B-Instruct-AWQ)), packaged in MLIS with the `HUGGINGFACE_HUB_TOKEN` set in the Advanced tab and these arguments on a single L40S:
+    `--model Qwen/Qwen2.5-VL-32B-Instruct-AWQ --port 8080 --quantization awq_marlin --dtype float16 --max-model-len 8192 --max-num-seqs 1`
+2.  Obtain the **API Base URL** of the model's endpoint (from MLIS, or from your gateway).
+3.  Generate and copy an **API Key** for that endpoint.
 
 You will need the API Base URL and API Key to configure the application after it is deployed.
 
@@ -81,10 +76,11 @@ The application code is packaged into a Docker image which will be pulled by you
     docker login
     ```
 
-3.  Login to your dockerhub account to enable uploading docker images. Modify the `IMAGE_NAME="mendeza/vision_analytics_demo"` to your dockerhub username. Then you can execute the build script. This will build the image for the `linux/amd64` platform and push it to the registry. The default image name is `mendeza/vision_analytics_demo:1.0.0`.
+3.  Change `IMAGE_NAME="erdincka/vision_analytics_demo"` in `build.sh` to your own registry account, then run the build script with the image tag. It builds the image for the `linux/amd64` platform and pushes it with that tag and `latest`.
     ```bash
-    bash build.sh
+    bash build.sh 1.0.6
     ```
+    If you use your own image, set `image.repository` and `image.tag` in `helm/values.yaml` to match.
 
 ### Step 2: Package the Helm Chart
 
@@ -95,12 +91,12 @@ The Helm chart contains all the Kubernetes manifests needed to run the applicati
     cd helm/
     ```
 
-2.  (Optional) Package the chart into a `.tgz` archive.
+2.  The packaged chart for the current release is already in this folder: [`helm/vision-analytics-0.1.6.tgz`](helm/vision-analytics-0.1.6.tgz). To package your own changes instead, run:
     ```bash
     helm package .
     ```
 
-3.  This command will create a file named `vision-analytics-chart-0.1.3.tgz`. This is the file you will upload to PCAI.
+3.  This creates `vision-analytics-<version>.tgz`, with the version from `Chart.yaml`. This is the file you will upload to PCAI.
 
 ### Step 3: Deploy via HPE Private Cloud AI
 
@@ -115,7 +111,7 @@ The Helm chart contains all the Kubernetes manifests needed to run the applicati
         *   Click **Next**.
 
     *   **Step 2: Upload Package**
-        *   Upload the `vision-analytics-chart-0.1.3.tgz` file you created in the previous step.
+        *   Upload the `vision-analytics-0.1.6.tgz` file (or the one you packaged in the previous step).
         *   Choose a **Namespace** to deploy into (e.g., your project's namespace).
         *   Click **Next**.
 
@@ -155,6 +151,7 @@ Before you can analyse frames, you must configure the VLM endpoint:
 2.  Upload a video file, and  configure the prompt to specify what you want the vision language model to do
     * default prompt: `Did a car run a redlight in this video?`
     * The best prompt to use for [video](assets/fmv_clip.mp4) is: `Describe the vehicles in this video.`
+3.  (Optional) Set **num_frames**, **fps** and **max_duration**. The app samples the video with ffmpeg to these settings before sending it, so they work with vLLM servers that reject per-request `media_io_kwargs` (recent releases such as vLLM 0.31, unless started with `--trust-request-mm-kwargs`). The model server may still sample fewer frames under its own limits.
 5.  When the model completes its analysis, it will send its response to the **LLM Response** field
 
 ### Analyzing a Stream

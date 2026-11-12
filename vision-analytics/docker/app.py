@@ -21,6 +21,8 @@ import tempfile
 import hashlib
 import subprocess
 
+from video_sampling import prepare_video_for_model
+
 # ==================================
 # RTSP Server State
 # ==================================
@@ -40,10 +42,15 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(
 # ==================================
 CONFIG_DIR = "/app/config"
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
+# The file browsers are limited to this folder, and it is the only folder Gradio may serve
+# files from (besides its own cache). Never widen this to "/": Gradio would then serve any
+# file in the container to anyone who can reach the app, including CONFIG_FILE (which holds
+# the API key) and the pod's service-account token.
+FILE_BROWSER_ROOT = "/mnt"
 active_openai_api_key = os.getenv("OPENAI_API_KEY", "YOUR_API_KEY")
 active_openai_api_base = os.getenv("OPENAI_API_BASE", "YOUR_API_BASE_URL")
 active_ignore_tls = os.getenv("IGNORE_TLS", "false").lower() == "true"
-active_root_dir = os.getenv("ROOT_DIR", "/mnt").rstrip("/")
+active_root_dir = os.getenv("ROOT_DIR", FILE_BROWSER_ROOT).rstrip("/")
 client: Optional[OpenAI] = None
 model_id: Optional[str] = None
 current_config_status_message = "Config not yet initialized."
@@ -144,11 +151,10 @@ def initialize_or_update_openai_client(api_key_to_use: str, api_base_to_use: str
         client = temp_client
         model_id = chosen
         
-        # Enforce sandbox: ensure root_dir is within /mnt and normalised
+        # Enforce sandbox: ensure root_dir is within FILE_BROWSER_ROOT and normalised
         root_dir = os.path.normpath(root_dir)
-        if not root_dir.startswith("/mnt"):
-            root_dir = os.path.join("/mnt", root_dir.lstrip("/"))
-        root_dir = os.path.normpath(root_dir)
+        if root_dir != FILE_BROWSER_ROOT and not root_dir.startswith(FILE_BROWSER_ROOT + "/"):
+            root_dir = os.path.normpath(os.path.join(FILE_BROWSER_ROOT, root_dir.lstrip("/")))
         
         active_openai_api_key = api_key_to_use
         active_openai_api_base = api_base_to_use
@@ -256,7 +262,7 @@ def get_current_config_ui():
         gr.update(label=f"Image files in {active_root_dir}", root_dir=active_root_dir),
         gr.update(label=f"Video files in {active_root_dir}", root_dir=active_root_dir),
         gr.update(label=f"RTSP Sample files in {active_root_dir}", root_dir=active_root_dir),
-        gr.update(root_dir="/mnt" if os.path.exists("/mnt") else os.getcwd())
+        gr.update(root_dir=FILE_BROWSER_ROOT if os.path.exists(FILE_BROWSER_ROOT) else os.getcwd())
     )
 
 def get_ui_validation_updates():
@@ -444,60 +450,27 @@ def video_to_data_url(path: str) -> str:
     return f"data:{mime};base64,{b64}"
 
 
-def normalize_video_for_gpu(input_path: str) -> str:
-    """Normalize video to a standard format (H.264, yuv420p) for GPU compatibility."""
-    if not input_path or not os.path.exists(input_path):
-        return input_path
-        
-    temp_dir = tempfile.gettempdir()
-    # Create a stable output path based on file path, size, and modification time to avoid redundant conversions
-    # and ensure fresh normalization if the file changes even with the same name.
-    file_stat = os.stat(input_path)
-    cache_key = f"{input_path}_{file_stat.st_mtime}_{file_stat.st_size}"
-    path_hash = hashlib.md5(cache_key.encode()).hexdigest()[:8]
-    output_path = os.path.join(temp_dir, f"gpu_compat_{path_hash}.mp4")
-    
-    # If already normalized and exists, return it
-    if os.path.exists(output_path):
-        return output_path
-        
-    logging.info(f"Normalizing video for GPU compatibility (vLLM/PCAI): {input_path}")
-    try:
-        ffmpeg_path = shutil.which("ffmpeg") or "/usr/bin/ffmpeg"
-        # Command to ensure H.264, yuv420p (8-bit), remove audio to save bandwidth, ultrafast for low latency
-        cmd = [
-            ffmpeg_path, "-y", "-i", input_path,
-            "-c:v", "libx264", "-pix_fmt", "yuv420p",
-            "-an", "-preset", "ultrafast", "-crf", "25",
-            output_path
-        ]
-        # Run with timeout to prevent hangs
-        subprocess.run(cmd, check=True, capture_output=True, timeout=120)
-        logging.info(f"Normalization successful: {output_path}")
-        return output_path
-    except Exception as e:
-        logging.warning(f"Video normalization failed (will try original): {e}")
-        return input_path
-
-
 def analyse_video_with_vllm(
     video_input: Any,
     prompt: str,
     model_override: str,
     num_frames: int,
-    fps: int,
-    max_duration: int,
+    fps: float,
+    max_duration: float,
 ) -> Tuple[str, str]:
     """
-    Analyse a video using the Vision Language Model via vLLM's media interface.
-    
+    Analyse a video with the Vision Language Model.
+
+    The app samples the frames itself (see video_sampling.prepare_video_for_model) and sends the result as a
+    data URL. It sends no per-request media_io_kwargs, which recent vLLM releases reject by default.
+
     Args:
         video_input: The video source (path or Gradio input).
         prompt: The user prompt for analysis.
         model_override: Optional model ID to override the default.
-        num_frames: Maximum number of frames to extract.
-        fps: Target frames per second for extraction.
-        max_duration: Maximum duration in seconds to consider.
+        num_frames: The most frames to send.
+        fps: The frame rate to sample at.
+        max_duration: The most seconds to analyse, from the start of the video.
         
     Returns:
         A tuple of (text response from the model, duration string).
@@ -511,9 +484,11 @@ def analyse_video_with_vllm(
     if not vid_path or not os.path.exists(vid_path):
         return "Please upload a valid video file.", ""
 
+    if int(num_frames) < 1 or float(fps) <= 0 or float(max_duration) <= 0:
+        return "num_frames, fps and max_duration must all be above zero.", ""
+
     try:
-        # Normalize for GPU compatibility before creating data URL (fixes NVCV INVALID_DATA_TYPE)
-        vid_path = normalize_video_for_gpu(vid_path)
+        vid_path = prepare_video_for_model(vid_path, int(num_frames), float(fps), float(max_duration))
         data_url = video_to_data_url(vid_path)
         chosen_model = model_override.strip() or (model_id or "")
         if not chosen_model:
@@ -539,15 +514,6 @@ def analyse_video_with_vllm(
             ],
             temperature=0.1,
             extra_headers={"Cache-Control": "no-cache"},
-            extra_body={
-                "media_io_kwargs": {
-                    "video": {
-                        "num_frames": int(num_frames),
-                        "fps": int(fps),
-                        "max_duration": int(max_duration),
-                    }
-                }
-            },
         )
         duration = time.time() - start_time
         return resp.choices[0].message.content, f"⏱️ {duration:.2f}s"
@@ -868,7 +834,7 @@ def build_ui():
             Deliver rich, real-time visual understanding across **Images**, **Videos**, and **RTSP live streams**—all running on your enterprise‑grade **[HPE Private Cloud AI](https://www.hpe.com/us/en/private-cloud-ai.html)** platform.
             **What you can do here**
             - **Image Understanding:** Select/Upload an image, preview it, and analyse with your prompt.
-            - **Video Understanding:** Select/Upload a video and control extraction knobs (**num_frames**, **fps**, **max_duration**). The app passes your video to PCAI's served endpoint using a secure data URL and vLLM media I/O hints.
+            - **Video Understanding:** Select/Upload a video and control extraction knobs (**num_frames**, **fps**, **max_duration**). The app samples your video to those settings and passes it to PCAI's served endpoint as a data URL.
             - **RTSP Stream:** View and analyse live network streams; capture a frame and ask questions in natural language.
             """
         )
@@ -881,10 +847,10 @@ def build_ui():
                 Open the `Settings` tab and configure your endpoints.
 
                 1. Copy and paste your PCAI endpoint and API token. Endpoint URL should end with `/v1`.
-                2. (Optional) Set **Preferred Model ID** to `Qwen/Qwen2.5-VL-32B-Instruct-AWQ`.
+                2. (Optional) Set **Preferred Model ID** to the vision language model to use, if the endpoint serves more than one.
                 3. Use the tabs to run analyses.
 
-                **Recommended model:** `Qwen/Qwen2.5-VL-32B-Instruct-AWQ` deployed via PCAI for the best experience.
+                **Model:** any vision language model behind an OpenAI-compatible API, deployed via PCAI. Video analysis needs one that accepts video input.
                 """
             )
             gr.Image("assets/SolutionOverview.png", label="Solution Overview")
@@ -909,7 +875,7 @@ def build_ui():
                 
                 with gr.Accordion("Browse Root Directory", open=False):
                     root_explorer = gr.FileExplorer(
-                        root_dir="/mnt" if os.path.exists("/mnt") else os.getcwd(),
+                        root_dir=FILE_BROWSER_ROOT if os.path.exists(FILE_BROWSER_ROOT) else os.getcwd(),
                         file_count="single",
                         label="Select Root Directory (Sandboxed to /mnt)",
                         ignore_glob="**/.*"
@@ -1041,17 +1007,17 @@ def build_ui():
                     outputs=[video_in, video_prompt]
                 )
 
-                gr.Markdown("Upload a video, tweak *num_frames / fps / max_duration*, and run analysis. The video will be passed to the model as a data: URL.")
+                gr.Markdown("Upload a video, set *num_frames / fps / max_duration*, and run analysis. The app samples the video to these settings and sends it to the model as a data: URL. The model server may sample fewer frames under its own limits.")
                 video_in.render()                
                 video_prompt.render()
 
                 with gr.Row():
-                    model_override = gr.Textbox(label="Model ID (override, optional)", placeholder="e.g. Qwen/Qwen2.5-VL-32B-Instruct-AWQ")
+                    model_override = gr.Textbox(label="Model ID (override, optional)", placeholder="Model ID as listed by the endpoint")
                 with gr.Row():
-                    num_frames = gr.Slider(1, 10000, value=7860, step=1, label="num_frames (hard cap on extracted frames)")
+                    num_frames = gr.Slider(1, 512, value=64, step=1, label="num_frames (most frames to send, spread evenly over the clip)")
                 with gr.Row():
-                    fps = gr.Slider(1, 60, value=1, step=1, label="fps (target extraction FPS)")
-                    max_duration = gr.Slider(1, 100000, value=10000, step=1, label="max_duration (seconds cap)")
+                    fps = gr.Slider(1, 60, value=1, step=1, label="fps (frames per second to sample)")
+                    max_duration = gr.Slider(1, 3600, value=600, step=1, label="max_duration (seconds to analyse, from the start)")
 
                 run_video_btn = gr.Button("Analyse Video", variant="primary")
                 
@@ -1215,7 +1181,8 @@ demo = build_ui()
 
 if __name__ == "__main__":
     demo.launch(
-        server_name="0.0.0.0", 
-        server_port=7860, 
-        allowed_paths=["/"],
+        server_name="0.0.0.0",
+        server_port=7860,
+        allowed_paths=[FILE_BROWSER_ROOT],
+        blocked_paths=[CONFIG_DIR, os.path.abspath("config.json")],
     )
