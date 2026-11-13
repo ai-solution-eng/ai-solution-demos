@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="auto">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,12 +7,17 @@
 <title>Multimodal RAG — HPE Dataset Manager</title>
 <script>
   (function() {
-    var t = localStorage.getItem('theme') || 'light';
-    if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+    // Pre-paint theme resolver — Auto (default) / Light / Dark, applied before
+    // first paint so there is no flash of the wrong scheme.
+    var t = 'auto';
+    try { t = localStorage.getItem('theme') || 'auto'; } catch (e) {}
+    if (t !== 'light' && t !== 'dark') t = 'auto';
+    document.documentElement.setAttribute('data-theme', t);
   })();
 </script>
 <style>
-  :root, [data-theme="light"] {
+  :root, :root[data-theme="light"] {
+    color-scheme: light;
     --bg: #f4f6f9;
     --surface: #ffffff;
     --surface-2: #eef0f5;
@@ -26,7 +31,26 @@
     --yellow: #d97706;
     --radius: 6px;
   }
-  [data-theme="dark"] {
+  @media (prefers-color-scheme: dark) {
+    :root[data-theme="auto"] {
+      /* Auto follows the OS. DARK VARS — KEEP IN SYNC with the block below. */
+      color-scheme: dark;
+      --bg: #0b0e14;
+      --surface: #161a24;
+      --surface-2: #1e2432;
+      --border: #2a3142;
+      --text: #e0e4ed;
+      --text-muted: #8891a8;
+      --accent: #01a982;
+      --accent-hover: #02c99a;
+      --green: #34d399;
+      --red: #f87171;
+      --yellow: #fbbf24;
+    }
+  }
+  :root[data-theme="dark"] {
+    /* Pinned by the user. DARK VARS — KEEP IN SYNC with the block above. */
+    color-scheme: dark;
     --bg: #0b0e14;
     --surface: #161a24;
     --surface-2: #1e2432;
@@ -89,6 +113,11 @@
     color: var(--text); font-size: 0.9rem; font-family: inherit;
   }
   input:focus, textarea:focus { outline: none; border-color: var(--accent); }
+  /* Checkboxes/radios must not inherit the text-input box model above: the
+     100% width + 10px padding made the .sel-check checkboxes in the Access
+     tab balloon to the padded-button height of their flex row (the "giant
+     blue checkbox" glitch on locked datasets). Text fields keep the rule. */
+  input[type="checkbox"], input[type="radio"] { width: auto; padding: 0; margin: 0; }
   textarea { resize: vertical; min-height: 80px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.85rem; }
   .btn {
     display: inline-flex; align-items: center; gap: 6px;
@@ -206,21 +235,16 @@
   .reader-body { flex: 1; overflow-y: auto; padding: 20px 24px; }
   .reader-body pre { white-space: pre-wrap; word-break: break-all; font-size: .9rem; line-height: 1.5; margin: 0; color: var(--text); }
 
-  .theme-toggle {
-    display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;
-    font-size: .75rem; color: var(--text-muted);
+  .theme-seg {
+    display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius);
+    overflow: hidden; flex-shrink: 0;
   }
-  .theme-toggle-track {
-    position: relative; width: 36px; height: 20px; border-radius: 10px;
-    background: var(--border); transition: background .2s; flex-shrink: 0;
+  .theme-seg button {
+    border: none; background: transparent; color: var(--text-muted);
+    font-family: inherit; font-size: .72rem; line-height: 1.4; padding: 4px 10px; cursor: pointer;
   }
-  .theme-toggle-thumb {
-    position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
-    border-radius: 50%; background: var(--accent); transition: transform .2s;
-    box-shadow: 0 1px 3px rgba(0,0,0,.25);
-  }
-  [data-theme="dark"] .theme-toggle-track { background: var(--accent); }
-  [data-theme="dark"] .theme-toggle-thumb { transform: translateX(16px); background: #fff; }
+  .theme-seg button.on { background: var(--accent); color: #fff; font-weight: 600; }
+  .theme-seg button:not(.on):hover { color: var(--text); }
   /* --- D23 SPA shell additions (ported from access.html where noted) --- */
   .header-links { margin-left: auto; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: flex-end; }
   #app-tabs { gap: 2px; }
@@ -413,11 +437,10 @@
     <span id="identity-chip" style="display:none;align-items:center;gap:8px;font-size:.78rem;color:var(--text-muted)"></span>
     <a href="#" id="use-key-link" onclick="openKeyModal(event)" style="display:none;color:var(--text-muted);font-size:.78rem;text-decoration:none">Use an API key</a>
     <button class="btn btn-outline btn-sm" id="signout-btn" onclick="signOut()" style="display:none" title="End this session on this device">Sign out</button>
-    <div class="theme-toggle" onclick="toggleTheme()" title="Toggle dark/light mode">
-      <span id="theme-label">Light</span>
-      <div class="theme-toggle-track">
-        <div class="theme-toggle-thumb"></div>
-      </div>
+    <div class="theme-seg" role="group" aria-label="Theme">
+      <button type="button" data-theme-btn="auto">Auto</button>
+      <button type="button" data-theme-btn="light">Light</button>
+      <button type="button" data-theme-btn="dark">Dark</button>
     </div>
   </div>
   </div>
@@ -667,7 +690,7 @@
     <div class="card-header">
       <h2>Upload History</h2>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <input type="text" id="history-filter" placeholder="Filter by dataset or file..." style="width:240px;font-size:.8rem;padding:6px 10px" oninput="loadUploadHistory()">
+        <input type="text" id="history-filter" placeholder="Filter by dataset or file..." style="width:240px;font-size:.8rem;padding:6px 10px" oninput="scheduleHistoryFilter()">
         <button class="btn btn-outline btn-sm" onclick="loadUploadHistory()">Refresh</button>
         <button class="btn btn-outline btn-sm" onclick="clearUploadHistory()">Clear</button>
       </div>
@@ -726,6 +749,17 @@
         </tbody>
       </table>
       <span id="ds-contextual-cost" style="display:none;font-size:.8rem;color:var(--text-muted);margin-left:24px"></span>
+    </div>
+    <div class="form-group" style="margin-top:10px">
+      <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-weight:400" title="Optional per-dataset chunk sizes, in TOKENS. Leave blank to inherit the embedder model config (the default). Affects future uploads only - Recreate to re-chunk existing files.">
+        Chunking overrides (optional) — blank inherits the model config
+      </label>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <input type="number" id="ds-chunk-size" step="1" min="1" placeholder="text size" title="Tokens per chunk for plain text/Markdown. Blank = embedder model default." style="width:110px">
+        <input type="number" id="ds-chunk-overlap" step="1" min="0" placeholder="text overlap" title="Overlap tokens between text chunks. Blank = embedder model default." style="width:110px">
+        <input type="number" id="ds-code-chunk-size" step="1" min="1" placeholder="code size" title="Tokens per chunk for code/JSON/XML/YAML. Blank = model code default." style="width:110px">
+        <input type="number" id="ds-code-chunk-overlap" step="1" min="0" placeholder="code overlap" title="Overlap tokens between code chunks. Blank = model code default." style="width:110px">
+      </div>
     </div>
     <div class="form-group" style="margin-top:10px">
       <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-weight:400" title="Weighted-RRF defaults for this dataset (hybrid text search only). Rank-space tilt, NOT a score multiplier: a higher weight makes that lane's rank positions count more (trust the order, not the magnitude). Applies only when a search carries no explicit override; multimodal (vector-only) queries ignore weights. Leave blank for the global default.">
@@ -787,12 +821,18 @@
     <div class="tab-content active" id="tab-upload">
       <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
         <div class="icon">📁</div>
-        <p>Drop files here or click to browse</p>
-        <p style="font-size:.8rem;margin-top:4px">PDF, images, videos, audio, text files supported</p>
+        <p>Drop files or a folder here, or click to browse</p>
+        <p style="font-size:.8rem;margin-top:4px">PDF, images, videos, audio, text files supported · a dropped folder uploads every file inside it</p>
         <input type="file" id="file-input" multiple hidden onchange="handleFiles(this.files)">
       </div>
+      <!-- Folder intake: webkitdirectory turns this dialog into a directory
+           picker, so one gesture adds a whole tree. Kept OUTSIDE #drop-zone:
+           its click handler opens the file dialog, and a programmatic click on
+           a child input would bubble back into that handler. -->
+      <input type="file" id="folder-input" webkitdirectory multiple hidden onchange="onFolderPicked(this)">
       <div id="upload-status" style="margin-top:12px"></div>
       <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+        <button class="btn btn-outline btn-sm" id="pick-folder-btn" onclick="pickFolder()" title="Upload every file inside a folder, subfolders included (hidden entries such as .git are skipped)">📂 Upload Folder</button>
         <button id="clear-upload-btn" onclick="clearUploadList()" title="Clear the uploaded-file list below" style="display:none;font-size:.8rem;padding:4px 12px;border-radius:4px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer">✕ Clear List</button>
         <button id="retry-btn" onclick="retryFailed()" style="display:none;font-size:.8rem;padding:4px 12px;border-radius:4px;border:1px solid var(--accent);background:transparent;color:var(--accent);cursor:pointer">↻ Retry Failed</button>
       </div>
@@ -856,10 +896,11 @@
 
   <!-- Selected dataset info -->
   <div class="card" id="selected-info" style="display:none">
-    <div class="card-header">
-      <h2 id="selected-name"></h2>
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-outline btn-sm" onclick="showDocs()">Documents</button>
+    <div class="card-header" style="flex-direction:column;align-items:flex-start;gap:10px">
+      <h2 id="selected-name" style="margin:0"></h2>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-outline btn-sm" onclick="toggleDocList()">Documents</button>
+        <button class="btn btn-outline btn-sm" onclick="toggleDatasetSettings()" title="Show or hide the dataset configuration panel (ingest flags, RRF defaults, visibility)">Configuration</button>
         <button class="btn btn-outline btn-sm" onclick="recreateDataset()" title="Drops the indexed vectors and re-embeds the original files from disk with the currently configured embedder">Recreate</button>
         <button class="btn btn-outline btn-sm" onclick="downloadBackup()" title="Download the full dataset backup (.tar.gz: metadata + documents + files)">Backup</button>
         <button class="btn btn-outline btn-sm" onclick="downloadDocuments('md')" title="Download every document in this dataset as one readable Markdown file (no binary files; scripts can also use ?format=jsonl)">Download Docs</button>
@@ -872,11 +913,16 @@
         style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:4px;background:var(--surface-2);color:var(--text);font-size:.85rem">
       <button class="btn btn-primary btn-sm" onclick="saveDescription()">Save</button>
     </div>
+    <!-- Documents list (showDocs) — restored 2026-10-15: the div was dropped in the
+         distiller-integration snapshot while showDocs() kept referencing it, so
+         the Documents button silently no-op'd. -->
+    <div id="doc-list" style="margin-top:12px"></div>
     <!-- D23 (UX, table form 2026-10): dataset settings as aligned columns —
      control | state | meaning — three groups, one Save button.
      saveDatasetAll() applies the three PATCHes in order; per-section
      failures are named in one combined result line. -->
-    <div style="margin-top:12px;border:1px solid var(--border);border-radius:6px;padding:12px 14px;background:var(--surface-2)">
+    <!-- 2026-10-15: collapsible — hidden by default (it pushed the documents list far below the fold); toggled by the header Configuration button. -->
+    <div id="dataset-settings-panel" style="display:none;margin-top:12px;border:1px solid var(--border);border-radius:6px;padding:12px 14px;background:var(--surface-2)">
       <div style="font-size:.78rem;font-weight:600;color:var(--text-muted);margin-bottom:2px;letter-spacing:.03em">DATASET SETTINGS</div>
       <div style="font-size:.72rem;color:var(--text-muted);margin-bottom:10px">Ingest rows affect <b>future uploads</b> only; RRF and Public apply immediately.</div>
 
@@ -902,6 +948,28 @@
             <td style="padding:6px 0;white-space:nowrap"><label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="edit-contextual" title="Contextual retrieval (ingest-time document context per chunk) for NEW uploads to this dataset. Affects new ingests only - Recreate to re-contextualize existing files." style="margin:0;vertical-align:middle">Contextual retrieval</label></td>
             <td style="padding:6px 12px;color:var(--text);font-weight:500">Chunk context</td>
             <td style="padding:6px 0;color:var(--text-muted);font-size:.78rem">document context per chunk — Recreate applies retroactively</td>
+          </tr>
+
+          <tr><td colspan="3" style="padding:10px 0 4px;font-weight:600;border-bottom:1px solid var(--border)">Chunking <span style="font-weight:400;color:var(--text-muted);font-size:.72rem">— blank = inherit the model config · Recreate applies retroactively</span></td></tr>
+          <tr>
+            <td style="padding:6px 0;white-space:nowrap"><label style="display:inline-flex;align-items:center;gap:8px"><span style="min-width:120px">Chunk size</span><input type="number" id="edit-chunk-size" step="1" min="1" placeholder="inherit" title="Tokens per chunk for plain text/Markdown in THIS dataset. Blank inherits the embedder model default. Affects NEW uploads only - Recreate to re-chunk existing files." style="width:90px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface-2);color:var(--text);font-size:.85rem"></label></td>
+            <td style="padding:6px 12px;color:var(--text);font-weight:500">Text chunk size</td>
+            <td style="padding:6px 0;color:var(--text-muted);font-size:.78rem">tokens per chunk for text/Markdown · blank = model default</td>
+          </tr>
+          <tr>
+            <td style="padding:6px 0;white-space:nowrap"><label style="display:inline-flex;align-items:center;gap:8px"><span style="min-width:120px">Chunk overlap</span><input type="number" id="edit-chunk-overlap" step="1" min="0" placeholder="inherit" title="Overlap tokens between consecutive text chunks. Blank inherits the embedder model default. Clamped to 80% of the chunk size." style="width:90px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface-2);color:var(--text);font-size:.85rem"></label></td>
+            <td style="padding:6px 12px;color:var(--text);font-weight:500">Text overlap</td>
+            <td style="padding:6px 0;color:var(--text-muted);font-size:.78rem">overlap between chunks · clamped to 80% of chunk size</td>
+          </tr>
+          <tr>
+            <td style="padding:6px 0;white-space:nowrap"><label style="display:inline-flex;align-items:center;gap:8px"><span style="min-width:120px">Code chunk size</span><input type="number" id="edit-code-chunk-size" step="1" min="1" placeholder="inherit" title="Tokens per chunk for code/JSON/XML/YAML in THIS dataset. Blank inherits the model code_chunk_size (typically 8192, so functions stay intact)." style="width:90px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface-2);color:var(--text);font-size:.85rem"></label></td>
+            <td style="padding:6px 12px;color:var(--text);font-weight:500">Code chunk size</td>
+            <td style="padding:6px 0;color:var(--text-muted);font-size:.78rem">code/JSON/XML/YAML · blank = model code default</td>
+          </tr>
+          <tr>
+            <td style="padding:6px 0;white-space:nowrap"><label style="display:inline-flex;align-items:center;gap:8px"><span style="min-width:120px">Code overlap</span><input type="number" id="edit-code-chunk-overlap" step="1" min="0" placeholder="inherit" title="Overlap tokens between consecutive code chunks. Blank inherits the model code_chunk_overlap (typically 512)." style="width:90px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface-2);color:var(--text);font-size:.85rem"></label></td>
+            <td style="padding:6px 12px;color:var(--text);font-weight:500">Code overlap</td>
+            <td style="padding:6px 0;color:var(--text-muted);font-size:.78rem">overlap between code chunks · blank = model code default</td>
           </tr>
 
           <tr><td colspan="3" style="padding:10px 0 4px;font-weight:600;border-bottom:1px solid var(--border)">Reciprocal Rank Fusion (RRF) <span style="font-weight:400;color:var(--text-muted);font-size:.72rem">— hybrid search defaults · query-time, immediate</span></td></tr>
@@ -1109,10 +1177,24 @@ async function createDataset() {
   if (denseEl && denseEl.value.trim() !== '') rrf.dense_weight = parseFloat(denseEl.value);
   if (sparseEl && sparseEl.value.trim() !== '') rrf.sparse_weight = parseFloat(sparseEl.value);
   if (kEl && kEl.value.trim() !== '') rrf.k = parseInt(kEl.value, 10);
+  // Per-dataset chunk overrides: blank fields are OMITTED entirely (not sent
+  // as null), so the created dataset simply inherits the embedder model —
+  // the same meta shape as every dataset created before this feature.
+  const chunk = {};
+  for (const [elId, key] of [
+    ['ds-chunk-size', 'chunk_size'],
+    ['ds-chunk-overlap', 'chunk_overlap'],
+    ['ds-code-chunk-size', 'code_chunk_size'],
+    ['ds-code-chunk-overlap', 'code_chunk_overlap'],
+  ]) {
+    const el = document.getElementById(elId);
+    if (el && el.value.trim() !== '') chunk[key] = parseInt(el.value, 10);
+  }
   input.disabled = true;
   try {
     const body = { name, caption_with_asr: captionWithAsr, caption_with_vlm: captionWithVlm, keep_originals: keepOriginals, ocr: ocr, contextual: contextual };
     if (Object.keys(rrf).length) body.rrf = rrf;
+    if (Object.keys(chunk).length) body.chunk = chunk;
     if (desc) body.description = desc;
     if (pw) body.password = pw;
     await api('POST', '/api/datasets', body);
@@ -1121,7 +1203,10 @@ async function createDataset() {
     document.getElementById('ds-desc').value = '';
     document.getElementById('ds-password').value = '';
     for (const el of [denseEl, sparseEl, kEl]) { if (el) el.value = ''; }
-    await listDatasets();
+    for (const id of ['ds-chunk-size', 'ds-chunk-overlap', 'ds-code-chunk-size', 'ds-code-chunk-overlap']) {
+      const el = document.getElementById(id); if (el) el.value = '';
+    }
+    await refreshVisibleLists();
     selectDataset(name);
   } catch (e) {
     toast(e.message, 'error');
@@ -1194,6 +1279,69 @@ async function listDatasets() {
   if (typeof renderAdminDatasets === 'function' && state.isAdmin) renderAdminDatasets();
 }
 
+// -----------------------------------------------------------------------
+// List refresh (2026-11 efficiency fix, defect 1)
+// -----------------------------------------------------------------------
+// Mutations used to fire BOTH listDatasets() and refreshDatasets() — three
+// fetches (operator list + access catalog + identity selections) for one
+// click — including the list the user cannot see.  refreshVisibleLists()
+// refreshes ONLY the list actually on screen and marks the hidden one(s)
+// stale; switchAppTab() re-fetches a stale list when it comes on screen,
+// so whatever the user is looking at never goes stale.
+let _datasetsListStale = false;   // operator/admin list hidden at last mutation
+let _accessListStale = false;     // access catalog hidden at last mutation
+
+function _appViewVisible(viewId) {
+  const el = document.getElementById(viewId);
+  return !!(el && el.style.display !== 'none');
+}
+
+// Fire-and-forget re-fetch of the operator list with the same auth handling
+// as boot (401/403 → sign-in; anything else → toast).  The stale flag is
+// held TRUE until the fetch actually succeeds — a failed re-fetch must leave
+// the list marked stale so the next tab switch retries (2026-11 review fix).
+function _reloadDatasetsListSafe() {
+  _datasetsListStale = true;
+  listDatasets().then(function () {
+    _datasetsListStale = false;
+  }).catch(function (e) {
+    if (e.status === 401 || e.status === 403) { handleAuthRejected('Your credentials were rejected by the server'); return; }
+    toast(e.message || 'Could not load datasets', 'error');
+  });
+}
+
+async function refreshVisibleLists() {
+  if (_appViewVisible('view-admin') || _appViewVisible('view-datasets')) {
+    // The admin list renders from the SAME `datasets` array (see
+    // renderAdminDatasets and listDatasets' tail), so one operator-list
+    // fetch covers both views.
+    // 2026-11 review fix: a failed refetch must NOT (a) propagate into the
+    // caller's try/catch — the mutation already succeeded server-side, and
+    // re-toasting its FETCH error would read as a failed mutation — or
+    // (b) clear the stale flag while the data is stale.  Mark stale up
+    // front, clear only on success, and swallow the error the way boot and
+    // _reloadDatasetsListSafe do (401/403 → sign-in, else → toast).
+    _datasetsListStale = true;
+    try {
+      await listDatasets();
+      _datasetsListStale = false;
+    } catch (e) {
+      if (e.status === 401 || e.status === 403) { handleAuthRejected('Your credentials were rejected by the server'); return; }
+      toast(e.message || 'Could not refresh the dataset list', 'error');
+    }
+  } else {
+    _datasetsListStale = true;
+  }
+  if (_appViewVisible('view-access')) {
+    // refreshDatasets never rejects (it toasts 401/403 internally) but
+    // reports success, so a failed load leaves the flag stale for the
+    // next tab switch instead of claiming a fresh list.
+    _accessListStale = !(await refreshDatasets());
+  } else {
+    _accessListStale = true;
+  }
+}
+
 async function selectDataset(name) {
   selectedDataset = name;
   // D23 SPA: scope to the workspace list — the Access/Admin tabs render
@@ -1242,7 +1390,26 @@ async function selectDataset(name) {
   if (eDense) eDense.value = storedRrf.dense_weight !== undefined && storedRrf.dense_weight !== null ? storedRrf.dense_weight : '';
   if (eSparse) eSparse.value = storedRrf.sparse_weight !== undefined && storedRrf.sparse_weight !== null ? storedRrf.sparse_weight : '';
   if (eK) eK.value = storedRrf.k !== undefined && storedRrf.k !== null ? storedRrf.k : '';
+  // Per-dataset chunk overrides: show the stored values; BLANK means the
+  // dataset inherits the embedder model config (the default for every
+  // dataset that never set one).
+  const storedChunk = (d.chunk && typeof d.chunk === 'object') ? d.chunk : {};
+  for (const [elId, key] of [
+    ['edit-chunk-size', 'chunk_size'],
+    ['edit-chunk-overlap', 'chunk_overlap'],
+    ['edit-code-chunk-size', 'code_chunk_size'],
+    ['edit-code-chunk-overlap', 'code_chunk_overlap'],
+  ]) {
+    const el = document.getElementById(elId);
+    if (el) el.value = storedChunk[key] !== undefined && storedChunk[key] !== null ? storedChunk[key] : '';
+  }
+  // Collapsible panels (2026-10-15): a newly selected dataset starts with
+  // both the documents list and the configuration panel collapsed.
   document.getElementById('doc-list').innerHTML = '';
+  const _dl = document.getElementById('doc-list');
+  if (_dl) _dl.style.display = 'none';
+  const _sp = document.getElementById('dataset-settings-panel');
+  if (_sp) _sp.style.display = 'none';
 
   // If dataset is password-protected and we don't have a password yet, prompt
   if (d.has_password && !datasetPasswords[name]) {
@@ -1270,22 +1437,8 @@ async function downloadBackup() {
   if (!selectedDataset) return;
   const pw = datasetPasswords[selectedDataset] || '';
   const url = `/api/datasets/${selectedDataset}/export` + (pw ? `?password=${encodeURIComponent(pw)}` : '');
-  const headers = authHeaders();
-  toast('Preparing backup…');
-  try {
-    const res = await fetch(url, { headers });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const blob = await res.blob();
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `${selectedDataset}-export.tar.gz`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(a.href);
-  } catch (e) {
-    toast(e.message, 'error');
-  }
+  const headers = { ...authHeaders(), ...passwordHeader() };
+  await downloadBlob(url, headers, `${selectedDataset}-export.tar.gz`, 'Preparing backup…');
 }
 
 async function downloadDocuments(format = 'md') {
@@ -1294,20 +1447,36 @@ async function downloadDocuments(format = 'md') {
   const url = `/api/datasets/${selectedDataset}/documents/download?format=${format}`
     + (pw ? `&password=${encodeURIComponent(pw)}` : '');
   const headers = { ...authHeaders(), ...passwordHeader() };
-  toast('Preparing download…');
+  const ext = format === 'jsonl' ? 'jsonl' : 'md';
+  await downloadBlob(url, headers, `${selectedDataset}-documents.${ext}`, 'Preparing download…');
+}
+
+// Shared download path for both backup buttons (2026-10-15: the Backup button
+// surfaced raw "NetworkError when attempting to fetch resource"). A fetch that
+// the edge answers with a login redirect (expired oauth2-proxy session) dies
+// BEFORE any status code reaches this code — Firefox reports it as a bare
+// NetworkError. A top-level reload re-enters the SSO redirect chain and
+// restores the session, so guide the user there instead of showing a cryptic
+// network message.
+async function downloadBlob(url, headers, filename, preparingMsg) {
+  toast(preparingMsg);
   try {
     const res = await fetch(url, { headers });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const blob = await res.blob();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `${selectedDataset}-documents.${format === 'jsonl' ? 'jsonl' : 'md'}`;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(a.href);
   } catch (e) {
-    toast(e.message, 'error');
+    if (e instanceof TypeError) {
+      toast('Network error — your sign-in session may have expired. Reload the page to sign in again, then retry.', 'error');
+    } else {
+      toast(e.message, 'error');
+    }
   }
 }
 
@@ -1319,8 +1488,7 @@ async function deleteDataset() {
     toast(`Deleted "${selectedDataset}"`);
     selectedDataset = null;
     document.getElementById('selected-info').style.display = 'none';
-    await listDatasets();
-    refreshDatasets().catch(function () {});
+    await refreshVisibleLists();
   } catch (e) {
     toast(e.message, 'error');
   }
@@ -1344,7 +1512,7 @@ async function recreateDataset() {
       if (job.status === 'complete') {
         const n = job.result && job.result.file_count != null ? job.result.file_count : job.processed_files;
         toast(`Recreated "${selectedDataset}" (${n} file${n === 1 ? '' : 's'})`);
-        await listDatasets();
+        await refreshVisibleLists();
         await loadManageStats();
         return;
       }
@@ -1370,13 +1538,141 @@ dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-ove
 dropZone.addEventListener('drop', e => {
   e.preventDefault();
   dropZone.classList.remove('drag-over');
-  handleFiles(e.dataTransfer.files);
+  // A dropped folder arrives as a zero-byte File that looks exactly like an
+  // empty file, so the entries API is the only way to reach its contents.
+  // The entries are resolved SYNCHRONOUSLY here — a DataTransfer is only
+  // readable during the drop — and their contents are read asynchronously.
+  const { entries, loose } = _droppedItems(e.dataTransfer);
+  if (entries.length === 0) { handleFiles(e.dataTransfer.files); return; }
+  handleDroppedEntries(entries, loose).catch(err => toast(`Folder read failed: ${(err && err.message) || err}`, 'error'));
 });
+
+// -----------------------------------------------------------------------
+// Folder intake
+// -----------------------------------------------------------------------
+// A folder is expanded into its files and then handed to the ordinary upload
+// pipeline: the files still travel in the same bounded multipart batches,
+// with the same per-file progress lines, retry bookkeeping and per-file size
+// cap. Only the INTAKE differs, so a folder cannot bypass any upload guard.
+//
+// Entries nobody wants ingested are skipped, the way a shell glob would: dot
+// entries (.git, .venv, .DS_Store), Office lock files (~$report.docx) and the
+// metadata files Windows/macOS leave in every folder.
+const _FOLDER_SKIP_NAMES = new Set(['thumbs.db', 'desktop.ini']);
+// One accidental drop of a project root can hold tens of thousands of files;
+// above this count the pick is confirmed first instead of silently queueing
+// hours of embedding work.
+const _FOLDER_CONFIRM_ABOVE = 1000;
+
+function _skipFolderName(name) {
+  const lower = name.toLowerCase();
+  return name.startsWith('.') || name.startsWith('~$') || _FOLDER_SKIP_NAMES.has(lower);
+}
+
+// A directory-picker path carries the whole tree, so skip when any segment
+// BELOW the picked root is a skipped entry: project/.git/objects/... must
+// never get through, while the root the user chose is taken as-is.
+function _skipRelativePath(relPath) {
+  return relPath.split('/').slice(1).some(seg => seg !== '' && _skipFolderName(seg));
+}
+
+// Split a drop into directory entries to walk and files to take as they are.
+// Some drag sources expose an item without an entry (an image dragged out of
+// another page), and the item/file lists can disagree in length, so every file
+// the item loop did not account for is kept instead of silently dropped.
+function _droppedItems(dataTransfer) {
+  const entries = [];
+  const loose = [];
+  if (!dataTransfer) return { entries, loose };
+  const files = dataTransfer.files ? Array.from(dataTransfer.files) : [];
+  if (!dataTransfer.items || dataTransfer.items.length === 0) return { entries, loose: files };
+  let fileIndex = 0;
+  for (const item of dataTransfer.items) {
+    if (item.kind !== 'file') continue;
+    const file = files[fileIndex++];
+    const entry = typeof item.webkitGetAsEntry === 'function' ? item.webkitGetAsEntry() : null;
+    if (entry) { entries.push(entry); continue; }
+    if (file) loose.push(file);
+  }
+  for (; fileIndex < files.length; fileIndex++) loose.push(files[fileIndex]);
+  return { entries, loose };
+}
+
+function _readFileEntry(entry) {
+  return new Promise(resolve => { entry.file(resolve, () => resolve(null)); });
+}
+
+function _readDirectoryBatch(reader) {
+  return new Promise((resolve, reject) => { reader.readEntries(resolve, reject); });
+}
+
+async function _walkDirectory(entry, out) {
+  const reader = entry.createReader();
+  for (;;) {
+    // readEntries answers ONE bounded batch per call; an empty batch is EOF.
+    const batch = await _readDirectoryBatch(reader);
+    if (batch.length === 0) return;
+    for (const child of batch) {
+      if (_skipFolderName(child.name)) continue;
+      if (child.isDirectory) { await _walkDirectory(child, out); continue; }
+      if (!child.isFile) continue;
+      const file = await _readFileEntry(child);
+      if (file) out.push(file);
+    }
+  }
+}
+
+async function handleDroppedEntries(entries, loose = []) {
+  if (!selectedDataset) { toast('Select a dataset first', 'error'); return; }
+  const files = [...loose];
+  for (const entry of entries) {
+    try {
+      if (entry.isDirectory) await _walkDirectory(entry, files);
+      else if (entry.isFile) {
+        const file = await _readFileEntry(entry);
+        if (file) files.push(file);
+      }
+    } catch (err) {
+      // One unreadable entry must not discard the rest of the drop.
+      console.warn('Skipping unreadable drop entry', entry.name, err);
+    }
+  }
+  await _queueUploads(files);
+}
+
+function onFolderPicked(input) {
+  const picked = Array.from(input.files || []);
+  input.value = '';   // re-picking the same folder must fire change again
+  if (!selectedDataset) { toast('Select a dataset first', 'error'); return; }
+  _queueUploads(picked.filter(f => !_skipRelativePath(f.webkitRelativePath || f.name)))
+    .catch(err => toast(`Folder upload failed: ${(err && err.message) || err}`, 'error'));
+}
+
+function pickFolder() {
+  if (!selectedDataset) { toast('Select a dataset first', 'error'); return; }
+  document.getElementById('folder-input').click();
+}
+
+async function _queueUploads(files) {
+  if (files.length === 0) { toast('Nothing to upload — no readable files were found', 'error'); return; }
+  if (files.length > _FOLDER_CONFIRM_ABOVE
+      && !confirm(`This selection holds ${files.length.toLocaleString()} files.\n\nQueue all of them for ingestion?`)) {
+    return;
+  }
+  await handleFiles(files);
+}
 
 // Track files for retry: [{name, file, done: bool, ok: bool}]
 let _retryFiles = [];
 let _uploadSeq = 0;       // monotonic counter for unique per-file status lines
 let _uploadsActive = 0;   // in-flight batch uploads (disables Clear while busy)
+// Batches already given their ONE retry after a delete+recreate ACL race
+// (see the 403 branch in uploadBatch).  The 403 hits the whole request, so
+// the guard is keyed on the FIRST file's identity (name:size:lastModified) —
+// the batch's stable representative — which keeps the one-retry property
+// across Retry-Failed, and a genuinely permission-denied batch still
+// surfaces its error instead of looping.
+let _aclRaceRetried = new Set();
 
 function _updateRetryButton() {
   const btn = document.getElementById('retry-btn');
@@ -1414,11 +1710,26 @@ async function handleFiles(files) {
 
   _uploadsActive++;
   _updateClearButton();
+  // NOTE: _aclRaceRetried is deliberately NOT cleared here.  It is keyed on
+  // file identity so a file keeps its single retry across batches (including
+  // Retry-Failed, which re-enters this function).  A genuinely ACL-denied
+  // file therefore surfaces its error instead of looping.
 
-  // Register these files for potential retry (skip ones already tracked as done+ok)
+  // Register these files for potential retry.  Bookkeeping is keyed by
+  // FILE OBJECT IDENTITY, not name (2026-11 review fix): the name-keyed
+  // replace-on-push made two same-named files in one pick share ONE entry
+  // holding the LAST File object, so a failure on the first could never be
+  // retried (Retry would re-upload the second).  A cross-pick skip is
+  // preserved: a different object whose name already has a done+ok entry
+  // is not registered, as before.
   for (const f of fileArray) {
-    if (!_retryFiles.some(r => r.name === f.name && r.done && r.ok)) {
-      _retryFiles = _retryFiles.filter(r => r.name !== f.name);
+    const existing = _retryFiles.find(r => r.file === f);
+    if (existing) {
+      // Re-entry via Retry-Failed: the SAME File object uploads again —
+      // reset its state so a second failure re-arms the button.
+      existing.done = false;
+      existing.ok = false;
+    } else if (!_retryFiles.some(r => r.name === f.name && r.done && r.ok)) {
       _retryFiles.push({name: f.name, file: f, done: false, ok: false});
     }
   }
@@ -1465,14 +1776,47 @@ async function handleFiles(files) {
     summary.innerHTML = `Processing ${fileArray.length} file(s) · ${totalChunks.toLocaleString()} chunk(s)`;
   }
 
-  // Upload files — each file gets its own job, up to 3 concurrent
+  // Upload in BATCHES: the endpoint accepts a LIST of files in ONE
+  // multipart request and tracks them all in ONE job with per-file events,
+  // so each batch costs ONE request + ONE status poller instead of one per
+  // file.  Concurrency stays at 3 — the same number of server-side ingest
+  // pipelines as the old per-file workers.
+  //
+  // Why not one request for the entire pick?
+  //   (a) MAX_UPLOAD_BYTES (default 1 GiB) is enforced PER FILE by the
+  //       streaming guard; in one giant request a single oversized file
+  //       413s the whole request BEFORE any job exists.  With small batches
+  //       only that batch's lines go red and the rest still upload.
+  //   (b) RAG_MAX_BODY_BYTES does NOT apply to multipart (the body-cap
+  //       middleware explicitly exempts multipart/form-data — Starlette
+  //       disk-spools it), so batch size 5 exceeds no documented
+  //       total-body cap; it just bounds per-request temp staging.
+  //   (c) same-named files (below) need unambiguous per-line events.
   const _BATCH_CONCURRENCY = 3;
-  const fileQueue = [...fileArray];
+  const _UPLOAD_BATCH_SIZE = 5;
+  const _nameCounts = new Map();
+  for (const f of fileArray) _nameCounts.set(f.name, (_nameCounts.get(f.name) || 0) + 1);
+  const batches = [];
+  let _curBatch = [];
+  for (const f of fileArray) {
+    if ((_nameCounts.get(f.name) || 0) > 1) {
+      // A name that appears more than once in this pick keeps a SOLO
+      // batch: job events carry the bare filename, so two same-named files
+      // in one job could steal each other's per-line progress (the old
+      // per-file jobs made every name's events unambiguous).
+      if (_curBatch.length) { batches.push(_curBatch); _curBatch = []; }
+      batches.push([f]);
+    } else {
+      _curBatch.push(f);
+      if (_curBatch.length === _UPLOAD_BATCH_SIZE) { batches.push(_curBatch); _curBatch = []; }
+    }
+  }
+  if (_curBatch.length) batches.push(_curBatch);
+  const batchQueue = [...batches];
 
-  async function uploadOne(file) {
-    const fileKey = lineKeys.get(file);
+  async function uploadBatch(batchFiles) {
     const fd = new FormData();
-    fd.append('files', file);
+    for (const file of batchFiles) fd.append('files', file);
     const pw = datasetPasswords[selectedDataset] || '';
     if (pw) fd.append('password', pw);
 
@@ -1485,34 +1829,85 @@ async function handleFiles(files) {
       if (!resp.ok) {
         let errMsg = `HTTP ${resp.status}`;
         try { const e = await resp.json(); errMsg = e.detail || e.message || errMsg; } catch {}
-        _updateFileLine(fileKey, `<span style="color:var(--red);width:16px;flex-shrink:0">✗</span> ${escHtml(file.name)} — ${escHtml(errMsg)}`);
-        const rt = _retryFiles.find(r => r.name === file.name);
-        if (rt) { rt.done = true; rt.ok = false; }
+        // A dataset that was just deleted+recreated has a window where its
+        // name has not yet been re-established in the ACL store, so the D15
+        // middleware 403s the whole request BEFORE any file is staged.
+        // That is a TIMING artifact — the same request succeeds moments
+        // later — so retry the whole batch once instead of painting every
+        // line red.
+        //
+        // Match the D15 ACL wording SPECIFICALLY, exactly as before: the
+        // D23 ownership denial ("dataset ownership is configured — D23")
+        // contains the same "not permitted for this API key" substring but
+        // is PERMANENT (you are not the creator); retrying it would stall
+        // 2.5s and show a misleading "waiting for dataset to settle" state.
+        // Keyed on the FIRST file's identity (name:size:lastModified) —
+        // the batch's stable representative — so the one-retry guard
+        // survives Retry-Failed exactly as the old per-file guard did.
+        const first = batchFiles[0];
+        const aclRaceKey = `${first.name}:${first.size}:${first.lastModified}`;
+        const aclRace = resp.status === 403
+          && /dataset ACLs are configured/i.test(errMsg)
+          && /not permitted for this API key/i.test(errMsg)
+          && !_aclRaceRetried.has(aclRaceKey);
+        if (aclRace) {
+          _aclRaceRetried.add(aclRaceKey);
+          for (const file of batchFiles) {
+            _updateFileLine(lineKeys.get(file), `<span style="color:var(--text-muted);width:16px;flex-shrink:0">↻</span> ${escHtml(file.name)} <span style="color:var(--text-muted);font-size:.75rem">waiting for dataset to settle…</span>`);
+          }
+          await new Promise(r => setTimeout(r, 2500));
+          batchQueue.unshift(batchFiles);   // retry the batch once, at the head
+          return;
+        }
+        for (const file of batchFiles) {
+          _updateFileLine(lineKeys.get(file), `<span style="color:var(--red);width:16px;flex-shrink:0">✗</span> ${escHtml(file.name)} — ${escHtml(errMsg)}`);
+          const rt = _retryFiles.find(r => r.file === file);   // by object identity (review fix)
+          if (rt) { rt.done = true; rt.ok = false; }
+        }
         return;
       }
       const { job_id } = await resp.json();
-      _updateFileLine(fileKey, `<span style="color:var(--accent);width:16px;flex-shrink:0">📦</span> ${escHtml(file.name)} <span style="color:var(--text-muted);font-size:.75rem">uploaded</span>`);
-      await pollJob(job_id, file.name, fileKey, _updateFileLine, _fileChunkTotal, _fileChunkExpected,
+      for (const file of batchFiles) {
+        _updateFileLine(lineKeys.get(file), `<span style="color:var(--accent);width:16px;flex-shrink:0">📦</span> ${escHtml(file.name)} <span style="color:var(--text-muted);font-size:.75rem">uploaded</span>`);
+      }
+      // Names are unique WITHIN a batch (same-named files were split into
+      // solo batches above), so a bare filename maps to exactly one line.
+      const nameToKey = new Map();
+      for (const file of batchFiles) nameToKey.set(file.name, lineKeys.get(file));
+      // Retry bookkeeping is keyed by File object identity (2026-11 review
+      // fix): map the job's bare filename back to THIS batch's actual File
+      // object, then find the record holding exactly that object.  Two
+      // same-named files in different (solo) batches therefore keep
+      // independent retry entries instead of sharing one.
+      const nameToFile = new Map(batchFiles.map(f => [f.name, f]));
+      const _retryRecord = (fname) => {
+        const f = nameToFile.get(fname);
+        return f ? _retryFiles.find(r => r.file === f) : undefined;
+      };
+      await pollBatchJob(job_id, nameToKey, _updateFileLine, _fileChunkTotal, _fileChunkExpected,
         (fname, chunks) => { totalChunks += chunks; _updateSummary(); },
-        (fname) => { const rt = _retryFiles.find(r => r.name === fname); if (rt) { rt.done = true; rt.ok = true; } },
-        (fname) => { const rt = _retryFiles.find(r => r.name === fname); if (rt) { rt.done = true; rt.ok = false; } }
+        (fname) => { const rt = _retryRecord(fname); if (rt) { rt.done = true; rt.ok = true; } },
+        (fname) => { const rt = _retryRecord(fname); if (rt) { rt.done = true; rt.ok = false; } },
+        (fileKey, delta) => { if (delta !== 0) { totalChunks += delta; _updateSummary(); } }
       );
     } catch (e) {
-      _updateFileLine(fileKey, `<span style="color:var(--red);width:16px;flex-shrink:0">✗</span> ${escHtml(file.name)} — ${escHtml(e.message)}`);
-      const rt = _retryFiles.find(r => r.name === file.name);
-      if (rt) { rt.done = true; rt.ok = false; }
+      for (const file of batchFiles) {
+        _updateFileLine(lineKeys.get(file), `<span style="color:var(--red);width:16px;flex-shrink:0">✗</span> ${escHtml(file.name)} — ${escHtml(e.message)}`);
+        const rt = _retryFiles.find(r => r.file === file);   // by object identity (review fix)
+        if (rt) { rt.done = true; rt.ok = false; }
+      }
     }
   }
 
-  // Process files with bounded concurrency
+  // Process batches with bounded concurrency
   async function runUploads() {
     const workers = [];
     for (let i = 0; i < _BATCH_CONCURRENCY; i++) {
       workers.push((async () => {
-        while (fileQueue.length > 0) {
-          const file = fileQueue.shift();
-          if (!file) break;
-          await uploadOne(file);
+        while (batchQueue.length > 0) {
+          const batch = batchQueue.shift();
+          if (!batch) break;
+          await uploadBatch(batch);
         }
       })());
     }
@@ -1526,13 +1921,22 @@ async function handleFiles(files) {
   _updateRetryButton();
   _uploadsActive--;
   _updateClearButton();
-  listDatasets();
+  refreshVisibleLists().catch(function () {});
 }
 
-// Poll an upload job until completion
-async function pollJob(jobId, fileLabel, fileKey, updateLine, chunkTotals, chunkExpected, onComplete, onOk, onFail) {
+// Poll ONE multi-file upload job until completion.  Every job event carries
+// a `file` field; nameToKey routes each event to that file's status line
+// (names are unique within a batch — same-named files get solo batches).
+// onReconcile(fileKey, delta) fires at the END only: it hands the caller the
+// DELTA between the authoritative per-file chunk count (job.result.files)
+// and whatever the event stream accumulated, so the caller can correct its
+// running total without double-counting.
+async function pollBatchJob(jobId, nameToKey, updateLine, chunkTotals, chunkExpected, onComplete, onOk, onFail, onReconcile) {
   const POLL_INTERVAL = 2000;
   let lastEventIdx = 0;
+  const settledOk = new Set();    // names with a terminal complete/skipped event
+  const settledErr = new Set();   // names with a terminal error event
+  const deduped = new Set();      // names whose 'skipped' (dedup) event was seen
 
   return new Promise((resolve) => {
     const poll = async () => {
@@ -1544,11 +1948,14 @@ async function pollJob(jobId, fileLabel, fileKey, updateLine, chunkTotals, chunk
         const events = job.events || [];
         for (let i = lastEventIdx; i < events.length; i++) {
           const data = events[i];
+          const fileKey = nameToKey.get(data.file);
+          if (!fileKey) continue;   // defensive: event for a file not on our lines
+          const fname = escHtml(data.file);
           if (data.status === 'preprocessing') {
-            updateLine(fileKey, `<span style="color:var(--text-muted);width:16px;flex-shrink:0">⚙</span> ${escHtml(fileLabel)}`);
+            updateLine(fileKey, `<span style="color:var(--text-muted);width:16px;flex-shrink:0">⚙</span> ${fname}`);
           } else if (data.status === 'preprocessed') {
             if (data.total) chunkExpected[fileKey] = data.total;
-            updateLine(fileKey, `<span style="color:var(--accent);width:16px;flex-shrink:0">◐</span> ${escHtml(fileLabel)}`);
+            updateLine(fileKey, `<span style="color:var(--accent);width:16px;flex-shrink:0">◐</span> ${fname}`);
           } else if (data.status === 'embedding') {
             const soFar = chunkTotals[fileKey] || 0;
             const exp = chunkExpected[fileKey];
@@ -1556,17 +1963,26 @@ async function pollJob(jobId, fileLabel, fileKey, updateLine, chunkTotals, chunk
             if (soFar > 0 && exp) chunkInfo = `${soFar.toLocaleString()} / (est.) ${exp.toLocaleString()} chunks embedded…`;
             else if (soFar > 0) chunkInfo = `${soFar.toLocaleString()} chunks embedded…`;
             else chunkInfo = 'embedding…';
-            updateLine(fileKey, `<span class="spinner" style="width:16px;height:16px;flex-shrink:0"></span> ${escHtml(fileLabel)} <span style="color:var(--text-muted);font-size:.75rem">${chunkInfo}</span>`);
-          } else if (data.status === 'complete' && data.chunks !== undefined) {
-            chunkTotals[fileKey] = (chunkTotals[fileKey] || 0) + (data.chunks || 0);
+            updateLine(fileKey, `<span class="spinner" style="width:16px;height:16px;flex-shrink:0"></span> ${fname} <span style="color:var(--text-muted);font-size:.75rem">${chunkInfo}</span>`);
+          } else if ((data.status === 'complete' && data.chunks !== undefined) || data.status === 'skipped') {
+            // A big PDF is handed to the embedder in sub-batches, so one
+            // file may emit SEVERAL complete events — accumulate, don't
+            // replace.  'skipped' = content-hash dedup (already in dataset).
+            const chunks = data.chunks || 0;
+            chunkTotals[fileKey] = (chunkTotals[fileKey] || 0) + chunks;
             const fileTotal = chunkTotals[fileKey];
             const color = fileTotal > 0 ? 'var(--green)' : 'var(--text-muted)';
             const icon = fileTotal > 0 ? '✓' : '⏭';
-            const label = fileTotal > 0 ? `${fileTotal.toLocaleString()} chunk(s)` : 'already in dataset';
-            updateLine(fileKey, `<span style="color:${color};width:16px;flex-shrink:0">${icon}</span> ${escHtml(fileLabel)} — ${label}`);
-            onComplete(fileLabel, data.chunks || 0);
+            const label = data.status === 'skipped' ? 'already in dataset (deduplicated)'
+              : (fileTotal > 0 ? `${fileTotal.toLocaleString()} chunk(s)` : 'already in dataset');
+            updateLine(fileKey, `<span style="color:${color};width:16px;flex-shrink:0">${icon}</span> ${fname} — ${label}`);
+            settledOk.add(data.file);
+            if (data.status === 'skipped') deduped.add(data.file);
+            onComplete(data.file, chunks);
           } else if (data.status === 'error') {
-            updateLine(fileKey, `<span style="color:var(--red);width:16px;flex-shrink:0">✗</span> ${escHtml(fileLabel)} — ${escHtml(data.error || 'failed')}`);
+            updateLine(fileKey, `<span style="color:var(--red);width:16px;flex-shrink:0">✗</span> ${fname} — ${escHtml(data.error || 'failed')}`);
+            settledErr.add(data.file);
+            onFail(data.file);
           }
         }
         lastEventIdx = events.length;
@@ -1574,20 +1990,78 @@ async function pollJob(jobId, fileLabel, fileKey, updateLine, chunkTotals, chunk
         if (job.status === 'complete') {
           const warns = (job.result && job.result.warnings) || [];
           if (warns.length) {
-            const lineEl = document.querySelector('div[data-file-key="' + fileKey + '"]');
-            if (lineEl) {
+            // Job-wide caption skips — one note under the status block.
+            const statusEl = document.getElementById('upload-status');
+            if (statusEl) {
               const w = document.createElement('div');
               w.style.marginTop = '2px'; w.style.fontSize = '.78rem'; w.style.color = '#b45309';
               w.textContent = '⚠ ' + warns.length + ' caption(s) skipped — ' + warns[0] + (warns.length > 1 ? ' (+' + (warns.length - 1) + ' more)' : '');
-              lineEl.appendChild(w);
+              statusEl.appendChild(w);
             }
           }
-          if (onOk) onOk(fileLabel);
+          // TERMINAL RECONCILIATION (2026-11 review fix): the server keeps
+          // only the LAST 500 events per job (api_server.py trims the list
+          // to the last 500 on every append).  When the client's lastEventIdx
+          // cursor reaches the capped length, every event the server emits
+          // afterwards sits beyond it and is never processed — so a late
+          // per-file error would never be seen.  A batch that emits more
+          // than 500 events (a 5-file pick of long documents easily does)
+          // would therefore (a) never process that late error — the loop
+          // below would then mark a FAILED file OK — and (b) under-count
+          // its chunks.  The event stream is correct for LIVE progress
+          // (unchanged above) but is not authoritative at the end:
+          // job.result.files is (one entry per file:
+          // {"file","chunks"} or {"file","chunks":0,"error"}).  Reconcile
+          // terminal state and chunk totals from it.  Names are unique
+          // within a batch (solo-batch rule), so the mapping is unambiguous.
+          const resultFiles = (job.result && job.result.files) || [];
+          for (const name of nameToKey.keys()) {
+            const fileKey = nameToKey.get(name);
+            const entry = resultFiles.find(f => f && f.file === name);
+            if (entry && entry.error) {
+              // The per-file error event may have been trimmed away — paint
+              // the red line now if the stream never did (a failed file
+              // must end retryable, never OK).
+              if (!settledErr.has(name)) {
+                settledErr.add(name);
+                updateLine(fileKey, `<span style="color:var(--red);width:16px;flex-shrink:0">✗</span> ${escHtml(name)} — ${escHtml(entry.error)}`);
+                onFail(name);
+              }
+              // A failed file stores 0 chunks authoritatively, even if the
+              // stream saw sub-batch completes before the failure.
+              const prevErr = chunkTotals[fileKey] || 0;
+              if (prevErr !== 0) { chunkTotals[fileKey] = 0; onReconcile(fileKey, 0 - prevErr); }
+              continue;
+            }
+            if (entry && typeof entry.chunks === 'number') {
+              // Authoritative chunk count: replace whatever the stream
+              // accumulated and hand the caller the correction delta.
+              const prev = chunkTotals[fileKey] || 0;
+              if (entry.chunks !== prev) {
+                chunkTotals[fileKey] = entry.chunks;
+                onReconcile(fileKey, entry.chunks - prev);
+              }
+            }
+            // Refresh the line to its terminal state either way — if the
+            // file's complete event was beyond the cap the line would
+            // otherwise freeze mid-progress.
+            const fileTotal = chunkTotals[fileKey] || 0;
+            const color = fileTotal > 0 ? 'var(--green)' : 'var(--text-muted)';
+            const icon = fileTotal > 0 ? '✓' : '⏭';
+            const label = fileTotal > 0 ? `${fileTotal.toLocaleString()} chunk(s)`
+              : (deduped.has(name) ? 'already in dataset (deduplicated)' : 'already in dataset');
+            updateLine(fileKey, `<span style="color:${color};width:16px;flex-shrink:0">${icon}</span> ${escHtml(name)} — ${label}`);
+            if (!settledErr.has(name)) onOk(name);
+          }
           resolve();
           return;
         } else if (job.status === 'error') {
-          if (onFail) onFail(fileLabel);
-          updateLine(fileKey, `<span style="color:var(--red);width:16px;flex-shrink:0">✗</span> ${escHtml(fileLabel)} — ${escHtml(job.error || 'failed')}`);
+          for (const [name, lineKey] of nameToKey) {
+            if (settledOk.has(name)) { onOk(name); continue; }   // stored before the job died
+            if (settledErr.has(name)) continue;                  // already red + retryable
+            onFail(name);
+            updateLine(lineKey, `<span style="color:var(--red);width:16px;flex-shrink:0">✗</span> ${escHtml(name)} — ${escHtml(job.error || 'failed')}`);
+          }
           resolve();
           return;
         }
@@ -1641,7 +2115,7 @@ async function addText() {
       status.appendChild(w);
     }
     input.value = '';
-    await listDatasets();
+    await refreshVisibleLists();
   } catch (e) {
     status.textContent = '';
     toast(e.message, 'error');
@@ -1772,6 +2246,44 @@ async function addUrls() {
           if (job.status === 'complete') {
             clearInterval(timer);
             const result = job.result || {};
+            // TERMINAL RECONCILIATION (2026-11 review fix): same 500-event
+            // cap as the upload poller — api_server.py trims job.events to
+            // the last 500, so lastEventIdx pins and late per-URL events
+            // are never seen (a 50-URL paste easily exceeds the cap).  The
+            // live lines above are fine for progress, but the final counts
+            // and frozen lines come from job.result.files (one entry per
+            // URL: {"file","chunks"} or {"file","chunks":0,"error"}).
+            for (const entry of result.files || []) {
+              if (!entry || typeof entry.file !== 'string') continue;
+              const line = Array.from(progress.querySelectorAll('div[data-url]')).find(
+                el => el.getAttribute('data-url') === entry.file
+              );
+              if (entry.error) {
+                // The per-URL error event may have been trimmed away.
+                if (line) line.innerHTML = `<span style="color:var(--red);width:16px;flex-shrink:0">✗</span> <span style="font-size:.82rem;word-break:break-all">${escHtml(entry.file)}</span> — ${escHtml(entry.error)}`;
+                const prevErr = _urlFileChunkTotal[entry.file] || 0;
+                if (prevErr !== 0) { _urlFileChunkTotal[entry.file] = 0; totalChunks -= prevErr; }
+                continue;
+              }
+              if (typeof entry.chunks === 'number') {
+                // Authoritative count: correct the stream's total by the
+                // delta (it may have missed capped events or double-counted
+                // after a trim shifted the cursor).
+                const prev = _urlFileChunkTotal[entry.file] || 0;
+                if (entry.chunks !== prev) {
+                  _urlFileChunkTotal[entry.file] = entry.chunks;
+                  totalChunks += entry.chunks - prev;
+                }
+              }
+              // Refresh the line to its terminal state either way.
+              if (line) {
+                const fileTotal = _urlFileChunkTotal[entry.file] || 0;
+                const color = fileTotal > 0 ? 'var(--green)' : 'var(--text-muted)';
+                const icon = fileTotal > 0 ? '✓' : '⏭';
+                const label = fileTotal > 0 ? `${fileTotal.toLocaleString()} chunk(s)` : 'already in dataset';
+                line.innerHTML = `<span style="color:${color};width:16px;flex-shrink:0">${icon}</span> <span style="font-size:.82rem;word-break:break-all">${escHtml(entry.file)}</span> — ${label}`;
+              }
+            }
             const fileCount = result.file_count || urls.length;
             status.innerHTML = `<span style="color:var(--green)">Done</span> — ${totalChunks.toLocaleString()} chunk(s) stored from ${fileCount} file(s)`;
             toast(`Ingested ${fileCount} URL(s), ${totalChunks.toLocaleString()} chunk(s)`);
@@ -1793,7 +2305,7 @@ async function addUrls() {
       poll();
     });
 
-    await listDatasets();
+    await refreshVisibleLists();
   } catch (e) {
     clearInterval(timer);
     for (const el of progress.querySelectorAll('div')) {
@@ -1986,11 +2498,23 @@ async function searchDataset() {
   container.innerHTML = '<div style="text-align:center;padding:20px"><span class="spinner"></span></div>';
 
   try {
-    // Build multimodal query
-    const query = {};
-    if (q) query.text = q;
+    // Build the query.
+    //
+    // A TEXT-ONLY search MUST be sent as a plain string.  The server's
+    // dict branch is the MULTIMODAL path: it embeds and searches by vector
+    // only, and `aretrieve` never threads `rrf` down it (see the
+    // `isinstance(query, dict)` branch in rag_system.aretrieve), so it
+    // bypasses hybrid dense+BM25 fusion entirely.  Sending `{text: q}`
+    // here silently downgraded every front-page search to dense cosine:
+    // the BM25 lane never ran and the dataset's RRF weights were ignored.
+    // Only attach a dict when there is actually media to send.
+    let query;
     if (_searchMediaDataUrl && _searchMediaType) {
+      query = {};
+      if (q) query.text = q;
       query[_searchMediaType] = _searchMediaDataUrl;
+    } else {
+      query = q;
     }
 
     const body = { query, top_k, use_reranker, reranker_top_k };
@@ -2069,7 +2593,25 @@ async function searchDataset() {
         }
       }
       const _copyPayload = encodeURIComponent(_text + (_mediaUrls.length ? '\n\nMedia:\n' + _mediaUrls.join('\n') : ''));
+      // Label WHAT the score means.  Under hybrid retrieval a fused score is
+      // RRF rank arithmetic (a ladder like 0.8333/0.6667/0.5), not a cosine
+      // similarity — showing it bare invites "why is relevance 0.83 for a bad
+      // match?".  A reranked hit's score IS the reranker relevance, so it is
+      // labelled "(reranker)" and the pre-rerank score stays visible next to
+      // it ("rrf: …" / "embedding: …").  score_kind is the server contract;
+      // the fallbacks below only matter for a page cached against an older
+      // server.  A reranked hit there carries no score_kind but DOES report
+      // reranker_score === score (the old server already copied the reranker
+      // relevance into score), so it is still labelled by what the number IS,
+      // never by the lane it came from.
+      const _kind = r.score_kind
+        || ((r.reranker_score !== undefined && r.score === r.reranker_score)
+          ? 'reranker'
+          : ((c && typeof c === 'object' && c._score_kind) || 'cosine'));
       const _scoreParts = [`#${i + 1} · score: ${r.score}`];
+      if (_kind === 'reranker') _scoreParts.push('(reranker)');
+      else if (_kind === 'rrf') _scoreParts.push('(rrf rank fusion)');
+      if (r.retrieval_score !== undefined) _scoreParts.push(`(rrf: ${r.retrieval_score})`);
       if (r.embedding_score !== undefined) _scoreParts.push(`(embedding: ${r.embedding_score})`);
       if (r.reranker_score !== undefined && r.score !== r.reranker_score) _scoreParts.push(`(reranker: ${r.reranker_score})`);
       return `<div class="result-item" style="position:relative">
@@ -2096,6 +2638,31 @@ async function searchDataset() {
 // -----------------------------------------------------------------------
 // Documents list
 // -----------------------------------------------------------------------
+
+// 2026-10-15: the Documents button now TOGGLES the documents list. It used to
+// render into #doc-list, but that div was dropped when the dataset settings
+// panel was added — the button silently no-op'd. The list renders directly
+// under the description row; selecting another dataset collapses it.
+function toggleDocList() {
+  if (!selectedDataset) return;
+  const container = document.getElementById('doc-list');
+  if (!container) return;
+  const visible = container.style.display !== 'none';
+  if (visible) {
+    container.style.display = 'none';
+    return;
+  }
+  container.style.display = 'block';
+  showDocs();
+}
+
+// Collapsible dataset settings panel (Configuration button in the header).
+function toggleDatasetSettings() {
+  const panel = document.getElementById('dataset-settings-panel');
+  if (!panel) return;
+  const visible = panel.style.display !== 'none';
+  panel.style.display = visible ? 'none' : 'block';
+}
 
 async function showDocs() {
   if (!selectedDataset) return;
@@ -2137,7 +2704,7 @@ async function deleteDocument(docId) {
       undefined, undefined, passwordHeader());
     toast('Document deleted');
     showDocs();
-    listDatasets();
+    refreshVisibleLists().catch(function () {});
   } catch (e) {
     toast(e.message, 'error');
   }
@@ -2159,7 +2726,8 @@ async function saveDatasetSettings() {
   try {
     await api('PATCH', '/api/datasets/' + selectedDataset, body, undefined, passwordHeader());
     toast('Dataset flags applied (affects new content)');
-    listDatasets();
+    // (2026-11: no list fetch here — saveDatasetSettings only runs via the
+    // unified "Save settings" button, which refreshes once for all sections.)
     const d = datasets.find(x => x.name === selectedDataset);
     if (d) {
       d.caption_with_asr = cAsr.checked;
@@ -2197,13 +2765,50 @@ async function saveRrfDefaults() {
   }
 }
 
+// Per-dataset chunk overrides (PATCH /api/datasets/{name} {"chunk": …}).
+// A BLANK field means "inherit the embedder model" — it is sent as an
+// explicit null so the stored override is CLEARED, not left stale.  This is
+// what keeps the feature opt-in: a dataset that never sets a value behaves
+// exactly like one created before the feature existed.
+// Chunk size is baked at INGEST — Recreate is what re-chunks old files.
+async function saveChunkOverrides() {
+  if (!selectedDataset) return;
+  const fields = [
+    ['edit-chunk-size', 'chunk_size'],
+    ['edit-chunk-overlap', 'chunk_overlap'],
+    ['edit-code-chunk-size', 'code_chunk_size'],
+    ['edit-code-chunk-overlap', 'code_chunk_overlap'],
+  ];
+  const chunk = {};
+  let any = false;
+  for (const [elId, key] of fields) {
+    const el = document.getElementById(elId);
+    if (!el) continue;
+    const raw = el.value.trim();
+    if (raw === '') { chunk[key] = null; }
+    else { chunk[key] = parseInt(raw, 10); any = true; }
+  }
+  try {
+    await api('PATCH', '/api/datasets/' + selectedDataset, { chunk: chunk }, undefined, passwordHeader());
+    toast(any ? 'Chunk overrides applied (affects new uploads; Recreate to re-chunk)' : 'Chunk overrides cleared (inheriting model defaults)');
+    const d = datasets.find(x => x.name === selectedDataset);
+    if (d) {
+      const stored = {};
+      for (const k of Object.keys(chunk)) if (chunk[k] !== null) stored[k] = chunk[k];
+      if (Object.keys(stored).length) d.chunk = stored; else delete d.chunk;
+    }
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
 async function saveDescription() {
   if (!selectedDataset) return;
   const desc = document.getElementById('desc-edit').value.trim();
   try {
     await api('PATCH', `/api/datasets/${selectedDataset}`, { description: desc }, undefined, passwordHeader());
     toast('Description updated');
-    listDatasets();
+    refreshVisibleLists().catch(function () {});
     const d = datasets.find(x => x.name === selectedDataset);
     if (d) {
       d.description = desc;
@@ -2257,6 +2862,7 @@ async function saveDatasetAll() {
   window.toast = function () {};
   try {
     await run('flags', saveDatasetSettings);
+    await run('chunking', saveChunkOverrides);
     await run('RRF defaults', saveRrfDefaults);
     await run('public', savePublicFlag);
   } finally {
@@ -2269,7 +2875,7 @@ async function saveDatasetAll() {
     setTimeout(() => { const n = document.getElementById('settings-note'); if (n) n.textContent = ''; }, 6000);
   }
   toast(okCount === results.length ? `Settings saved (${okCount}/${results.length})` : 'Some settings failed — see notes', okCount === results.length ? 'success' : 'error');
-  listDatasets();
+  refreshVisibleLists().catch(function () {});
 }
 
 // -----------------------------------------------------------------------
@@ -2423,9 +3029,29 @@ async function pollHealth() {
       <div style="height:6px;background:var(--border);border-radius:3px;margin-bottom:8px;overflow:hidden">
         <div style="width:${Math.min(qpvc.used_percent,100)}%;height:100%;background:${qpvc.used_percent > 80 ? 'var(--red)' : (qpvc.used_percent > 50 ? 'var(--accent)' : 'var(--green)')};transition:width .5s"></div>
       </div>` : '';
+    // 2026-10-15: per-peer rows ALWAYS render when a raft cluster is live —
+    // a peer that disappears from the /cluster response must be visible as a
+    // missing row (expectedReplicas) rather than silently shrinking the table.
+    const qExpectedReplicas = qcluster && qcluster.expected_replicas ? qcluster.expected_replicas : null;
+    const qPeerRows = (qcluster && qcluster.enabled && qcluster.replicas && qcluster.replicas.length)
+      ? qcluster.replicas.map((r) => {
+          const c = r.status === 'ok' ? 'var(--green)' : (r.status === 'unreachable' ? 'var(--red)' : 'var(--yellow)');
+          return `<tr>
+            <td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${c};margin-right:6px"></span>${escHtml(r.host || ('peer ' + ((r.index || 0) + 1)))}</td>
+            <td style="text-align:right">${r.shards} shard${r.shards === 1 ? '' : 's'}</td>
+            <td style="text-align:right">${r.local_points != null ? Number(r.local_points).toLocaleString() : '—'}</td>
+            <td style="text-align:right">${r.used_bytes != null ? formatBytes(r.used_bytes) : '—'}</td>
+          </tr>`;
+        }).join('')
+      : '';
+    const qDegraded = (qcluster && qcluster.enabled && qExpectedReplicas && qcluster.replicas && qcluster.replicas.length < qExpectedReplicas)
+      ? `<div style="color:var(--yellow);font-size:.78rem;margin:4px 0">⚠ cluster degraded — ${qcluster.replicas.length} of ${qExpectedReplicas} peers in raft</div>`
+      : '';
     const qclusterRows = (qcluster && qcluster.enabled && qcluster.replicas && qcluster.replicas.length) ? `
-        <tr><td>Replicas</td><td style="text-align:right">${qcluster.replicas.length}</td></tr>
-        <tr><td>Shards</td><td style="text-align:right">${qcluster.total_shards}</td></tr>` : '';
+        ${qDegraded}
+        <tr><td colspan="4" style="padding-top:6px;font-weight:500">Peers</td></tr>
+        <tr><td style="font-size:.72rem;color:var(--text-muted)"></td><td style="text-align:right;font-size:.72rem;color:var(--text-muted)">shards</td><td style="text-align:right;font-size:.72rem;color:var(--text-muted)">local points</td><td style="text-align:right;font-size:.72rem;color:var(--text-muted)">used</td></tr>
+        ${qPeerRows}` : '';
     document.getElementById('health-qdrant').innerHTML = `
       <div style="font-weight:500;margin-bottom:6px;font-size:.85rem">Qdrant — <span style="color:${qdColor}">${qd.status}</span></div>
       ${qdPvcBar}
@@ -2622,7 +3248,26 @@ async function loadManageStats() {
 // Upload history (Manage page)
 // -----------------------------------------------------------------------
 
+// 2026-11 efficiency fix, defect 3: the filter box used to fire a FULL
+// `GET /api/admin/upload-history?limit=200` on every keystroke (17 fetches
+// for "quarterly report") and then filter client-side anyway.  The input
+// now debounces 300 ms; Refresh / Clear / boot stay immediate.
+let _historyFilterTimer = null;
+
+function scheduleHistoryFilter() {
+  if (_historyFilterTimer) clearTimeout(_historyFilterTimer);
+  _historyFilterTimer = setTimeout(function () {
+    _historyFilterTimer = null;
+    loadUploadHistory();
+  }, 300);
+}
+
+function cancelHistoryFilterDebounce() {
+  if (_historyFilterTimer) { clearTimeout(_historyFilterTimer); _historyFilterTimer = null; }
+}
+
 async function loadUploadHistory() {
+  cancelHistoryFilterDebounce();   // a live call voids any pending keystroke
   const container = document.getElementById('upload-history-table');
   if (!container) return;
   const filter = ((document.getElementById('history-filter') || {}).value || '').trim().toLowerCase();
@@ -2685,29 +3330,51 @@ async function clearUploadHistory() {
   }
 }
 
-function toggleTheme() {
-  const html = document.documentElement;
-  const isDark = html.getAttribute('data-theme') === 'dark';
-  html.setAttribute('data-theme', isDark ? 'light' : 'dark');
-  document.getElementById('theme-label').textContent = isDark ? 'Light' : 'Dark';
-  localStorage.setItem('theme', isDark ? 'light' : 'dark');
+// Theme — Auto (default, follows the OS) / Light / Dark, remembered per browser.
+var THEME_KEY = 'theme';
+
+function applyTheme(t) {
+  if (t !== 'light' && t !== 'dark') t = 'auto';
+  document.documentElement.setAttribute('data-theme', t);
+  try { localStorage.setItem(THEME_KEY, t); } catch (e) {}
+  var btns = document.querySelectorAll('[data-theme-btn]');
+  for (var i = 0; i < btns.length; i++) {
+    var on = btns[i].getAttribute('data-theme-btn') === t;
+    btns[i].classList.toggle('on', on);
+    btns[i].setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
 }
 
-function applyTheme(theme) {
-  if (theme === 'dark') {
-    document.documentElement.setAttribute('data-theme', 'dark');
-    document.getElementById('theme-label').textContent = 'Dark';
-  } else {
-    document.documentElement.removeAttribute('data-theme');
-    document.getElementById('theme-label').textContent = 'Light';
+// Auto resolves to the OS scheme — no consumer may treat data-theme as binary.
+function effectiveTheme() {
+  var t = document.documentElement.getAttribute('data-theme');
+  if (t === 'light' || t === 'dark') return t;
+  return (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+}
+
+function initTheme() {
+  var btns = document.querySelectorAll('[data-theme-btn]');
+  for (var i = 0; i < btns.length; i++) {
+    btns[i].addEventListener('click', function () {
+      applyTheme(this.getAttribute('data-theme-btn'));
+    });
   }
-  localStorage.setItem('theme', theme || 'light');
+  var saved = 'auto';
+  try { saved = localStorage.getItem(THEME_KEY) || 'auto'; } catch (e) {}
+  applyTheme(saved);
+  // The palette is pure CSS, so an OS flip while in Auto needs no re-render;
+  // the listener stays as the hook for any follow-up added later.
+  try {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
+      if (document.documentElement.getAttribute('data-theme') !== 'auto') return;
+      document.dispatchEvent(new CustomEvent('rag-theme-change', { detail: { theme: effectiveTheme() } }));
+    });
+  } catch (e) {}
 }
 
 // Init — theme only here; the SPA boot (identity probe → tabs) runs in the
 // identity script at the end of the body.
-const savedTheme = localStorage.getItem('theme') || 'light';
-applyTheme(savedTheme);
+initTheme();
 
 // Fetch model availability and set up caption checkboxes + reranker UI
 async function initCaptionCheckboxes() {
@@ -2854,12 +3521,32 @@ function switchAppTab(name) {
   document.querySelectorAll('.app-view').forEach(v => {
     v.style.display = (v.id === 'view-' + name) ? 'block' : 'none';
   });
+  // A pending history-filter debounce must not fire after the user has
+  // switched away (the manage-page filter is the only debounced input).
+  cancelHistoryFilterDebounce();
   // Reflect the tab in the URL (#datasets/#access/#admin/#stats) without
   // polluting history; the hashchange listener stays consistent.
   try { history.replaceState(null, '', '#' + name); }
   catch (e) { location.hash = name; }
   if (name === 'stats') startStatsPolling(); else stopStatsPolling();
-  if (name === 'access') ensureAccessLoaded();
+  if (name === 'access') {
+    if (_accessListStale) {
+      // A mutation landed while this tab was hidden — re-fetch before
+      // showing it (ensureAccessLoaded's _accessLoaded guard would skip).
+      // The flag is cleared ONLY when the re-fetch succeeds (refreshDatasets
+      // reports it), so a failed refresh is retried on the next visit
+      // (2026-11 review fix).
+      refreshDatasets().then(function (ok) { if (ok) _accessListStale = false; });
+    } else {
+      ensureAccessLoaded();
+    }
+  }
+  if ((name === 'datasets' || name === 'admin') && _datasetsListStale) {
+    // Both views render from the `datasets` array; a hidden-tab mutation
+    // must be re-fetched before either comes on screen.  The flag is held
+    // stale until the fetch succeeds (2026-11 review fix).
+    _reloadDatasetsListSafe();
+  }
   if (name === 'admin') ensureAdminLoaded(false);
   if (name === 'inspector') ensureInspectorLoaded();
 }
@@ -2918,8 +3605,7 @@ async function deleteDatasetRow(btn) {
       selectedDataset = null;
       document.getElementById('selected-info').style.display = 'none';
     }
-    await listDatasets();
-    refreshDatasets().catch(function () {});
+    await refreshVisibleLists();
   } catch (e) {
     toast(e.message, 'error');
   }
@@ -2958,23 +3644,30 @@ function renderIdentityChip() {
   }
   chip.innerHTML = html;
   chip.style.display = 'flex';
-  signout.style.display = 'inline-flex';
+  // Sign out only when THIS browser holds the credential it would forget: a
+  // pasted/remembered API key.  An SSO/OIDC session is owned by the identity
+  // provider (the platform edge's cookie or the D22 HttpOnly session cookie);
+  // ending it from the page does not end the platform's IdP session, which
+  // re-authenticates — so the button would look like a no-op.  The embedded
+  // deployment key is injected server-side and cannot be forgotten either.
+  signout.style.display =
+    (state.keyMode === 'paste' && getStoredKey()) ? 'inline-flex' : 'none';
   if (keylink) keylink.style.display = state.keyMode === 'embedded' ? 'none' : 'inline';
 }
 
-// sso-cookie → server-side logout; pasted/embedded key → forget locally.
+// Reachable only from a pasted/remembered key now (SSO/OIDC sessions hide
+// the button — the identity provider owns that session; see
+// renderIdentityChip).  Forget the key locally, then end any edge session.
 function signOut() {
-  // D24 sign-out, COMPLETE version (the "sign out doesn't work" report):
-  // behind an enforcing gateway there are TWO sessions to end —
+  // D24 sign-out: behind an enforcing gateway there are TWO sessions to end —
   //   1. the remembered/pasted API key (localStorage/sessionStorage), and
   //   2. the edge SSO session (oauth2-proxy's HttpOnly cookie at the gateway).
   // Ending only #1 reloads into… the edge re-authenticating instantly
   // (X-Auth-Request-* headers re-injected), which looks like "sign out
   // does nothing".  Ending only #2 leaves a remembered key re-signing-in.
-  // So: ALWAYS clear the key, ALWAYS end the edge session via the gateway's
-  // standard oauth2-proxy sign-out (same-origin), and — because the IdP's
-  // own SSO cookie may silently re-authenticate through oauth2-proxy —
-  // chain to Keycloak's end_session when we know the issuer (full SLO).
+  // So: clear the key AND send the browser through the gateway's standard
+  // oauth2-proxy sign-out (same-origin).  The IdP's own SSO session is not
+  // endable from this page — /oauth/logged-out explains that to the user.
   clearKey();
   location.href = '/oauth2/sign_out?rd=' + encodeURIComponent('/oauth/logged-out');
 }
@@ -3171,12 +3864,20 @@ async function enterWorkspace(initialTab, isManage) {
   renderIdentityChip();
   applyCreateGating();
   initCaptionCheckboxes();
+  let _bootListOk = false;
   try {
     await listDatasets();
+    _bootListOk = true;
   } catch (e) {
     if (e.status === 401 || e.status === 403) { handleAuthRejected('Your credentials were rejected by the server'); return; }
     toast(e.message || 'Could not load datasets', 'error');
   }
+  // Boot loaded the operator list (and, below, the access catalog) — the
+  // first tab switch must not re-fetch them (2026-11 list-refresh fix).
+  // A FAILED boot load leaves that list flagged stale so the first switch
+  // to it retries the fetch (2026-11 review fix).
+  _datasetsListStale = !_bootListOk;
+  _accessListStale = false;
   if (isManage) {
     loadManageStats();
     loadUploadHistory();
@@ -3185,7 +3886,8 @@ async function enterWorkspace(initialTab, isManage) {
   }
   resolveAdmin();
   probeStatsAvailability();
-  ensureAccessLoaded();
+  // Same as above: a failed boot access load re-flags the catalog stale.
+  ensureAccessLoaded().then(function (ok) { if (!ok) _accessListStale = true; });
   renderMemoryPanel();   // D23 addendum: memory front and center (or hidden)
   renderSelfMintCard();   // D25: right on first paint (paste/embedded → hidden)
   switchAppTab(initialTab);
@@ -3312,23 +4014,31 @@ async function loadAccessDatasets() {
   renderSelfMintCard();   // D25: right once accessStoreOn/selections are known
 }
 
+// Both return true when the catalog is (now) fresh, false when the load
+// failed (after toasting / signing in) — callers use that to keep their
+// "stale" flags honest: a failed refresh must leave the list marked stale
+// (2026-11 review fix).
 async function refreshDatasets() {
   try {
     await loadAccessDatasets();
+    return true;
   } catch (e) {
-    if (e.status === 401 || e.status === 403) { handleAuthRejected('Your credentials were rejected by the server'); return; }
+    if (e.status === 401 || e.status === 403) { handleAuthRejected('Your credentials were rejected by the server'); return false; }
     toast(e.message, 'error');
+    return false;
   }
 }
 
 async function ensureAccessLoaded() {
-  if (_accessLoaded) return;
+  if (_accessLoaded) return true;
   _accessLoaded = true;
   try {
     await loadAccessDatasets();
+    return true;
   } catch (e) {
-    if (e.status === 401 || e.status === 403) { handleAuthRejected('Your credentials were rejected by the server'); return; }
+    if (e.status === 401 || e.status === 403) { handleAuthRejected('Your credentials were rejected by the server'); return false; }
     toast(e.message, 'error');
+    return false;
   }
 }
 
@@ -3747,7 +4457,7 @@ async function selectAccessDataset(name, password, checkbox) {
     toast(res.message || `Dataset '${name}' selected`);
     openSelectRow = null;
     selectError = null;
-    await refreshDatasets();
+    await refreshVisibleLists();
   } catch (e) {
     if (e.status === 401) { handleAuthRejected('Your credentials were rejected by the server'); return; }
     selectError = { name, message: e.message || 'Select failed' };
@@ -3773,7 +4483,7 @@ async function submitSelect(event, form) {
     toast(res.message || `Dataset '${name}' selected`);
     openSelectRow = null;
     selectError = null;
-    await refreshDatasets();
+    await refreshVisibleLists();
   } catch (e) {
     if (e.status === 401) { handleAuthRejected('Your credentials were rejected by the server'); return; }
     selectError = {
@@ -3789,11 +4499,11 @@ async function deselectAccessDataset(name) {
     const res = await api('POST', `/api/datasets/${encodeURIComponent(name)}/deselect`);
     toast(res.message || `Dataset '${name}' removed from your datasets (re-select any time)`);
     if (serverMemory === name) serverMemory = '';
-    await refreshDatasets();
+    await refreshVisibleLists();
   } catch (e) {
     if (e.status === 401) { handleAuthRejected('Your credentials were rejected by the server'); return; }
     toast(e.message || 'Deselect failed', 'error');
-    await refreshDatasets();
+    await refreshVisibleLists();
   }
 }
 
@@ -3857,7 +4567,7 @@ async function submitUnlock(event, form) {
     openUnlockRow = null;
     unlockError = null;
     toast(unlockToast(name, ttl, res));
-    await refreshDatasets();   // re-render the row from the server's lock state
+    await refreshVisibleLists();   // re-render the row from the server's lock state
   } catch (e) {
     if (e.status === 401) { handleAuthRejected('Your credentials were rejected by the server'); return; }
     // 403 → wrong password (the key itself is fine — never log out here).
@@ -3879,7 +4589,7 @@ async function lockDataset(btn) {
     if (openUnlockRow === name) openUnlockRow = null;
     unlockError = null;
     toast((res && res.message) || `Dataset '${name}' locked`);
-    await refreshDatasets();
+    await refreshVisibleLists();
   } catch (e) {
     btn.disabled = false;
     if (e.status === 401) { handleAuthRejected('Your credentials were rejected by the server'); return; }
@@ -4078,7 +4788,7 @@ async function createMemoryDataset(btn) {
     await refreshWhoamiFlags();
     _memoryDone = {};
     toast('\u2605 \'' + clean + '\' is now your long-term memory dataset');
-    await listDatasets();
+    await refreshVisibleLists();
     renderMemoryPanel();
   } catch (e) {
     if (e && e.status === 401) { handleAuthRejected('Your credentials were rejected by the server'); return; }
@@ -4412,6 +5122,7 @@ function renderAdminDatasets() {
       </div>
       <div class="dataset-actions">
         <button class="btn btn-outline btn-sm" onclick="adminTogglePublic(this)" data-name="${escHtml(d.name)}" data-want="${d.public ? '0' : '1'}" title="${d.public ? 'Unpublish — granted keys only again' : 'Publish GLOBAL — every minted key can read/search it'}">${d.public ? '🌐 Unpublish' : '🌐 Publish'}</button>
+        ${d.has_password ? `<button class="btn btn-outline btn-sm" onclick="adminResetPassword(this)" data-name="${escHtml(d.name)}" title="Lost-password recovery: set a fresh password, or remove protection so the dataset can be read/deleted through the normal gates">Reset password…</button>` : ''}
         <button class="btn btn-danger btn-sm" onclick="adminDeleteDataset(this)" data-name="${escHtml(d.name)}">Delete</button>
       </div>
     </div>`;
@@ -4426,8 +5137,7 @@ async function adminTogglePublic(btn) {
   try {
     const res = await api('POST', `/api/admin/datasets/${name}/public`, { public: want });
     toast(res.message || (want ? 'Dataset is now GLOBAL (all minted keys)' : 'Dataset is private again'));
-    await listDatasets();
-    renderAdminDatasets();
+    await refreshVisibleLists();   // listDatasets() already re-renders the admin list
   } catch (e) {
     btn.disabled = false;
     toast(e.message, 'error');
@@ -4448,12 +5158,40 @@ async function adminDeleteDataset(btn) {
       selectedDataset = null;
       document.getElementById('selected-info').style.display = 'none';
     }
-    await listDatasets();
-    renderAdminDatasets();
-    refreshDatasets().catch(function () {});
+    await refreshVisibleLists();   // one fetch: the admin list renders from the same `datasets` array
   } catch (e) {
     btn.disabled = false;
     toast(e.message, 'error');
+  }
+}
+
+// Lost-password recovery (admin-only): POST /api/admin/datasets/{name}/reset-password.
+// Sets a fresh password, or removes protection entirely so the dataset becomes
+// readable/deletable through the normal gates. The action is audit-logged
+// server-side; the confirm names exactly what will happen before it does.
+async function adminResetPassword(btn) {
+  const name = btn.dataset.name;
+  if (!name) return;
+  const choice = prompt(
+    'Password recovery for "' + name + '"\n\n' +
+    'Type a NEW password to set it, or the word REMOVE (uppercase) to strip protection entirely.\n' +
+    'This action is audit-logged. Cancel to abort.');
+  if (choice === null) return;
+  const removing = choice === 'REMOVE';
+  if (!removing && !choice) { toast('Cancelled \u2014 empty input is neither a password nor REMOVE', 'error'); return; }
+  btn.disabled = true;
+  try {
+    const res = await api('POST', '/api/admin/datasets/' + encodeURIComponent(name) + '/reset-password',
+      removing ? {} : { new_password: choice });
+    toast(removing
+      ? ('Password removed from "' + name + '" \u2014 it is now unprotected')
+      : ('New password set for "' + name + '"'));
+    if (removing) delete datasetPasswords[name];
+    await refreshVisibleLists();   // listDatasets() already re-renders the admin list
+  } catch (e) {
+    toast(e.message || 'Reset failed', 'error');
+  } finally {
+    btn.disabled = false;
   }
 }
 </script>
@@ -4561,7 +5299,7 @@ function pvcCard(title, pvc, note) {
       <div style="width:${Math.min(pct,100)}%;height:100%;background:${color};transition:width .5s"></div>
     </div>
     <table style="width:100%;font-size:.82rem">
-      <tr><td style="padding:3px 0;color:var(--text-muted)">Total</td><td style="text-align:right">${formatBytes(pvc.total_bytes)}</td></tr>
+      <tr><td style="padding:3px 0;color:var(--text-muted)">Total</td><td style="text-align:right">${formatBytes(pvc.total_bytes)}${pvc.per_replica_capacity_bytes && pvc.replica_count > 1 ? ` <span style="font-size:.72rem;color:var(--text-muted)">(${pvc.replica_count} × ${formatBytes(pvc.per_replica_capacity_bytes)})</span>` : ''}</td></tr>
       <tr><td style="padding:3px 0;color:var(--text-muted)">Used</td><td style="text-align:right">${formatBytes(pvc.used_bytes)}</td></tr>
       <tr><td style="padding:3px 0;color:var(--text-muted)">Free</td><td style="text-align:right">${formatBytes(pvc.free_bytes)}</td></tr>
       <tr><td style="padding:3px 0;color:var(--text-muted)">Utilization</td><td style="text-align:right;color:${color}">${pct}%</td></tr>
@@ -4573,8 +5311,45 @@ function pvcCard(title, pvc, note) {
 function statsPvcSection(s) {
   const file = pvcCard('File Storage PVC', s && s.storage_pvc,
     'PVC mounted at /data — uploaded files (images, videos, audio, PDFs)');
-  const qd = pvcCard('Qdrant DB PVC', s && s.qdrant_pvc,
-    'Qdrant StatefulSet PVC — vector index & payloads');
+  // Qdrant cluster card (2026-10-15): totals are SUMMED across the peers
+  // (each peer has its own RWO PVC), and a per-replica breakdown renders
+  // under the summary — shard spread + per-peer used bytes, same data the
+  // admin health card carries. No more "25 GB total" for a 3x25 GB cluster.
+  const qp = s && s.qdrant_pvc;
+  let qd = '';
+  if (qp) {
+    const n = qp.replica_count || (qp.per_replica ? qp.per_replica.length : null);
+    const each = qp.per_replica_capacity_bytes;
+    const note = n
+      ? `Qdrant cluster — ${n} replica PVC${n === 1 ? '' : 's'}${each ? ` · ${formatBytes(each)} each` : ''} (sharded, RF=1 — not mirrored)`
+      : 'Qdrant StatefulSet PVC — vector index & payloads';
+    qd = pvcCard('Qdrant DB PVC', qp, note);
+    const rows = qp.per_replica && qp.per_replica.length;
+    if (rows) {
+      // Per-replica table: real PVC name (data-<sts>-<ordinal>), shards,
+      // local points and actual disk usage per replica — the kubelet-style
+      // view (2026-10-15): used bytes come from Qdrant per-segment
+      // info.disk_usage_bytes, i.e. real blocks on disk.
+      const peerRows = qp.per_replica.map((r) => {
+        const c = r.status === 'ok' ? 'var(--green)' : (r.status === 'unreachable' ? 'var(--red)' : 'var(--yellow)');
+        return `<tr>
+          <td style="padding:3px 0;color:var(--text-muted);word-break:break-all"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${c};margin-right:6px"></span>${escHtml(r.pvc || r.host || ('peer ' + ((r.index || 0) + 1)))}</td>
+          <td style="text-align:right">${r.shards != null ? r.shards : '—'}</td>
+          <td style="text-align:right">${r.local_points != null ? Number(r.local_points).toLocaleString() : '—'}</td>
+          <td style="text-align:right">${r.used_bytes != null ? formatBytes(r.used_bytes) : '—'}</td>
+        </tr>`;
+      }).join('');
+      const peerTable = `<div style="margin-top:-6px;padding:0 16px 12px">
+        <table style="width:100%;font-size:.75rem;color:var(--text-muted)">
+          <tr><td></td><td style="text-align:right;font-size:.68rem">shards</td><td style="text-align:right;font-size:.68rem">points</td><td style="text-align:right;font-size:.68rem">used</td></tr>
+          ${peerRows}
+        </table>
+      </div>`;
+      // inject the peer table INTO the qd card, before its closing footer
+      const anchor = qd.lastIndexOf('<div style="font-size:.72rem');
+      qd = anchor >= 0 ? qd.slice(0, anchor) + peerTable + qd.slice(anchor) : qd + peerTable;
+    }
+  }
   if (!file && !qd) return '';
   return `<div style="margin-top:18px;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px">${file}${qd}</div>`;
 }

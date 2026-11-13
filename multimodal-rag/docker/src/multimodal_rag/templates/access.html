@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="auto">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -17,12 +17,17 @@
 </script>
 <script>
   (function() {
-    var t = localStorage.getItem('theme') || 'light';
-    if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+    // Pre-paint theme resolver — Auto (default) / Light / Dark, applied before
+    // first paint so there is no flash of the wrong scheme.
+    var t = 'auto';
+    try { t = localStorage.getItem('theme') || 'auto'; } catch (e) {}
+    if (t !== 'light' && t !== 'dark') t = 'auto';
+    document.documentElement.setAttribute('data-theme', t);
   })();
 </script>
 <style>
-  :root, [data-theme="light"] {
+  :root, :root[data-theme="light"] {
+    color-scheme: light;
     --bg: #f4f6f9;
     --surface: #ffffff;
     --surface-2: #eef0f5;
@@ -36,7 +41,26 @@
     --yellow: #d97706;
     --radius: 6px;
   }
-  [data-theme="dark"] {
+  @media (prefers-color-scheme: dark) {
+    :root[data-theme="auto"] {
+      /* Auto follows the OS. DARK VARS — KEEP IN SYNC with the block below. */
+      color-scheme: dark;
+      --bg: #0b0e14;
+      --surface: #161a24;
+      --surface-2: #1e2432;
+      --border: #2a3142;
+      --text: #e0e4ed;
+      --text-muted: #8891a8;
+      --accent: #01a982;
+      --accent-hover: #02c99a;
+      --green: #34d399;
+      --red: #f87171;
+      --yellow: #fbbf24;
+    }
+  }
+  :root[data-theme="dark"] {
+    /* Pinned by the user. DARK VARS — KEEP IN SYNC with the block above. */
+    color-scheme: dark;
     --bg: #0b0e14;
     --surface: #161a24;
     --surface-2: #1e2432;
@@ -240,21 +264,16 @@
 
   .empty-state { text-align: center; padding: 40px 20px; color: var(--text-muted); }
 
-  .theme-toggle {
-    display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;
-    font-size: .75rem; color: var(--text-muted);
+  .theme-seg {
+    display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius);
+    overflow: hidden; flex-shrink: 0;
   }
-  .theme-toggle-track {
-    position: relative; width: 36px; height: 20px; border-radius: 10px;
-    background: var(--border); transition: background .2s; flex-shrink: 0;
+  .theme-seg button {
+    border: none; background: transparent; color: var(--text-muted);
+    font-family: inherit; font-size: .72rem; line-height: 1.4; padding: 4px 10px; cursor: pointer;
   }
-  .theme-toggle-thumb {
-    position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
-    border-radius: 50%; background: var(--accent); transition: transform .2s;
-    box-shadow: 0 1px 3px rgba(0,0,0,.25);
-  }
-  [data-theme="dark"] .theme-toggle-track { background: var(--accent); }
-  [data-theme="dark"] .theme-toggle-thumb { transform: translateX(16px); background: #fff; }
+  .theme-seg button.on { background: var(--accent); color: #fff; font-weight: 600; }
+  .theme-seg button:not(.on):hover { color: var(--text); }
 </style>
 </head>
 <body>
@@ -331,12 +350,11 @@
     <a class="nav-link" href="/">Datasets</a>
     <a class="nav-link" href="/manage">Manage</a>
     <a class="nav-link current" href="/access">Access</a>
-    <button class="btn btn-outline btn-sm" id="signout-btn" onclick="signOut()" title="Forget the stored key on this device and reload to the sign-in state">Sign out</button>
-    <div class="theme-toggle" onclick="toggleTheme()" title="Toggle dark/light mode">
-      <span id="theme-label">Light</span>
-      <div class="theme-toggle-track">
-        <div class="theme-toggle-thumb"></div>
-      </div>
+    <button class="btn btn-outline btn-sm" id="signout-btn" onclick="signOut()" style="display:none" title="Forget the stored key on this device and reload to the sign-in state">Sign out</button>
+    <div class="theme-seg" role="group" aria-label="Theme">
+      <button type="button" data-theme-btn="auto">Auto</button>
+      <button type="button" data-theme-btn="light">Light</button>
+      <button type="button" data-theme-btn="dark">Dark</button>
     </div>
   </div>
 </div>
@@ -578,20 +596,46 @@ function toast(msg, type = 'success') {
 // Theme (same markup/behaviour as the dashboard)
 // -----------------------------------------------------------------------
 
-function applyTheme(theme) {
-  if (theme === 'dark') {
-    document.documentElement.setAttribute('data-theme', 'dark');
-    document.getElementById('theme-label').textContent = 'Dark';
-  } else {
-    document.documentElement.removeAttribute('data-theme');
-    document.getElementById('theme-label').textContent = 'Light';
+// Auto (default, follows the OS) / Light / Dark, remembered per browser.
+var THEME_KEY = 'theme';
+
+function applyTheme(t) {
+  if (t !== 'light' && t !== 'dark') t = 'auto';
+  document.documentElement.setAttribute('data-theme', t);
+  try { localStorage.setItem(THEME_KEY, t); } catch (e) {}
+  var btns = document.querySelectorAll('[data-theme-btn]');
+  for (var i = 0; i < btns.length; i++) {
+    var on = btns[i].getAttribute('data-theme-btn') === t;
+    btns[i].classList.toggle('on', on);
+    btns[i].setAttribute('aria-pressed', on ? 'true' : 'false');
   }
-  localStorage.setItem('theme', theme || 'light');
 }
 
-function toggleTheme() {
-  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-  applyTheme(isDark ? 'light' : 'dark');
+// Auto resolves to the OS scheme — no consumer may treat data-theme as binary.
+function effectiveTheme() {
+  var t = document.documentElement.getAttribute('data-theme');
+  if (t === 'light' || t === 'dark') return t;
+  return (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+}
+
+function initTheme() {
+  var btns = document.querySelectorAll('[data-theme-btn]');
+  for (var i = 0; i < btns.length; i++) {
+    btns[i].addEventListener('click', function () {
+      applyTheme(this.getAttribute('data-theme-btn'));
+    });
+  }
+  var saved = 'auto';
+  try { saved = localStorage.getItem(THEME_KEY) || 'auto'; } catch (e) {}
+  applyTheme(saved);
+  // The palette is pure CSS, so an OS flip while in Auto needs no re-render;
+  // the listener stays as the hook for any follow-up added later.
+  try {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
+      if (document.documentElement.getAttribute('data-theme') !== 'auto') return;
+      document.dispatchEvent(new CustomEvent('rag-theme-change', { detail: { theme: effectiveTheme() } }));
+    });
+  } catch (e) {}
 }
 
 // -----------------------------------------------------------------------
@@ -1266,9 +1310,11 @@ function showView(which) {
   document.getElementById('login-card').style.display = which === 'login' ? 'block' : 'none';
   document.getElementById('access-view').style.display = which === 'access' ? 'block' : 'none';
   document.getElementById('admin-view').style.display = (which === 'access' && isAdmin) ? 'block' : 'none';
-  // Sign out lives in the header on every view: it always just clears both
-  // storage keys and reloads (a no-op when nothing is stored).
-  document.getElementById('signout-btn').style.display = 'inline-flex';
+  // Sign out forgets the locally stored API key.  With no key stored (an
+  // SSO-only session, or a login card reached without a saved key) there is
+  // nothing to forget and the button would be a no-op — keep it hidden.
+  document.getElementById('signout-btn').style.display =
+    getStoredKey() ? 'inline-flex' : 'none';
 }
 
 async function probeAdmin() {
@@ -1304,6 +1350,23 @@ function renderClients() {
       escHtml(g.name + (g.mode === 'ro' ? ' (ro)' : '')) + '</span>'
     ).join('') || '<span class="muted">no datasets granted</span>';
     const src = '<span class="src-tag">' + escHtml(c.source || 'overlay') + '</span>';
+    // 2026-10 configurable-create: a per-user can_create_datasets override is
+    // an OVERLAY field, so an env-managed client can only follow the
+    // deployment default (RAG_DATASETS_CREATE_ALLOWED) until the admin mints
+    // an overlay entry for it — stated here rather than implied.
+    let createCtl;
+    if (c.source === 'env') {
+      createCtl = '<span class="muted" title="Env clients have no overlay entry — the deployment default (RAG_DATASETS_CREATE_ALLOWED) applies">create: default</span>';
+    } else {
+      const state = (c.can_create_datasets === true) ? 'allow'
+                  : (c.can_create_datasets === false) ? 'deny' : 'default';
+      const tag = state === 'allow' ? ' <span class="src-tag" style="color:var(--green,#2a9d5c);border-color:var(--green,#2a9d5c)">create: allowed</span>'
+                : state === 'deny'  ? ' <span class="src-tag" style="color:var(--red);border-color:var(--red)">create: denied</span>'
+                : '';
+      createCtl = tag +
+        '<button class="btn btn-outline btn-sm" onclick="toggleCreatePerm(this)" data-name="' + escHtml(c.name) + '" data-state="' + state + '">' +
+        (state === 'deny' ? 'Allow create' : 'Deny create') + '</button>';
+    }
     const edit = c.source === 'env'
       ? '<span class="muted" title="Defined in RAG_API_KEY_CLIENTS — edit it in the env">env-managed</span>'
       : '<button class="btn btn-outline btn-sm" onclick="toggleGrant(this)" data-name="' + escHtml(c.name) + '">Grants…</button>' +
@@ -1313,7 +1376,7 @@ function renderClients() {
       '<div class="client-name">' + escHtml(c.name) + ' ' + src + ' <span class="client-meta">' + escHtml(c.key_masked || '') + '</span></div>' +
       '<div class="client-datasets">' + chips + '</div>' +
       '</div>' +
-      '<div class="dataset-actions">' + edit + '</div>' +
+      '<div class="dataset-actions">' + createCtl + ' ' + edit + '</div>' +
       '<form class="grant-form" onsubmit="submitGrant(event, this)">' +
       '<div class="grant-picker" data-cname="' + escHtml(c.name) + '">' +
       '<label>Grants (search, tick a dataset, choose ro/rw — * = all)</label>' +
@@ -1535,8 +1598,27 @@ async function revokeClient(btn) {
   }
 }
 
+// 2026-10 configurable-create: flip the per-user can_create_datasets override.
+// allow <-> deny cycles the override; a client on 'default' (no overlay flag)
+// gets an explicit deny first (the least surprising single click: the button
+// always shows the NEXT state).  Flag-only PATCH — no grants touched.
+async function toggleCreatePerm(btn) {
+  const name = btn.dataset.name;
+  const state = btn.dataset.state || 'default';
+  const next = state === 'deny' ? true : false;
+  try {
+    const res = await api('PATCH', '/api/admin/clients/' + encodeURIComponent(name),
+      { can_create_datasets: next });
+    toast(res.message || ("Create permission updated for '" + name + "'"));
+    await loadClients();
+  } catch (e) {
+    if (e.status === 401) { handleAuthRejected(); return; }
+    toast(e.message || 'Create-permission update failed', 'error');
+  }
+}
+
 (function init() {
-  applyTheme(localStorage.getItem('theme') || 'light');
+  initTheme();
   document.getElementById('login-form').addEventListener('submit', connect);
 
   // Escape closes the open inline unlock form (dropping the typed password).

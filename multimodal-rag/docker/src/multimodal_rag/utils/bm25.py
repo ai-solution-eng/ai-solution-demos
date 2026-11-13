@@ -179,12 +179,52 @@ def tokenize(text: str) -> list[str]:
     return out
 
 
+# Media placeholders ("[Image: x.JPG]", "[Video: v.mp4] [0s - 32s]") carry no
+# lexical signal worth indexing.  This regex is the ONE definition of what
+# the BM25 lane considers indexable text, shared by BOTH sides of the df
+# bookkeeping so they can never disagree again (audit 2026-10-16, P1-7): the
+# ingest path counts a document's terms through :func:`indexable_text`, and
+# the delete/prune/reap path must decrement through the SAME function.  When
+# the decrement counted the raw ``page_content`` instead, placeholder terms
+# the ingest side never added were subtracted from OTHER documents' counts
+# (they exist in ``df`` from real text elsewhere), so every delete pushed df
+# and ``total_len`` down and inflated idf (which is always positive).
+_MEDIA_PLACEHOLDER_RE = re.compile(
+    r"\[\s*(?:Image|Video|Audio)\s*:[^\]]*\]\s*(?:\([^)]*\))?"
+    r"(?:\s*\[\s*\d+(?:\.\d+)?\s*s\s*(?:-|\u2013|\u2014)\s*\d+(?:\.\d+)?\s*s\s*\])?",
+    re.IGNORECASE,
+)
+
+
+def indexable_text(text: str) -> str:
+    """The text worth indexing in the BM25 lane for one document.
+
+    Bare media placeholders are stripped; ingest-time VLM/ASR caption text is
+    KEPT -- it is the only searchable content of caption twins and exactly
+    what text queries match against.  (This differs from the embedding-side
+    ``_has_real_text`` gate, which strips captions too: that one decides
+    embedding inputs, this one decides lexical index inputs.)
+    """
+    return _MEDIA_PLACEHOLDER_RE.sub("", text or "").strip()
+
+
 def term_counts(text: str) -> dict[str, int]:
     """Term-frequency map of *text* (document length is ``sum(values)``)."""
     tf: dict[str, int] = {}
     for term in tokenize(text):
         tf[term] = tf.get(term, 0) + 1
     return tf
+
+
+def indexable_term_counts(text: str) -> dict[str, int]:
+    """Term counts of :func:`indexable_text` -- the ingest/decrement invariant.
+
+    Both the ingest-side df increment and the delete-side df decrement MUST
+    count the same terms or the sidecar drifts (see ``_MEDIA_PLACEHOLDER_RE``
+    above).  Routing both through this one function makes that structural
+    rather than a convention each call site has to remember.
+    """
+    return term_counts(indexable_text(text))
 
 
 # ---------------------------------------------------------------------------

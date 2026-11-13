@@ -214,6 +214,97 @@ def _mutate(identity: str, fn: Callable[[dict], bool]) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# D1/D27 - may this identity CREATE a dataset?
+# ---------------------------------------------------------------------------
+
+CREATE_ALLOWED_ENV = "RAG_DATASETS_CREATE_ALLOWED"
+
+#: The D20 fallback identity name bound by the auth middleware on an
+#: unconfigured deployment (api_server._api_key_auth).  Spelled here rather
+#: than imported to keep this module free of an api_server dependency.
+_ANONYMOUS_IDENTITY = "__anonymous__"
+
+
+def deployment_create_allowed() -> bool:
+    """The deployment-wide create default (RAG_DATASETS_CREATE_ALLOWED).
+
+    Truthy/falsy, read PER CALL (the house convention - flip without a
+    restart).  DEFAULT TRUE when unset: the product owner wants ordinary
+    authenticated humans to be able to create, and the old "requires the
+    operator * grant" rule made creation an operator-only power that blocked
+    every SSO user.
+
+    An unrecognised value falls back to the DEFAULT (True) rather than
+    failing closed, matching how the other boolean knobs in this codebase
+    read (e.g. RAG_ACCESS_STORE treats anything non-truthy as off, but a
+    GARBAGE value here is a typo in a permissive knob - the operator sets
+    "0"/"false"/"no" to turn creation OFF explicitly).
+    """
+    raw = os.environ.get(CREATE_ALLOWED_ENV, "").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
+def _can_create_override(name: str) -> bool | None:
+    """The per-user create override from the D17 overlay, or None.
+
+    None means "no override recorded" -> the caller falls back to the
+    deployment default.  Deliberately fail-soft on a broken/absent overlay:
+    an unreadable admin registry must not turn a create into a 500 (the
+    override is an ADMIN convenience, and the deployment default still
+    governs).
+    """
+    try:
+        from multimodal_rag.utils import admin_registry
+
+        return admin_registry.can_create_override(name)
+    except Exception:
+        return None
+
+
+def identity_may_create_datasets(identity: Any | None) -> bool:
+    """True when *identity* may create a dataset (D1/D27, three levels).
+
+    The single predicate BOTH surfaces call - REST's create route and the
+    middleware gate, the SPA's whoami flag, and MCP's create tool.  A gate on
+    one surface is not a gate (XV-1 finding F1), so the decision lives here
+    once.
+
+    Decision order:
+
+      * ADMIN -> True.  Admins act as the deployment.
+      * NO IDENTITY (D15 inactive / legacy single-user) -> True.  Byte-
+        identical to the historical behaviour, where nothing in the registry
+        layer enforced anything.
+      * the D20 ``__anonymous__`` SENTINEL -> True ONLY when the registry is
+        NOT configured.  On a single-user deployment that fallback IS the
+        operator; once the registry is configured it is an unauthenticated
+        stranger, and a stranger must never mint datasets.
+      * a per-user CLIENT -> its per-user override when one is recorded,
+        else the deployment default (:func:`deployment_create_allowed`).
+
+    Creating is NOT a privileged act here, and that is the point of the
+    change: the new dataset is owned by the creator (created_by) and reaches
+    nobody else until an operator grants it - so letting any authenticated
+    human create cannot widen anyone ELSE's world.  The old rule (require the
+    operator ``*`` wildcard) conflated "may create" with "may administer",
+    which is why an ordinary SSO user could not create anything.
+    """
+    if identity is None:
+        return True
+    if getattr(identity, "is_admin", False):
+        return True
+    name = str(getattr(identity, "name", "") or "").strip()
+    if name == _ANONYMOUS_IDENTITY:
+        from multimodal_rag.utils.clients_registry import registry_configured
+
+        return not registry_configured()
+    override = _can_create_override(name) if name else None
+    if override is not None:
+        return bool(override)
+    return deployment_create_allowed()
+
+
+# ---------------------------------------------------------------------------
 # Selections (the D16 core)
 # ---------------------------------------------------------------------------
 
@@ -284,7 +375,7 @@ def dataset_allowed(identity: Any | None, dataset_name: str) -> bool:
         it; the exclusion hides the dataset until re-selected.
     """
     from multimodal_rag.utils.clients_registry import dataset_allowed as operator_allows
-    from multimodal_rag.utils.clients_registry import is_public_dataset
+    from multimodal_rag.utils.clients_registry import identity_owns_dataset, is_public_dataset
 
     if identity is None:
         return operator_allows(identity, dataset_name)
@@ -293,6 +384,19 @@ def dataset_allowed(identity: Any | None, dataset_name: str) -> bool:
     if dataset_name in exclusions_for(identity):
         return False
     if operator_allows(identity, dataset_name) or dataset_name in selections_for(identity):
+        return True
+    # D27 (D2): OWNERSHIP is an access source - the creator reaches the dataset
+    # they created.  Without this a user could create a dataset and then be
+    # unable to open it (the reported D2 defect).
+    #
+    # Position matters: AFTER the exclusion gate, so a creator who deliberately
+    # deselected their own dataset stays deselected (the user's checked set is
+    # authoritative - the 2026-10 ruling), and after the operator ACL /
+    # selection union, which are the stronger EXPLICIT grants.  The gate itself
+    # is identity_owns_dataset, which refuses admins, the reserved sentinels and
+    # pre-D23 unstamped datasets - so ownership can never be inherited through a
+    # name collision (S1) or claimed on a dataset with no provable creator.
+    if identity_owns_dataset(identity, dataset_name):
         return True
     # D26 global-by-default: a published dataset is in everyone's world —
     # but NOT the D20 anonymous identity's (cross-validation 2026-10: an
@@ -331,6 +435,7 @@ def dataset_write_allowed(identity: Any | None, dataset_name: str) -> bool:
         GRANT_RO,
         GRANT_RW,
         grant_mode,
+        identity_owns_dataset,
         is_public_dataset,
     )
 
@@ -339,6 +444,17 @@ def dataset_write_allowed(identity: Any | None, dataset_name: str) -> bool:
     mode = grant_mode(identity, dataset_name)
     if mode is not None:
         return mode == GRANT_RW
+    # D27 (D2): the creator OWNS the dataset, so they may write it - the owner
+    # half of "a creator can use what they made".
+    #
+    # Position matters: AFTER the explicit-grant check, so an operator ro grant
+    # still binds the creator (capabilities travel with the credential, and an
+    # operator ro is a floor the identity cannot lift by owning the dataset),
+    # and BEFORE the global/ro fallback below, which would otherwise deny it -
+    # a creator reaches their own dataset rw even when it is published as a
+    # global.
+    if identity_owns_dataset(identity, dataset_name):
+        return True
     # D26 (cross-validation 2026-10): a GLOBAL dataset reached ONLY via the
     # global flag — with or without a self-selection — is read-only by
     # construction, and it must STAY ro if the flag is later unpublished:

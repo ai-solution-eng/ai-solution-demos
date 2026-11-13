@@ -37,6 +37,12 @@ data:
   RAG_CAPTION_WITH_VLM: {{ .Values.rag.captionWithVlm | quote }}
   RAG_REMOTE: {{ .Values.rag.remote | quote }}
   RAG_DEDUP_THRESHOLD: {{ .Values.rag.dedupThreshold | quote }}
+  # Per-lane Qdrant prefetch floor (vector_store._prefetch_floor; P1-2c,
+  # 2026-11-10 audit).  Code default 200; RAG_PREFETCH_FLOOR above ~1000 is
+  # clamped by the app (_MAX_PREFETCH_FLOOR) because a huge Prefetch limit
+  # is sent verbatim and can OOM the node.  Operator knob — raise only to
+  # trade page-cache for recall stability.
+  RAG_PREFETCH_FLOOR: {{ int (.Values.rag.prefetchFloor | default 200) | quote }}
   {{- $unlockMaxTtl := 86400 }}
   {{- if hasKey .Values.rag "unlockMaxTtl" }}{{- $unlockMaxTtl = int .Values.rag.unlockMaxTtl }}{{- end }}
   RAG_UNLOCK_MAX_TTL: {{ $unlockMaxTtl | quote }}
@@ -47,8 +53,16 @@ data:
   # chart (gated-feature rule).  Format: "dense,sparse[,k]".
   RAG_RRF_DEFAULT: "{{ $rrf.dense | default 1.0 }},{{ $rrf.sparse | default 1.0 }}{{- if $rrf.k }},{{ $rrf.k }}{{- end }}"
   {{- end }}
-  # Media base URL (for PVC-to-HTTP conversion in MCP search results)
+  # Media base URL (for PVC-to-HTTP conversion in MCP search results).
+  # Rendered ONLY while the ezua VirtualService renders — the same guard the
+  # VirtualService itself uses. An endpoint with no VS in front of it is
+  # unreachable, and a truthy MEDIA_BASE_URL DISENGAGES the own-media SSRF
+  # exemption (url_policy.py), so it must go empty, not stale.
+  {{- if and .Values.ezua.enabled .Values.ezua.virtualService.enabled }}
   MEDIA_BASE_URL: {{ printf "https://%s" .Values.ezua.virtualService.endpoint | quote }}
+  {{- else }}
+  MEDIA_BASE_URL: ""
+  {{- end }}
   # S3 / MinIO endpoint (not sensitive — just a URL).  Optional: leave
   # empty to use the default boto3 credential chain (IAM, ~/.aws/…).
   S3_ENDPOINT_URL: {{ (.Values.s3.endpointUrl) | default "" | quote }}
@@ -64,6 +78,8 @@ data:
   MEDIA_TOKEN_TTL: {{ int (.Values.security.mediaTokenTtl | default 3600) | quote }}
   PW_MAX_FAILURES: {{ int (.Values.security.pwMaxFailures | default 10) | quote }}
   PW_FAIL_WINDOW: {{ int (.Values.security.pwFailWindow | default 300) | quote }}
+  # D24 proxy-identity trust — default OFF (P0-1 2026-10-16): the headers are
+  # attacker-settable on any path that bypasses the gateway AuthorizationPolicy.
   RAG_TRUST_PROXY_IDENTITY: {{ .Values.security.trustProxyIdentity | default false | quote }}
   # D16 self-service dataset selection (the /access checkbox model) —
   # ALWAYS rendered (the default is true, ratified 2026-09-24): with the
@@ -71,14 +87,32 @@ data:
   # with the password, saved per identity under /data/access); effective
   # access = operator ACL ∪ selections.  Explicit false opts out.
   RAG_ACCESS_STORE: {{ .Values.security.accessStore | default false | quote }}
+  # Dataset creation by ordinary users (SSO / named API keys). Default true: a
+  # dataset is owned by whoever created it and reaches nobody else until an
+  # operator grants it. Set false for admin-only creation. A per-user override
+  # on the /access page beats this default in either direction. Read per request.
+  # NOT '| default true' — sprig treats false as empty, which would make the
+  # knob impossible to turn off.
+  RAG_DATASETS_CREATE_ALLOWED: {{ .Values.security.datasetsCreateAllowed | quote }}
+  {{- if .Values.security.enforcingProxySignal }}
+  # P0-1 positive assertion (Zone A): proxy-identity requests must carry
+  # X-Enforcing-Proxy == this value.  The ingress/gateway MUST be wired to
+  # inject that header on EVERY request (oauth2-proxy --custom-headers or
+  # Istio header injection) BEFORE this is set — unwired = fail closed (the
+  # proxy-identity credential simply never resolves).  Rendered ONLY when
+  # set; empty default keeps the env unset (Zone A's D21-token fallback).
+  RAG_ENFORCING_PROXY_SIGNAL: {{ .Values.security.enforcingProxySignal | quote }}
+  {{- end }}
   {{- if .Values.security.accessDenySelect }}
   RAG_ACCESS_DENY_SELECT: {{ .Values.security.accessDenySelect | quote }}
   {{- end }}
   {{- if .Values.security.accessSelfMint }}
-  # D25 SSO self-mint (chart default ON — set security.accessSelfMint to
-  # false to omit): SSO-authenticated identities (JWT / SSO cookie /
+  # D25 SSO self-mint — OPT-IN (chart default false since the P0-1
+  # remediation, 2026-10-16): SSO-authenticated identities (JWT / SSO cookie /
   # trusted proxy headers) may mint their OWN long-lived API key from the
-  # Access page.  Read per request — flip without a restart.
+  # Access page.  Rendered ONLY when security.accessSelfMint is true; unset
+  # env = the app's inert default (mint 409s).  Read per request — flip
+  # without a restart.
   RAG_ACCESS_SELF_MINT: "true"
   {{- end }}
   {{- if .Values.security.memoryDefault }}

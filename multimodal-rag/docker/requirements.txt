@@ -30,7 +30,16 @@ tokenizers>=0.15,<1
 webrtcvad>=2.0.10
 
 # PDF processing
-PyMuPDF>=1.24.0
+# Pinned below 2.0. PyMuPDF 2.0 (released 2026-10-19) is a meta-package that
+# hard-depends on pymupdf-layout + pymupdf4llm, which drag an ONNX runtime and
+# an ML layout-analysis stack (78 threads on import) into every container. This
+# app uses PyMuPDF only for page text/image extraction and never touches the
+# layout analyzer. It is also two days old at the time of pinning, and its own
+# metadata lists pymupdf_layout twice under two spellings.
+# NOTE: this pin is NOT a fix for the v6.0.1 startup hang — that remains
+# undiagnosed (see the release notes). It only keeps an unused, brand-new
+# dependency out of the image.
+PyMuPDF>=1.24.0,<2
 
 # Image processing
 Pillow>=10.0.0

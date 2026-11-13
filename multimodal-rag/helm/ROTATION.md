@@ -236,3 +236,28 @@ secret/password/token/apiKey-named keys, across yaml/yml/py/md/txt/env files. Ex
 any hit. Self-test: `bash pcai_utils/secret_scan.sh --self-test`.
 Suggested CI/pre-commit wiring: `pcai_utils/hooks/pre-commit.secret-scan` (consumed by the
 Wave-2 git agent).
+
+---
+
+## 7 · Image digest pinning (P3-7, 2026-11-10 audit)
+
+Tags are mutable: `v6.3.0`, `v1.19.2` and especially redis's `7-alpine` branch tag can be
+re-pushed upstream at any time. All three charts now accept an OPTIONAL digest per image
+(`image.digest`, `qdrant.image.digest`, `redis.image.digest`); when set, EVERY workload that
+consumes that image (API, MCP sidecar, embed-batcher, backup/watched/stm-reaper cron pods,
+qdrant, redis) renders `repository:tag@sha256:...` — the tag stays human-readable, the pull
+becomes immutable.
+
+Release flow (per image):
+
+    docker buildx imagetools inspect ghcr.io/ai-solution-eng/multimodal-rag-mcp:v<VERSION> \
+      | grep -m1 Digest          # or: crane digest <repo>:<tag>
+
+    # then, in the release values (never in a tracked file):
+    helm upgrade <release> . -n <ns> --reuse-values \
+      --set image.digest=sha256:<...> --set qdrant.image.digest=sha256:<...>
+
+Rotation notes: a digest pin is NOT a rotation (the kubelet re-pulls only on pod
+recreation); change the digest + tag together in the same upgrade, and keep
+`security.requirePinnedKeys: true` on GitOps pipelines so the key material follows the same
+immutability discipline (see [DEPLOYMENT.md § 3.10](../documentation/DEPLOYMENT.md) — P2-13).

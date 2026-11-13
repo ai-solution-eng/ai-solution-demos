@@ -2,8 +2,8 @@
 
 This repo ships a Multimodal RAG MCP server. When connected to opencode it provides **long-term memory** of past interactions via MCP tools:
 
-- **Memory tools** — personal, per-user long-term memory: `add_memory`, `search_memory`, `delete_memory`, `list_memories`, `forget_session`. The memory dataset and its password are resolved **server-side from your identity** (the /access ★ binding + saved selection), so you do NOT pass `dataset_name` or `password` to these tools.
-- **Knowledge tools** — access to the shared project/knowledge datasets: `search_dataset`, `search_datasets`, `list_datasets`, `get_dataset_files`, `get_dataset_info`, `unlock_dataset`, `dataset_add_documents`, `dataset_delete_documents`, `dataset_replace_document`, `describe_media`, `transcribe_audio`. For these you DO pass `dataset_name` explicitly; pass `password` only for protected datasets.
+- **Memory tools** — personal, per-user long-term memory: `add_memory`, `search_memory`, `delete_memory`, `list_memories`, `forget_session`, plus the procedural-memory pair `recall_playbooks` / `record_playbook_outcome` and the lifecycle pass `consolidate_memories`. The memory dataset and its password are resolved **server-side from your identity** (the /access ★ binding + saved selection), so you do NOT pass `dataset_name` or `password` to these tools.
+- **Knowledge tools** — access to the shared project/knowledge datasets: `search_dataset`, `search_datasets`, `list_datasets`, `get_dataset_files`, `get_dataset_info`, `unlock_dataset`, `dataset_add_documents`, `dataset_delete_documents`, `dataset_replace_document`, `inspect_media`. For these you DO pass `dataset_name` explicitly; pass `password` only for protected datasets.
 
 Tools arrive prefixed with the MCP connection name (e.g. `rag_add_memory` under the unified 2026-10 config; `rag-memory_add_memory` / `rag-knowledge_search_dataset` under the legacy two-connection pattern). Adapt the prefixes below to whatever `opencode mcp list` shows.
 
@@ -15,6 +15,12 @@ Tools arrive prefixed with the MCP connection name (e.g. `rag_add_memory` under 
 - At the **start of any non-trivial task** (a task likely to span multiple steps or touch existing code), call `search_memory` with a concise summary of the task. This surfaces relevant past decisions, preferences, gotchas, and prior work before you act.
 - Whenever the **user references prior work** ("remember when…", "like we did before", "last time"), call `search_memory` with the described topic.
 - Keep `top_k` at the default (5). Turn the reranker on only if the first recall feels off.
+
+### When to RECALL — `recall_playbooks`
+- **Before attempting a class of task someone may have solved before**, call `recall_playbooks` with a one-line description of the task ("recover a pod whose finalizer never clears", "rotate a dataset password without downtime"). A playbook is a procedure with an inferred outcome and success/fail counters — it is not a fact, so do not use it for knowledge lookup.
+- Call it **on demand, not at session start**: most sessions need no playbook, and a stuffed preamble is paid on every request.
+- Read the counts, not just the steps. `evidence: "unproven"` means nobody has ever scored it — treat it as a hypothesis. When two playbooks for the same task disagree, BOTH are returned with their counts; pick deliberately, do not average them.
+- **After you apply one, call `record_playbook_outcome(memory_id, "success" | "fail")`.** A playbook that is recalled but never scored stays unproven and sorts last forever — the counter is the only ranking signal the store trusts.
 
 ### When to WRITE — `add_memory`
 A full record of this session (prompts, responses, tool calls, file changes) is captured automatically by the `session-memory-logger` plugin (`kind: session_history`), so don't reproduce the session here — only durable, distilled facts.

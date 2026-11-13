@@ -5,16 +5,29 @@ import os
 import re
 import weakref
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
 from math import ceil
 from typing import Any, overload
 
 import httpx2
-from openai.types.create_embedding_response import CreateEmbeddingResponse
 
 from .general_tools import list_chunker, sync_wrapper_safe
 from .logging_utils import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _embedding_response_type() -> Any:
+    """The OpenAI SDK response type, imported on first use.
+
+    Importing openai costs ~0.5s and pulls in its whole generated types tree.
+    Keeping it out of this module import means a caller that only builds a
+    DecisionModel (which never speaks the OpenAI SDK) never pays for it.
+    """
+    from openai.types.create_embedding_response import CreateEmbeddingResponse
+
+    return CreateEmbeddingResponse
+
 
 __all__ = ["InputConversion", "MultiModalEmbeddings", "MultiModalReranker"]
 
@@ -239,9 +252,10 @@ def _guard_media_fetch(url: str) -> None:
     * http(s) — the media URL policy (``url_policy._check_media_url_policy``)
       runs at check time, the same gate the MCP/REST entry points apply, so
       this is idempotent for gated callers and closes the hole for internal
-      ones.  Residual (documented, matches the pre-existing branch):
-      ``follow_redirects`` hops are not re-validated — the pinned-fetch
-      upgrade lives in ``rag_system._afetch_media_bytes``.
+      ones.  This is the ENTRY check only; the fetch itself now ALSO
+      re-validates and pins every redirect hop and bounds the body
+      (:func:`_afetch_media_bounded`, audit 2026-10-16 P1-5 — the residual
+      this docstring used to document is closed).
     * ``data:`` — inert (never read from disk, size-bounded by the request
       body cap); keeps its pre-existing flow.
     * everything else (``file://`` / bare path) — REUSES the canonical
@@ -276,6 +290,121 @@ def _guard_media_fetch(url: str) -> None:
     if not _media_path_allowed(path):
         # Message parity with rag_system's local-media refusals.
         raise MediaRefError(f"Local media path '{path}' is outside the allowed prefixes (MEDIA_ALLOW_PATH_PREFIXES)")
+
+
+# ---------------------------------------------------------------------------
+# Bounded, hop-validated media fetch for the embedder path (audit 2026-10-16,
+# P1-5)
+# ---------------------------------------------------------------------------
+# The embedder's http(s) media fetch used to be
+#     http_async_client.get(url, follow_redirects=True)  ->  response.content
+# the WHOLE body buffered into RAM with no ceiling, and every redirect hop
+# followed blind.  MAX_MEDIA_FETCH_BYTES / per-hop re-validation existed only
+# in rag_system._afetch_media_bytes, so a remote media ref reaching the
+# embedder (POST /documents, MCP add_memory, a search query dict) could stream
+# an unbounded response into the pod — and, for a video, straight on into
+# ffmpeg/PyAV, doubling the pressure.
+#
+# These helpers mirror the guarded path's contract (same env vars, same
+# redirect limit, same DNS pinning, same error style) WITHOUT importing
+# rag_system — that module imports this one, so the reverse would be a cycle.
+# The bounded accumulating reader is the only real addition: the guarded path
+# keeps its own inline loop, and changing that one is outside this zone.
+
+# Cap for one server-side media fetch (embed / query time).  Same env var and
+# default as rag_system._MAX_MEDIA_FETCH_BYTES — the two must agree, so read it
+# at import exactly like the guarded path does.  0 disables the ceiling.
+_MAX_MEDIA_FETCH_BYTES = max(0, int(os.environ.get("MAX_MEDIA_FETCH_BYTES", str(512 * 1024 * 1024))))
+
+# Redirect hops a media fetch may follow.  Every hop is re-validated (and
+# pinned) — a redirect is just another remote fetch.  Mirrors
+# rag_system._MEDIA_MAX_REDIRECTS (which reads MAX_MEDIA_REDIRECTS).
+_MEDIA_MAX_REDIRECTS = max(1, int(os.environ.get("MAX_MEDIA_REDIRECTS", "5")))
+
+
+@dataclass
+class _FetchedMedia:
+    """One media body fetched over http(s), with its response metadata.
+
+    ``content_type`` is carried through because ``_fetch_obj_async`` derives
+    the embed request's mime type from it; it is read from the FINAL hop's
+    response (the one whose body was actually returned).
+    """
+
+    body: bytes
+    content_type: str
+
+
+async def _avalidate_fetch_url(url: str):
+    """Offloaded :func:`url_policy.validate_fetch_url` (mirrors rag_system's).
+
+    DNS resolution is the only blocking part and must stay off the event loop.
+    Lazy import: url_policy lazily imports media_paths and vice versa — keep
+    this coupling lazy too (house convention) so no import order can cycle.
+    """
+    import functools
+
+    from .url_policy import validate_fetch_url
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return validate_fetch_url(url, allow_loopback=True)
+    return await loop.run_in_executor(None, functools.partial(validate_fetch_url, url, allow_loopback=True))
+
+
+async def _aread_bounded(resp: Any, *, cap: int, url: str) -> bytes:
+    """Accumulate *resp*'s body, refusing to exceed *cap* bytes.
+
+    ``cap <= 0`` disables the ceiling.  Raises :class:`ValueError` with the
+    same message shape the guarded path uses, so callers/tests see one error
+    contract on both fetch sites.
+    """
+    buf = bytearray()
+    async for chunk in resp.aiter_bytes():
+        buf += chunk
+        if cap and len(buf) > cap:
+            raise ValueError(f"Media fetch of {url} exceeds MAX_MEDIA_FETCH_BYTES ({cap} bytes)")
+    return bytes(buf)
+
+
+async def _afetch_media_bounded(url: str, client: Any) -> _FetchedMedia:
+    """Fetch *url* over http(s): bounded body, per-hop re-validation, DNS pin.
+
+    *client* is the embedder's per-loop ``httpx2.AsyncClient`` (shared, so it
+    is NEVER closed here).  Redirects are followed manually and every hop is
+    re-validated against the media URL policy and connected to the IP that
+    policy just validated — a public media URL must not be able to bounce the
+    fetch into private space, and check-time DNS must equal fetch-time DNS.
+    """
+    current = url
+    for _hop in range(_MEDIA_MAX_REDIRECTS + 1):
+        pinned = await _avalidate_fetch_url(current)
+        request = client.build_request(
+            "GET",
+            pinned.pinned_url,
+            headers={"Host": pinned.host_header} if pinned.host_header else None,
+            extensions=({"sni_hostname": pinned.sni_hostname} if pinned.sni_hostname else None),
+        )
+        resp = await client.send(request, stream=True, follow_redirects=False)
+        try:
+            if resp.is_redirect:
+                location = resp.headers.get("location")
+                if not location:
+                    raise ValueError(f"Redirect from {current} has no Location header")
+                from urllib.parse import urljoin
+
+                current = urljoin(current, location)
+                continue
+            resp.raise_for_status()
+            body = await _aread_bounded(resp, cap=_MAX_MEDIA_FETCH_BYTES, url=url)
+            return _FetchedMedia(
+                body=body,
+                content_type=resp.headers.get("content-type", "application/octet-stream"),
+            )
+        finally:
+            await resp.aclose()
+    raise ValueError(f"Media fetch of {url} exceeded {_MEDIA_MAX_REDIRECTS} redirects")
 
 
 class InputConversion:
@@ -592,9 +721,12 @@ class InputConversion:
         _guard_media_fetch(url)
 
         if url.startswith(("http://", "https://")):
-            response = await self.emb.http_async_client.get(url, follow_redirects=True)
-            response.raise_for_status()
-            video_bytes = response.content
+            # Bounded + hop-validated (audit P1-5): this used to be
+            # http_async_client.get(url, follow_redirects=True) -> response.content,
+            # which buffered an unbounded body into RAM and followed redirects
+            # blind.  An oversized fetch now raises BEFORE the bytes reach PyAV.
+            fetched = await _afetch_media_bounded(url, self.emb.http_async_client)
+            video_bytes = fetched.body
             # CPU-bound: PyAV decode, or ffprobe+ffmpeg subprocesses (30s/120s
             # timeouts), plus PIL resize — must run off the event loop.
             frames = await asyncio.to_thread(self._extract_video_frames, video_bytes, nf, max_px)
@@ -632,11 +764,12 @@ class InputConversion:
         _guard_media_fetch(url)
 
         if url.startswith(("http://", "https://")):
-            response = await self.emb.http_async_client.get(url, follow_redirects=True)
-            response.raise_for_status()
-            raw_bytes = response.content
-            content_type = response.headers.get("content-type", "application/octet-stream")
-            mime_type = content_type.split(";")[0].strip()
+            # Bounded + hop-validated (audit P1-5) — same contract as
+            # rag_system._afetch_media_bytes, so a remote ref cannot stream an
+            # unbounded body into RAM and a redirect cannot escape the policy.
+            fetched = await _afetch_media_bounded(url, self.emb.http_async_client)
+            raw_bytes = fetched.body
+            mime_type = fetched.content_type.split(";")[0].strip()
         else:
             url = url.removeprefix("file://")
 
@@ -1232,7 +1365,7 @@ class MultiModalEmbeddings:
     async def _embed_single_message_unbounded(self, input_dict: list[dict[str, Any]]) -> list[float]:
         response = await self.emb.async_client.post(
             "/embeddings",
-            cast_to=CreateEmbeddingResponse,  # Ensure this type is imported in your script
+            cast_to=_embedding_response_type(),  # Ensure this type is imported in your script
             body={
                 "model": self.emb.model_name,
                 "messages": input_dict,  # Assuming the endpoint accepts the string input_dict here
@@ -1300,7 +1433,7 @@ class MultiModalEmbeddings:
         formatted = [self._fmt_chat_template(t) for t in texts]
         response = await self.emb.async_client.post(
             "/embeddings",
-            cast_to=CreateEmbeddingResponse,
+            cast_to=_embedding_response_type(),
             body={
                 "model": self.emb.model_name,
                 "input": formatted,

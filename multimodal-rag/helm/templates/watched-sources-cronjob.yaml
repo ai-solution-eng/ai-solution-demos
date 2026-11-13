@@ -86,6 +86,36 @@ spec:
             app: {{ .Values.deployment.appName }}
         spec:
           automountServiceAccountToken: false
+          # ── qdrant readiness gate (2026-10-17 incident) ──────────────────
+          # A cron tick must NOT touch qdrant while the cluster is still
+          # forming: after a cold STS restart a node can answer 503 for
+          # minutes, and a read that lands on an orphaned shard panics the
+          # leader (min > max).  Wait for /readyz, bounded by
+          # cronQdrantReadyTimeoutSeconds (default 1800 = 30 min); on
+          # timeout this tick FAILS loudly (the next tick retries) rather
+          # than hammering a half-joined cluster.
+          initContainers:
+            - name: wait-for-qdrant
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}{{ if .Values.image.digest }}@{{ .Values.image.digest }}{{ end }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command:
+                - python
+                - -c
+                - |
+                  import sys, time, urllib.request
+                  url = "http://{{ .Values.deployment.name }}-qdrant:{{ .Values.qdrant.httpPort }}/readyz"
+                  budget = int("{{ .Values.cronQdrantReadyTimeoutSeconds | default 1800 }}")
+                  deadline = time.time() + budget
+                  while True:
+                      try:
+                          with urllib.request.urlopen(url, timeout=5) as r:
+                              if r.status == 200:
+                                  print("qdrant /readyz OK"); sys.exit(0)
+                      except Exception:
+                          pass
+                      if time.time() >= deadline:
+                          print(f"qdrant not ready after {budget}s - failing this tick (next tick retries)"); sys.exit(1)
+                      time.sleep(10)
           # Never (not OnFailure): with OnFailure the job controller DELETES
           # the pod the moment backoffLimit is reached (observed 2026-09
           # pcai-se: SuccessfulDelete ~5 s after start — the cron's failure
@@ -97,7 +127,7 @@ spec:
           restartPolicy: Never
           containers:
             - name: watched-sources
-              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}{{ if .Values.image.digest }}@{{ .Values.image.digest }}{{ end }}"
               imagePullPolicy: {{ .Values.image.pullPolicy }}
               command:
                 - python
@@ -210,7 +240,12 @@ spec:
                                     f"create it (or fix the prefix in watchedSources.sources)")
                           failed += 1
                   print(f"[watched] done: {ok} ok, {failed} failed, {skipped} skipped")
-                  raise SystemExit(1 if failed and not ok else 0)
+                  # P2-9 (2026-11-10 audit): ANY failed source fails the tick -
+                  # a 9/10 sync must not report Job Succeeded (the backup twin
+                  # got the same contract).  The next tick retries every source;
+                  # the per-dataset ETag state makes re-ingest a no-op for
+                  # unchanged objects.
+                  raise SystemExit(1 if failed else 0)
               envFrom:
                 - configMapRef:
                     name: {{ .Values.deployment.name }}-config
@@ -244,6 +279,10 @@ spec:
                     secretKeyRef:
                       name: {{ .Values.security.existingSecret }}
                       key: {{ .Values.security.existingSecretMediaTokenKey }}
+                {{- end }}
+                {{- range $key, $val := .Values.extraEnv }}
+                - name: {{ $key }}
+                  value: {{ $val | quote }}
                 {{- end }}
               securityContext:
                 allowPrivilegeEscalation: false

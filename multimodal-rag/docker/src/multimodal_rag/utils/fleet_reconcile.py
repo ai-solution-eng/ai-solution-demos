@@ -23,7 +23,9 @@ the sha recorded at the last reconcile (`.fleet_reconcile_state.json`):
 
 Mirrors get the identical treatment, so a peer-write reversion to a mirror
 (rep unchanged) is repaired from the repo automatically, and a mirror is never
-allowed to redefine fleet content — only a REPO copy can promote.
+allowed to redefine fleet content — only a REPO copy can promote. A mirror
+pair is therefore reconciled with promote DISABLED: when the mirror alone
+moved, the mirror is REPAIRED from the repo copy, never the other way round.
 
 Everything is dry-run by default; `--run` applies. Scope with `--repos` (the
 "directories of interest"): repo names exactly as passed to link_utils.sh
@@ -48,6 +50,7 @@ import glob
 import hashlib
 import json
 import os
+import stat
 import subprocess
 import sys
 import time
@@ -63,7 +66,7 @@ EXCEPTIONS = PC / "reconcile_exceptions.json"
 ROOT_FILES = ["hardlinker.py", "prune_charts.py", "ruff.toml", "mypy.ini", "bump_version.sh", "mcp_auth.py"]
 # Control-plane scripts that STAY in pcai_utils — never distributed into
 # consumer utils dirs (same class as hardlinker.py / prune_charts.py).
-CONTROL_PLANE = {"hardlinker.py", "prune_charts.py", "fleet_reconcile.py"}
+CONTROL_PLANE = {"hardlinker.py", "prune_charts.py", "fleet_reconcile.py", "__init__.py"}
 # pcai_utils modules distributed into src/*/utils (derived, like the gate).
 UTIL_MODULES = [f for f in sorted(PC.glob("*.py")) if f.name not in CONTROL_PLANE and "sync-conflict" not in f.name]
 PREPROCESSORS = sorted((PC / "preprocessors").glob("*.py"))
@@ -211,11 +214,19 @@ def relink(src: Path, dst: Path) -> str:
 
 def promote(src_repo_copy: Path, source: Path) -> str:
     """Copy content INTO the source inode (truncate-write — inode preserved,
-    every existing link updates atomically), then relink the origin copy."""
+    every existing link updates atomically), then relink the origin copy.
+
+    The source's mode is PRESERVED.  These are shared, hardlinked mesh files:
+    a hardcoded 0o644 stripped the exec bit from every 100755 member
+    (hardlinker.py, bump_version.sh, prune_charts.py — 15 links each) the
+    first time an edit to one was promoted, and git never repairs it because
+    the index bit was never wrong.
+    """
     data = src_repo_copy.read_bytes()
+    mode = stat.S_IMODE(os.stat(source).st_mode)
     with open(source, "wb") as f:  # truncate-write: inode preserved
         f.write(data)
-    os.chmod(source, 0o644)
+    os.chmod(source, mode)
     return "promoted"
 
 
@@ -262,9 +273,14 @@ class Reconciler:
 
     # ------------------------------------------------------------------
 
-    def reconcile_file(self, key: str, source: Path, copies: list[Path]) -> bool:
+    def reconcile_file(self, key: str, source: Path, copies: list[Path], promote_allowed: bool = True) -> bool:
         """Reconcile one managed file across source + copies. Returns True
-        when clean (synced or repaired), False on conflict."""
+        when clean (synced or repaired), False on conflict.
+
+        A promote_allowed=False pair is a MIRROR pair: *source* is the repo
+        copy, i.e. the content source, so a copy that moved on its own is
+        REPAIRED from it and never promoted into it.
+        """
         if not source.is_file():
             return True  # nothing to manage (defensive)
         src_sha = sha_of(source)
@@ -317,6 +333,10 @@ class Reconciler:
                     # Uncommitted repo work: the repo copy is the advancing
                     # side — promote it exactly as the steady-state path would.
                     winner = divergent[0][0]
+                    if not promote_allowed:
+                        return self._repair_copy(
+                            key, source, copies, missing, src_sha, "mirror moved on its own (bootstrap)"
+                        )
                     if self.run:
                         promote(winner, source)
                         for p in [c for c in copies if c.exists()]:
@@ -377,6 +397,13 @@ class Reconciler:
             shas = {s for _, s in repo_changed}
             if len(shas) == 1:
                 winner = repo_changed[0][0]
+                if not promote_allowed:
+                    # Mirror pair, repo copy at baseline: a mirror may not
+                    # redefine fleet content (a Syncthing reversion here would
+                    # propagate STALE bytes fleet-wide). Repair, never promote.
+                    return self._repair_copy(
+                        key, source, copies, missing, src_sha, "mirror moved on its own (repo copy at baseline)"
+                    )
                 if self.run:
                     promote(winner, source)
                     for p in [c for c in copies if c.exists()]:
@@ -432,6 +459,29 @@ class Reconciler:
         self.new_state[key] = src_sha
         return True
 
+    def _repair_copy(
+        self, key: str, source: Path, copies: list[Path], missing: list[Path], src_sha: str, why: str
+    ) -> bool:
+        """Re-link every copy onto *source*'s inode: the source content wins.
+
+        The mirror-pair path (promote_allowed=False).  A mirror that moved on
+        its own is repaired from the repo copy and its state recorded —
+        never promoted into the repo copy, which would let a peer-write
+        reversion or a mirror edit redefine fleet content.
+        """
+        if self.run:
+            for p in [c for c in copies if c.exists()]:
+                if os.stat(source).st_ino != os.stat(p).st_ino:
+                    relink(source, p)
+            for p in missing:
+                p.parent.mkdir(parents=True, exist_ok=True)
+                os.link(source, p)
+        self.log(
+            f"  [REPAIR] {key}: {why} -> copy(ies) re-linked from the source inode ({'ran' if self.run else 'dry-run'})"
+        )
+        self.new_state[key] = src_sha
+        return True
+
     # ------------------------------------------------------------------
 
     def run_fleet(self, repos: list[Path]) -> int:
@@ -466,7 +516,7 @@ class Reconciler:
                 rest = Path(*Path(rel).parts[1:])  # strip "<repoName>/"
                 repo_copy = repo / rest
                 if repo_copy.is_file():
-                    ok &= self.reconcile_file(f"{rel} (mirror)", repo_copy, [mp])
+                    ok &= self.reconcile_file(f"{rel} (mirror)", repo_copy, [mp], promote_allowed=False)
         self.state.update({k: v for k, v in self.new_state.items()})
         self._save_state()
         if self.conflicts:

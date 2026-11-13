@@ -31,7 +31,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: qdrant
-          image: "{{ .Values.qdrant.image.repository }}:{{ .Values.qdrant.image.tag }}"
+          image: "{{ .Values.qdrant.image.repository }}:{{ .Values.qdrant.image.tag }}{{ if .Values.qdrant.image.digest }}@{{ .Values.qdrant.image.digest }}{{ end }}"
           imagePullPolicy: {{ .Values.qdrant.image.pullPolicy }}
           env:
             {{- if .Values.qdrant.telemetryDisabled }}
@@ -44,6 +44,11 @@ spec:
             {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
+            # P3-8 (2026-11-10 audit): every other container in every chart
+            # runs readOnlyRootFilesystem; qdrant was the outlier.  Its writes
+            # go to /qdrant/storage (the PVC); /tmp gets an emptyDir for any
+            # scratch the binary needs.
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
           ports:
@@ -54,13 +59,52 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /qdrant/storage
+            - name: snapshots
+              # B1 (wave-2 review): qdrant writes snapshots to SNAPSHOTS_PATH
+              # (default /qdrant/snapshots).  Under the P3-8 read-only root
+              # filesystem the directory must exist writable or snapshot
+              # creation fails (and can fail at startup).  emptyDir keeps
+              # snapshots volatile by design — they are export artifacts, not
+              # durable state; point this at a real PVC if you keep them.
+              mountPath: /qdrant/snapshots
+            - name: tmp
+              mountPath: /tmp
           resources: {{ toYaml .Values.resources.qdrant | nindent 12 }}
+          # startupProbe first: a large-collection cold start (recovery replay)
+          # can far exceed 30s — without it the liveness probe kills the pod
+          # mid-replay and the STS crash-loops (audit 2026-10-16). Same shape
+          # as the scale charts.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.qdrant.httpPort }}
+            # A cold join replays the whole raft log over NFS; the old 30x5s
+            # (150s) budget killed the pod mid-catch-up (2026-10-17 incident).
+            # Generous by default because the safe wait is data-dependent.
+            failureThreshold: {{ .Values.qdrant.startupProbeFailureThreshold | default 240 }}
+            periodSeconds: 5
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: {{ .Values.qdrant.httpPort }}
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
           livenessProbe:
             httpGet:
               path: /healthz
               port: {{ .Values.qdrant.httpPort }}
-            initialDelaySeconds: 10
+            initialDelaySeconds: 0
             periodSeconds: 10
+      volumes:
+        # P3-8 (2026-11-10 audit): scratch for the readOnlyRootFilesystem
+        # qdrant container (the real writes go to the data volumeClaimTemplate).
+        - name: tmp
+          emptyDir: {}
+        # B1 (wave-2 review): writable snapshots dir (SNAPSHOTS_PATH default).
+        - name: snapshots
+          emptyDir: {}
   volumeClaimTemplates:
     - metadata:
         name: data

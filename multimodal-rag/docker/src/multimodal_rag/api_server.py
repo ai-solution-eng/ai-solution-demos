@@ -51,6 +51,14 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingRes
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from multimodal_rag import __version__
+from multimodal_rag.agentic_retrieval import (
+    MAX_AGENTIC_ROUNDS,
+    AgenticConfig,
+    AgenticTrace,
+    build_chat_judge,
+    query_text,
+    run_agentic_entries,
+)
 from multimodal_rag.dataset_manager import (
     DatasetManager,
     EmbedderMismatchError,
@@ -413,6 +421,37 @@ _UNLOCK_CACHE: dict[tuple[str, str], tuple[float, str]] = {}
 _UNLOCK_CACHE_LOCK = threading.Lock()
 _UNLOCK_TTL = int(os.environ.get("UNLOCK_TTL", "1800"))  # seconds, default 30 min
 
+# P1-4 (audit 2026-11-10): hard upper bound on unlock-cache entries.  The key
+# is (dataset, caller id) and the caller id is DERIVED FROM THE REQUEST (D10),
+# so a caller rotating its identity could otherwise pin one plaintext-password
+# entry per request for the whole unlock TTL.  Mirrors the MCP server's
+# _MAX_UNLOCK_ENTRIES discipline, and deliberately reads the SAME env name so
+# one deployment knob (UNLOCK_CACHE_MAX) governs both surfaces.
+_MAX_UNLOCK_ENTRIES = max(1, int(os.environ.get("UNLOCK_CACHE_MAX", "4096")))
+
+
+def _evict_unlock_cache_locked() -> None:
+    """Keep ``_UNLOCK_CACHE`` bounded (caller holds ``_UNLOCK_CACHE_LOCK``).
+
+    Expired entries go first (dead weight), then the entries closest to
+    expiry — oldest-expiry-first, which for a fixed TTL is also
+    least-recently-inserted.  A no-expiry entry (the RAG_UNLOCK_MAX_TTL=0
+    opt-in, expiry = inf) is evicted only once nothing else is left, which is
+    the operator's own explicit trade-off.
+    """
+    over = len(_UNLOCK_CACHE) - _MAX_UNLOCK_ENTRIES
+    if over <= 0:
+        return
+    now = time.monotonic()
+    for key in [k for k, (exp, _pw) in _UNLOCK_CACHE.items() if exp <= now]:
+        _UNLOCK_CACHE.pop(key, None)
+        over -= 1
+        if over <= 0:
+            return
+    for key, _entry in sorted(_UNLOCK_CACHE.items(), key=lambda kv: kv[1][0])[:over]:
+        _UNLOCK_CACHE.pop(key, None)
+
+
 # Upper bound an explicit unlock TTL may take (the /unlock endpoint clamps
 # into this; default 86400 = 24 h, the historical hard cap).  The special
 # value 0 OPTS THE DEPLOYMENT INTO NO-EXPIRY UNLOCKS: a caller may then pass
@@ -489,9 +528,12 @@ def _request_identity(request: Request) -> str:
 
     1. **Provided identity** — the auth proxy's identity headers
        (``X-Auth-Request-Email`` / ``X-Auth-Request-User`` / ``X-Email`` /
-       ``X-User``), honoured only when ``RAG_TRUST_PROXY_IDENTITY`` confirms
-       an enforcing proxy sits in front of this server (client-spoofable
-       otherwise) — per-USER.
+       ``X-User``), honoured only when ``RAG_TRUST_PROXY_IDENTITY`` AND the
+       enforcing-proxy assertion (:func:`_enforcing_proxy_precondition`) both
+       hold — i.e. only when the operator has positively confirmed an
+       enforcing proxy fronts this server (client-spoofable otherwise) —
+       per-USER.  P1-4 (audit 2026-11-10): the flag alone is not enough for a
+       value that keys the password-failure throttle and the unlock cache.
     2. **Forwarded-for chain** — ``X-Forwarded-For``, under the same trust
        gate — per client IP behind a proxy that sets it.  The FULL
        normalized chain is the identity value, so a caller cannot
@@ -507,15 +549,34 @@ def _request_identity(request: Request) -> str:
     mirror comment in mcp_server: spoofable, and it would split a direct
     single user's unlock per conversation).
     """
-    if _TRUST_PROXY_IDENTITY:
+    # P1-4 (audit 2026-11-10): the flag alone is NOT a precondition for a
+    # CALLER-DERIVED BUCKET KEY either.  This id keys the password-failure
+    # throttle AND the unlock cache, both attacker-visible state: with only
+    # the flag, any caller that reaches the pod without traversing the edge
+    # (the P0-1 threat model) rotates X-Auth-Request-User to mint a fresh
+    # brute-force bucket per request and an unbounded set of unlock-cache
+    # keys.  Require the SAME positive enforcing-proxy assertion the
+    # proxy-identity CREDENTIAL already requires; without it the header and
+    # the XFF chain are ignored and the socket peer is used — the pre-P0-1
+    # behaviour, i.e. no worse than the flag being off.
+    #
+    # Wave-2 (cross-review): the assertion must VOUCH FOR THE VALUE IT ADMITS,
+    # not merely be present.  Calling the precondition with no claimed name let
+    # any caller who holds SOME valid realm token (their own) satisfy it and
+    # then rotate the header to arbitrary names — the rotation was back.  Each
+    # candidate is now checked against its own value (a token only ever
+    # vouches for the identity it names), and the forwarded-for chain — which
+    # carries no identity any token could vouch for — requires the operator
+    # signal (require_signal).
+    if _trust_proxy_flag():
         for header in ("X-Auth-Request-Email", "X-Auth-Request-User", "X-Email", "X-User"):
             val = request.headers.get(header)
-            if val and val.strip():
+            if val and val.strip() and _enforcing_proxy_precondition(request, val.strip()):
                 return val.strip()
         xff = request.headers.get("X-Forwarded-For")
         if xff:
             chain = ",".join(p.strip() for p in xff.split(",") if p.strip())
-            if chain:
+            if chain and _enforcing_proxy_precondition(request, None, require_signal=True):
                 return f"xff:{chain}"
     client = request.client
     return client.host if client else "unknown"
@@ -575,10 +636,24 @@ def _unlock_cache_get(dataset: str, cid: str) -> str | None:
 def _unlock_cache_set(dataset: str, cid: str, password: str, ttl: int | None = None) -> None:
     """Cache an unlock.  ``ttl=0`` means NO expiry (persists until revoked).
 
-    In-memory: the expiry is ``_UNLOCK_NO_EXPIRY`` (always in the future).
+    In-memory: the expiry is ``_UNLOCK_NO_EXPIRY`` (always in the future), and
+    the dict is capped at ``_MAX_UNLOCK_ENTRIES`` (``UNLOCK_CACHE_MAX``) —
+    expired entries first, then oldest-expiry-first (P1-4).
     Redis: the key is set WITHOUT ``ex`` — the operator is responsible for
     the store's own retention (``RAG_UNLOCK_MAX_TTL=0`` is the explicit
     opt-in for this; the /access page surfaces it as "No expiry (0)").
+
+    **Residual (Wave-2): the ``UNLOCK_CACHE_MAX`` cap covers the in-process
+    dict ONLY.**  With Redis configured there is no equivalent trim: the key
+    set is bounded by the TTL (default 30 min, ``RAG_UNLOCK_MAX_TTL`` ceiling)
+    and by ``maxmemory``/eviction policy on the Redis side, NOT by an entry
+    count.  A caller rotating its D10 identity can therefore create one
+    ``unlock:{dataset}:{cid}`` key per request for up to the TTL window.  A
+    SCAN-and-trim on every set was rejected as too expensive on the hot path;
+    operators who need a hard bound should set ``maxmemory`` +
+    ``maxmemory-policy allkeys-lru`` on the Redis instance.  The identity
+    rotation itself is gated by the enforcing-proxy assertion (P1-4), which is
+    what makes this residual small.
     """
     no_expiry = ttl is not None and ttl <= 0
     r = _get_redis()
@@ -594,6 +669,7 @@ def _unlock_cache_set(dataset: str, cid: str, password: str, ttl: int | None = N
     expiry = _UNLOCK_NO_EXPIRY if no_expiry else time.monotonic() + (ttl if ttl is not None else _UNLOCK_TTL)
     with _UNLOCK_CACHE_LOCK:
         _UNLOCK_CACHE[(dataset, cid)] = (expiry, password)
+        _evict_unlock_cache_locked()  # P1-4: bounded, see the helper
 
 
 def _unlock_cache_set_ttl(dataset: str, cid: str, password: str, ttl: int) -> None:
@@ -611,6 +687,124 @@ def _unlock_cache_del(dataset: str, cid: str) -> bool:
             return False
     with _UNLOCK_CACHE_LOCK:
         return _UNLOCK_CACHE.pop((dataset, cid), None) is not None
+
+
+def _unlock_cache_del_all(dataset: str) -> int:
+    """Revoke EVERY caller's unlock of *dataset* (Redis when configured).
+
+    P1-8 (audit 2026-10-16): the admin password reset must actually revoke
+    live unlocks, and the per-client-id delete is not enough — the client ids
+    are caller-derived (D10/D15) and unbounded, so "the ids we know about"
+    would silently miss the ones that matter (a caller who has not made a
+    request since the last process start).  This is the purge-all path that
+    mirrors the per-id delete; the D10 unlock-cache key layout is
+    ``unlock:{dataset}:{cid}``, so the purge is a SCAN by prefix (Redis) or a
+    key-scan of the in-process dict.  Returns the number of entries removed.
+    """
+    prefix = _unlock_cache_key(dataset, "")
+    r = _get_redis()
+    if r is not None:
+        removed = 0
+        try:
+            cursor = 0
+            while True:
+                cursor, keys = r.scan(cursor=cursor, match=prefix + "*", count=500)
+                if keys:
+                    removed += int(r.delete(*keys) or 0)
+                if cursor == 0:
+                    break
+            return removed
+        except Exception:
+            # A Redis failure must not report success (the caller logs it).
+            return removed
+    with _UNLOCK_CACHE_LOCK:
+        stale = [k for k in _UNLOCK_CACHE if k[0] == dataset]
+        for k in stale:
+            _UNLOCK_CACHE.pop(k, None)
+        return len(stale)
+
+
+def _clear_selection_passwords(dataset: str) -> int:
+    """Clear saved D16 selection passwords for *dataset* across identities.
+
+    P1-8 (audit 2026-10-16): a saved selection password is an implicit
+    unlock (``_require_dataset_password`` step 0), so an admin password
+    reset that only revoked unlock-cache entries left the OLD grant alive
+    through the store.  Iterates the store directory and rewrites each
+    identity file through the access store's own locked mutate path (fcntl +
+    atomic replace), dropping ONLY the saved password — the selection itself,
+    its write-mode stamp and the exclusion list are untouched, so this
+    revokes a proof without changing anyone's world.
+
+    Returns the number of identities changed.  Fail-soft: a store that is
+    off, missing, or unreadable simply reports 0 (the reset itself already
+    succeeded; the caller logs).
+    """
+    from multimodal_rag.utils import access_store as _acc
+
+    if not _acc.store_enabled():
+        return 0
+    try:
+        store_dir = _acc._store_dir()
+        files = sorted(store_dir.glob("*.json"))
+    except Exception:
+        return 0
+    changed = 0
+    for path in files:
+        identity = path.stem  # _identity_filename() strips the "key:" prefix
+        hit = {"v": False}
+
+        def _drop_pw(doc: dict, _hit=hit) -> bool:
+            entry = (doc.get("datasets") or {}).get(dataset)
+            if not isinstance(entry, dict) or not entry.get("password"):
+                return False
+            entry["password"] = ""
+            _hit["v"] = True
+            return True
+
+        try:
+            _acc._mutate(identity, _drop_pw)
+        except Exception:
+            logger.debug("selection-password purge skipped for %s", path.name, exc_info=True)
+            continue
+        if hit["v"]:
+            changed += 1
+    return changed
+
+
+async def _revoke_password_grants(name: str) -> tuple[int, int]:
+    """Revoke every grant an OLD dataset password bought (P1-8 + P2-6).
+
+    Two grants survive a password CHANGE unless they are actively revoked:
+    every live unlock-cache entry for the dataset (not just the acting
+    identity's), and the D16 saved selection passwords, which act as implicit
+    unlocks (step 0 of :func:`_require_dataset_password`).
+
+    P2-6 (audit 2026-11-10): this used to be inlined in the admin
+    reset-password handler, so the OTHER password-writing route — the import
+    path, which can replace an existing dataset under the same name — left
+    both grants alive and kept serving the NEW content to callers who had
+    only ever proved the OLD password.  One helper, every writer.
+
+    Both legs are blocking I/O (a Redis SCAN / per-identity file rewrites
+    under fcntl), hence the thread pool.  Failures are logged and reported as
+    0 rather than raised: by the time this runs the password HAS changed, so
+    failing the request would only invite a retry that changes nothing.
+
+    Returns ``(unlocks_revoked, selection_passwords_cleared)``.
+    """
+    loop = asyncio.get_running_loop()
+    revoked = 0
+    try:
+        revoked = await loop.run_in_executor(sync_pool, _unlock_cache_del_all, name)
+    except Exception:
+        logger.warning("Unlock revocation failed for '%s' after a password change", name, exc_info=True)
+    cleared = 0
+    try:
+        cleared = await loop.run_in_executor(sync_pool, _clear_selection_passwords, name)
+    except Exception:
+        logger.warning("Selection-password purge failed for '%s' after a password change", name, exc_info=True)
+    return revoked, cleared
 
 
 # ---------------------------------------------------------------------------
@@ -651,6 +845,20 @@ def _pw_reset_failures(cid: str) -> None:
 
 
 def _check_pw_throttle(cid: str) -> None:
+    """Refuse when *cid*'s bucket is exhausted.
+
+    P2-3 (audit 2026-10-16) — the bucket is keyed by the D10 client id
+    (``_unlock_client_id``): a registry key's ``key:<name>``, else the
+    trusted proxy identity / XFF chain when RAG_TRUST_PROXY_IDENTITY is on,
+    else the SOCKET PEER.  The peer fallback means every caller behind one
+    NAT/gateway shares a bucket, so an attacker's failures can 429 a victim
+    who holds the correct password — the coupling the audit flagged as a
+    deliberate operator trade-off (per-user buckets need a trustworthy
+    caller id, and the only alternative to the header is the peer).  The
+    P0-1 remediation makes the header trustworthy again by pairing it with
+    an enforcing-proxy assertion; this coupling is NOT a bug to "fix" by
+    dropping the throttle.
+    """
     if _pw_failure_count(cid) >= _PW_MAX_FAILURES:
         raise HTTPException(429, "Too many password attempts — try again later.")
 
@@ -834,14 +1042,141 @@ _RAG_API_KEY = os.environ.get("RAG_API_KEY", "")
 # security.trustProxyIdentity) — otherwise the socket peer is used, so a
 # caller cannot rotate fake identity headers to hijack another user's unlock
 # or bypass the brute-force throttle.
+#
+# P2-7 (audit 2026-11-10): the value is read PER CALL, never frozen.  This
+# module-level handle is the import-time DEFAULT for the unset case only (and
+# the seam the offline tests patch); every decision below goes through
+# _trust_proxy_flag(), so setting the env to "false"/"0" takes effect on the
+# NEXT REQUEST instead of the next restart — which is what the documented
+# no-restart remediation actually promises.
 _TRUST_PROXY_IDENTITY = os.environ.get("RAG_TRUST_PROXY_IDENTITY", "").lower() in ("1", "true", "yes")
 
 
-def _trust_proxy_identity() -> bool:
+def _trust_proxy_flag() -> bool:
+    """``RAG_TRUST_PROXY_IDENTITY``, read PER CALL (the house convention).
+
+    P2-7: an UNSET env keeps the import-time default, so the offline tests'
+    module handle stays the seam they patch; a SET env always wins, so an
+    operator flipping the knob off closes the header-derived throttle/unlock
+    identity immediately instead of at the next pod restart.
+    """
+    raw = os.environ.get("RAG_TRUST_PROXY_IDENTITY")
+    if raw is None or not raw.strip():
+        return bool(_TRUST_PROXY_IDENTITY)
+    return raw.strip().lower() in ("1", "true", "yes")
+
+
+# P0-1 (audit 2026-10-16): the trust flag alone is NOT a precondition — the
+# proxy's identity headers are ordinary, attacker-settable headers on any
+# path that reaches the pod without traversing the edge (the audited chart
+# selected the istio-ingressgateway pod, not the app pods, so a direct
+# ClusterIP call never passed through the AuthorizationPolicy, and the flag
+# defaulted ON).  A proxy-identity CREDENTIAL — the D24 candidate that maps a
+# bare name straight to a registry identity, its grants, and (via
+# _require_self_mint) a durable minted key — therefore additionally requires
+# a POSITIVE assertion that an enforcing proxy is really in front:
+#
+#   1. RAG_ENFORCING_PROXY_SIGNAL=<value> — an operator-set proof string
+#      (helm: security.enforcingProxySignal) that the ingress/gateway config
+#      injects on EVERY request as X-Enforcing-Proxy.  A request that does
+#      not carry it is refused the proxy-identity candidate; an operator who
+#      has not wired the injection simply loses the feature (fail closed).
+#   2. or the D21 forwarded OIDC token (X-Auth-Request-Access-Token) — the
+#      same request proving the edge realm authenticated it.  A co-present
+#      INVALID token is NOT evidence: the JWT must actually verify
+#      (oidc_identity.verify_forwarded_proxy_assertion) — otherwise any
+#      caller could pair a garbage token with a spoofed name.
+#
+# Wave-2 (cross-review): the D10 unlock-cache / throttle identity is NOT
+# exempt any more either.  It resolves no credential, but it KEYS the
+# password-failure bucket and the unlock cache, so it now requires the same
+# assertion — and, for the identity headers, one that VOUCHES FOR THE VALUE
+# IT ADMITS (see _request_identity).  The forwarded-for chain carries no
+# identity a token could vouch for, so only the operator signal admits it.
+_ENFORCING_PROXY_SIGNAL_ENV = "RAG_ENFORCING_PROXY_SIGNAL"
+#: The header the operator's ingress must inject with the signal value.
+_PROXY_ASSERTION_HEADER = "X-Enforcing-Proxy"
+
+
+def _trust_proxy_identity(request: "Request | None" = None) -> bool:
     """RAG_TRUST_PROXY_IDENTITY, read PER REQUEST (the house convention —
     a config change needs no restart; D24 reads this for the proxy-identity
-    credential candidate, so the flag must not be frozen at import)."""
-    return os.environ.get("RAG_TRUST_PROXY_IDENTITY", "").strip().lower() in ("1", "true", "yes")
+    credential candidate, so the flag must not be frozen at import).
+
+    P0-1: with *request* provided the flag alone is no longer sufficient —
+    the proxy-identity CREDENTIAL additionally requires a positive
+    enforcing-proxy assertion (:func:``_enforcing_proxy_precondition``).
+    P1-4 (audit 2026-11-10): the D10 unlock-cache / throttle identity
+    (``_request_identity``) is gated too.  It resolves no credential, but it
+    KEYS the password-failure bucket and the unlock cache, so the flag alone
+    let a caller rotate the header for a fresh brute-force bucket per
+    request.  That path therefore calls the precondition per candidate VALUE
+    (Wave-2: the assertion must vouch for the value it admits, not merely
+    exist — otherwise any caller holding some valid token of their own could
+    satisfy it and then rotate the header to arbitrary names).
+    """
+    if not _trust_proxy_flag():  # P2-7: per call, never the frozen constant
+        return False
+    if request is None:
+        return True
+    return _enforcing_proxy_precondition(request)
+
+
+def _enforcing_proxy_precondition(
+    request: "Request | None" = None,
+    claimed_name: "str | None" = None,
+    *,
+    require_signal: bool = False,
+) -> bool:
+    """P0-1: is there a POSITIVE signal that an enforcing proxy fronts us?
+
+    ``RAG_ENFORCING_PROXY_SIGNAL`` set → the request must carry it (the
+    operator's ingress injects the value; a caller cannot know it).  When no
+    signal is configured, the D21 forwarded OIDC access token is accepted as
+    the assertion ONLY when it fully verifies AND resolves to *claimed_name*
+    itself — a garbage token proves nothing, and an attacker holding a valid
+    token of their OWN cannot vouch for a spoofed victim name (the audited
+    escalation paired exactly that pair).  Both branches fail closed, so a
+    bare X-Auth-Request-User never resolves a credential.
+
+    Wave-2 (cross-review): *claimed_name* is REQUIRED for every caller that
+    admits a caller-supplied value — the bucket/throttle path now passes the
+    header value it is about to return, so a token can only ever vouch for
+    the identity it names.  Passing ``claimed_name=None`` means "any valid
+    token satisfies this", which is only correct for the D24 credential
+    candidate (where the name is compared again at the call site).
+    ``require_signal=True`` admits ONLY the operator signal: it is for a
+    value that names no identity at all (the forwarded-for chain), which no
+    credential the caller merely HOLDS can vouch for.
+    """
+    if request is None:
+        return False
+    expected = os.environ.get(_ENFORCING_PROXY_SIGNAL_ENV, "").strip()
+    if expected:
+        import hmac as _hmac
+
+        presented = (request.headers.get(_PROXY_ASSERTION_HEADER) or "").strip()
+        return bool(presented) and _hmac.compare_digest(presented, expected)
+    if require_signal:
+        # No operator signal configured, and the value being admitted names no
+        # identity — a token the caller holds proves nothing about it.
+        return False
+    try:
+        from multimodal_rag.utils import oidc_identity
+
+        token = (request.headers.get("X-Auth-Request-Access-Token") or "").strip()
+        if token[:7].lower() == "bearer ":
+            token = token[7:].strip()
+        if not token or not oidc_identity.is_jwt_format(token):
+            return False
+        ident = oidc_identity.resolve_jwt(token)
+        if ident is None:
+            return False  # invalid/expired/blocked/unverifiable — no assertion
+        if claimed_name is None:
+            return True
+        return str(getattr(ident, "name", "") or "") == str(claimed_name).strip()
+    except Exception:
+        return False  # a broken verification sidecar can never assert a proxy
 
 
 # Periodic embedder liveness monitor.  The embedder is the only required
@@ -890,7 +1225,6 @@ _PUBLIC_ENDPOINT_NAMES = frozenset(
         "index",
         "manage",
         "access",  # per-user key page (self-authenticating; no key injected)
-        "api_serve_file",  # dataset media (password/token protected)
         "api_staging_serve",  # staged media (short-lived ids)
         "api_oidc_session",  # D21 whoami: identity preview only, never a grant
         "api_stats",  # D23 read-only stats: identity-filtered, no secrets —
@@ -899,6 +1233,16 @@ _PUBLIC_ENDPOINT_NAMES = frozenset(
         # empty-world shape).
     }
 )
+
+# P0-2 (audit 2026-10-16): `api_serve_file` used to sit in the public set
+# above, so the middleware returned BEFORE the D20 fail-closed branch and
+# before `_rag_acl_path_denial` — an ACL-denied key (and an unauthenticated
+# caller) read any dataset's bytes.  Media serving is not PUBLIC, it is
+# SELF-AUTHORIZING: the handler owns the decision (media token / dataset
+# password / D15 identity ACL), and the middleware only BINDS the presented
+# identity when there is one so the handler can enforce that ACL.  A
+# credential-less `<img>` fetch is never 401'd here.
+_SELF_AUTHORIZING_ENDPOINT_NAMES = frozenset({"api_serve_file"})
 
 
 def _is_public_path(path: str, endpoint: Any = None) -> bool:
@@ -909,6 +1253,42 @@ def _is_public_path(path: str, endpoint: Any = None) -> bool:
         if name in _PUBLIC_ENDPOINT_NAMES:
             return True
     return False
+
+
+def _is_self_authorizing_path(path: str, endpoint: Any = None) -> bool:
+    """P0-2: routes whose handler authorizes the request itself (never the
+    middleware), but which still want the caller's identity bound when one
+    resolves — matched by endpoint name, exactly like the public set."""
+    if endpoint is None:
+        return False
+    return getattr(endpoint, "__name__", None) in _SELF_AUTHORIZING_ENDPOINT_NAMES
+
+
+def _bind_presented_identity(request: "Request") -> Any:
+    """Bind the request's presented credential for a self-authorizing route.
+
+    Same precedence as the main auth path (deployment key → registry
+    key/JWT/proxy identity, D19/D21/D24) but WITHOUT the 401 and without the
+    path ACL pre-check: the handler decides.  Returns the contextvar reset
+    token, or None when nothing resolved (or when the deployment key is
+    presented on a registry-less deployment — the main path binds no identity
+    there either, byte-identically).
+    """
+    if not _clients_registry.registry_configured():
+        return None
+    import secrets
+
+    presented = _presented_pairs(request)
+    if _RAG_API_KEY:
+        for key, _via in presented:
+            if key and secrets.compare_digest(key, _RAG_API_KEY):
+                return _clients_registry.set_current_identity(
+                    _clients_registry.Identity(kind="admin", name=None, datasets=None)
+                )
+    identity = _clients_registry.resolve_presented([k for k, _ in presented], [via for _, via in presented])
+    if identity is None:
+        return None
+    return _clients_registry.set_current_identity(identity)
 
 
 # ---------------------------------------------------------------------------
@@ -982,6 +1362,24 @@ def _sso_gate_401_response() -> Response:
     return HTMLResponse(_SSO_GATE_401_PAGE.replace("{sso_link}", sso_link), status_code=401)
 
 
+def _identity_may_create(identity) -> bool:
+    """The THREE-LEVEL create decision (2026-10 configurable-create design),
+    as ONE call into the shared predicate: per-user
+    ``can_create_datasets`` override (overlay clients, admin-PATCHable) →
+    deployment default (``RAG_DATASETS_CREATE_ALLOWED``) → identity-shape
+    rules (admin → True; no identity / D15 inactive → True byte-identical;
+    the D20 anonymous fallback → only when the registry is not configured).
+
+    THE GATE AND THE FLAG MUST AGREE: ``_whoami_flags`` computes the SPA's
+    ``can_create_datasets`` from THIS SAME helper, and the middleware's
+    create gate calls it too — one decision, three consumers, no drift.
+    (``access_store.identity_may_create_datasets`` owns the whole decision
+    including the override read, so this wrapper exists only to give the
+    api_server call sites a name and a docstring that binds them together.)
+    """
+    return _access_store.identity_may_create_datasets(identity)
+
+
 def _rag_acl_path_denial(path: str, method: str, identity) -> "str | None":
     """D15/D16 REST enforcement for a registry-key identity: the denial
     reason for *path*, or None when allowed.
@@ -1002,8 +1400,16 @@ def _rag_acl_path_denial(path: str, method: str, identity) -> "str | None":
     if path.startswith("/api/admin"):
         return "Dataset ACLs are configured (D15): this API key has no admin access."
     if path == "/api/datasets" or path == "/api/datasets/":
-        if method == "POST" and "*" not in (identity.datasets or frozenset()):
-            return "Dataset ACLs are configured (D15): this API key cannot create datasets."
+        if method == "POST" and not _identity_may_create(identity):
+            return "Dataset creation is not permitted for this identity (see RAG_DATASETS_CREATE_ALLOWED and the per-user can_create_datasets override)."
+        return None
+    if path == "/api/short-term-memory" and method == "POST":
+        # STM create mints a dataset — the same "manage" act as
+        # POST /api/datasets, so it carries the SAME gate.  Without this,
+        # the new path would fall into the middleware's "everything else —
+        # allowed" bucket and silently bypass the create gate.
+        if not _identity_may_create(identity):
+            return "Dataset creation is not permitted for this identity (see RAG_DATASETS_CREATE_ALLOWED and the per-user can_create_datasets override)."
         return None
     name = _clients_registry.dataset_name_from_path(path)
     if name is not None:
@@ -1035,7 +1441,9 @@ def _rag_acl_path_denial(path: str, method: str, identity) -> "str | None":
             tail = path.rstrip("/")
             suffix = tail.rsplit("/", 1)[-1]
             if method == "POST":
-                is_write = suffix in ("documents", "files", "batch-files", "batch-urls")
+                # late-interaction (Feature D, wave 2026-11-10) mutates the
+                # dataset's retrieval config, so it is a write surface too.
+                is_write = suffix in ("documents", "files", "batch-files", "batch-urls", "late-interaction")
             elif method == "DELETE":
                 is_write = suffix == name or "/documents/" in tail
             else:  # PATCH/PUT — only the dataset root is a manage surface
@@ -1044,6 +1452,17 @@ def _rag_acl_path_denial(path: str, method: str, identity) -> "str | None":
                 return _clients_registry.DatasetAccessDenied(
                     f"Dataset '{name}' is read-only for this API key (a ro grant cannot be written — D26)."
                 ).args[0]
+    if method == "DELETE" and path.startswith("/api/short-term-memory/"):
+        # D26 gap (audit 2026-10-16): DELETE /api/short-term-memory/{name} is a
+        # dataset DELETION, but it lives outside /api/datasets/... so the
+        # path-shaped write gate above never matched it — a ro-only key could
+        # destroy an STM dataset it may only read.  Same shape rule as the
+        # dataset root: the {name} segment itself is the write.
+        stm_name = urllib.parse.unquote(path[len("/api/short-term-memory/") :]).rstrip("/")
+        if stm_name and "/" not in stm_name and not _access_store.dataset_write_allowed(identity, stm_name):
+            return _clients_registry.DatasetAccessDenied(
+                f"Dataset '{stm_name}' is read-only for this API key (a ro grant cannot be written — D26)."
+            ).args[0]
     return None
 
 
@@ -1089,16 +1508,28 @@ def _presented_pairs(request: Request) -> "list[tuple[str, str]]":
     # confirmed (RAG_TRUST_PROXY_IDENTITY), the proxy-injected identity
     # headers ARE the credential — the gateway authenticated the user at the
     # edge (oauth2-proxy AuthorizationPolicy) and overwrites these headers on
-    # EVERY request; the app cannot be reached with attacker-set values.
+    # EVERY request.
+    #
+    # P0-1 (audit 2026-10-16) — the PRECONDITION this block used to assert in
+    # a comment is now ENFORCED: "the app cannot be reached with attacker-set
+    # values" was false on the shipped charts (the AuthorizationPolicy
+    # selected the ingress-gateway pod, not the app pods, so a direct
+    # ClusterIP call carried attacker-set values straight through, with the
+    # flag defaulting ON).  The proxy-identity candidate is therefore only
+    # collected when the request ALSO carries a positive enforcing-proxy
+    # assertion — RAG_ENFORCING_PROXY_SIGNAL matched in X-Enforcing-Proxy, or
+    # a forwarded OIDC token that verifies AND resolves to the same name
+    # (see _enforcing_proxy_precondition).  A bare X-Auth-Request-User with
+    # no such assertion contributes NOTHING (fail closed).
+    #
     # Candidate source "proxy-identity": the identity NAME (not a token) —
     # resolve_presented maps it straight to the registry identity
-    # (fail-closed, never admin, lowest precedence).  Absent headers (a
-    # direct/non-proxied caller) contribute nothing — fail closed.
+    # (fail-closed, never admin, lowest precedence).
     if _trust_proxy_identity():
         proxied_user = (
             request.headers.get("X-Auth-Request-Preferred-Username") or request.headers.get("X-Auth-Request-User") or ""
         ).strip()
-        if proxied_user:
+        if proxied_user and _enforcing_proxy_precondition(request, proxied_user):
             presented.append((proxied_user, "proxy-identity"))
     return presented
 
@@ -1242,6 +1673,18 @@ async def _api_key_auth(request: Request, call_next):
                 break
     if _is_public_path(request.url.path, endpoint):
         return await call_next(request)
+    if _is_self_authorizing_path(request.url.path, endpoint):
+        # P0-2: media serving keeps its pre-D20 reachability (the <img> tag
+        # flow carries a dataset password or media token, never a key) but the
+        # caller's identity is bound when one resolves, so the handler can
+        # apply the D15/D16 ACL on top.  No 401 here, and no path-level ACL
+        # pre-check — api_serve_file owns the decision.
+        reset_handle = _bind_presented_identity(request)
+        try:
+            return await call_next(request)
+        finally:
+            if reset_handle is not None:
+                _clients_registry.reset_current_identity(reset_handle)
     if unconfigured:
         # Ratified default posture (2026-09-24, D20): an unconfigured
         # deployment is FAIL-CLOSED, not open.  Bind an anonymous
@@ -1316,6 +1759,115 @@ async def _api_key_auth(request: Request, call_next):
             finally:
                 _clients_registry.reset_current_identity(reset_handle)
     return JSONResponse({"detail": "Missing or invalid API key"}, status_code=401)
+
+
+# ---------------------------------------------------------------------------
+# Security response headers (audit 2026-10-16, P2-6).
+#
+# The app shipped NO security headers at all: no MIME-sniffing protection, no
+# framing protection on the HTML pages (which embed the deployment key in a
+# meta tag when the legacy key mode is active — api_server index()), no
+# referrer policy on the media/download routes that carry a signed
+# ``?token=`` in the URL.  Those are exactly the browser-side threats the
+# file-serving code already takes seriously (it forces ``attachment`` for
+# non-media types and refuses to render SVG inline).
+#
+# Defaults are ON but every header is env-overridable, and the whole
+# middleware can be disabled (``RAG_SECURITY_HEADERS=0``) for a deployment
+# that sets them at the ingress instead.  Read per request (house convention:
+# a config change needs no restart).
+#
+# Deliberately NOT included: CORS.  The SPA is same-origin and the API is not
+# meant for cross-origin browser use, so the safe default is "no CORS
+# headers"; a cross-origin allowlist would be a separate, deliberate feature
+# (``RAG_CORS_ALLOW_ORIGINS`` below opts in explicitly, default empty = off).
+# Also deliberately absent: ``Strict-Transport-Security`` — HSTS on an
+# HTTP-served in-cluster deployment is a footgun, and at the edge the gateway
+# owns TLS policy.
+# ---------------------------------------------------------------------------
+
+_SECURITY_HEADERS_DEFAULT = {
+    # A crafted upload must never be sniffed into an active type.  The
+    # serving routes already force attachment for non-media, but nosniff
+    # closes the gap for anything a browser would otherwise reinterpret.
+    "x-content-type-options": "nosniff",
+    # No page in this app frames another; DENY is the strict, correct value.
+    # (SAMEORIGIN would allow a same-origin embed, which nothing uses.)
+    "x-frame-options": "DENY",
+    # Signed media URLs carry a token in the query string — never leak it to
+    # a third-party origin via the Referer header.
+    "referrer-policy": "no-referrer",
+}
+
+
+def _security_headers_enabled() -> bool:
+    """True when the response-header middleware runs (default ON).
+
+    Opt out with ``RAG_SECURITY_HEADERS=0`` (e.g. an ingress that already
+    injects the full set).  Read per request so a flip needs no restart.
+    """
+    raw = os.environ.get("RAG_SECURITY_HEADERS", "").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
+def _security_header_values() -> "dict[str, str]":
+    """The header set to apply, from env with the defaults above.
+
+    Per-header override env vars follow the ``RAG_SECURITY_HEADER_*`` pattern;
+    an empty value removes that header.  Values are used verbatim — these are
+    operator-controlled, never request-derived, so no escaping is involved.
+    """
+    out: dict[str, str] = {}
+    for name, default in _SECURITY_HEADERS_DEFAULT.items():
+        env_name = "RAG_SECURITY_HEADER_" + name.replace("-", "_").upper()
+        raw = os.environ.get(env_name)
+        value = default if raw is None else raw.strip()
+        if value:
+            out[name] = value
+    return out
+
+
+def _cors_allow_origins() -> "list[str]":
+    """The CORS allowlist, empty (CORS off) unless explicitly configured.
+
+    ``RAG_CORS_ALLOW_ORIGINS`` is a comma-separated origin list; unset or
+    empty means NO CORS headers are emitted (today's behaviour, and the safe
+    default — a browser on another origin cannot read responses).
+    """
+    raw = os.environ.get("RAG_CORS_ALLOW_ORIGINS", "").strip()
+    if not raw:
+        return []
+    return [o.strip() for o in raw.split(",") if o.strip()]
+
+
+@app.middleware("http")
+async def _security_headers_middleware(request: Request, call_next):
+    """Attach the security headers to every response (audit 2026-10-16, P2-6).
+
+    Registered LAST so it is the OUTERMOST wrapper (Starlette applies
+    middleware in reverse registration order): the headers are then added on
+    the way out for EVERY response, including the ones the auth middleware
+    and the body-cap middleware return directly (401/403/413) — those are
+    exactly the responses a browser renders.
+
+    ``setdefault`` semantics: a handler that sets its own value (none does
+    today) wins, so this never clobbers a route-specific decision.
+    """
+    response = await call_next(request)
+    if not _security_headers_enabled():
+        return response
+    for name, value in _security_header_values().items():
+        if name not in response.headers:
+            response.headers[name] = value
+    origins = _cors_allow_origins()
+    if origins:
+        # Echo only an allowlisted origin — never a wildcard with
+        # credentials, and never the raw request Origin unchecked.
+        origin = request.headers.get("origin", "")
+        if origin in origins:
+            response.headers.setdefault("access-control-allow-origin", origin)
+            response.headers.setdefault("vary", "Origin")
+    return response
 
 
 @app.middleware("http")
@@ -1736,6 +2288,23 @@ async def api_create_dataset(body: dict[str, Any] = Body(...)):
             raise HTTPException(400, str(e))
     else:
         rrf_meta = _rrf_default_meta_from_env()
+    # Per-dataset chunk overrides (feature: per-dataset chunk size).
+    # OMITTED entirely -> nothing is stored and the dataset inherits the
+    # embedder model config (the pre-feature behaviour).  A supplied object
+    # is validated here so a bad value is a 400, not a silent store.
+    body_chunk = body.get("chunk")
+    if body_chunk is not None and not isinstance(body_chunk, dict):
+        raise HTTPException(400, "Field 'chunk' must be an object")
+    try:
+        # Validation is a pure classmethod on DatasetManager, so it is
+        # invoked on the CLASS: a test double standing in for the manager
+        # does not have to mirror it.
+        chunk_meta = DatasetManager._sanitize_chunk_meta(body_chunk)
+    except (TypeError, ValueError) as e:
+        # TypeError = wrong type (TRY004 raises TypeError for invalid
+        # types), ValueError = out-of-range value.  Both are caller
+        # errors: 400, never a 500.
+        raise HTTPException(400, str(e))
     try:
         loop = asyncio.get_running_loop()
         meta = await loop.run_in_executor(
@@ -1752,6 +2321,7 @@ async def api_create_dataset(body: dict[str, Any] = Body(...)):
                 rrf=rrf_meta,
                 contextual=bool(contextual),
                 created_by=_creator_name_for_request(),
+                chunk=chunk_meta or None,
             ),
         )
         return {"status": "ok", "dataset": meta}
@@ -1761,6 +2331,254 @@ async def api_create_dataset(body: dict[str, Any] = Body(...)):
         # _validate_name rejections (invalid characters etc.) — a clear 400
         # carrying the validator message, not an unhandled ValueError → 500.
         raise HTTPException(400, str(e))
+
+
+# -- Short-term memory (STM surface, PLAN stmem sections 4.3/4.4) -------------
+
+
+def _stm_ttl_config() -> tuple[int, int]:
+    """`(default_ttl_hours, max_ttl_hours)` from env (chart values
+    `shortTermMemory.defaultTtlHours` / `maxTtlHours`).  Read per request so
+    a redeploy can retune the bounds without touching datasets.  A garbage
+    value is a 503, not a silent default — a silently-wrong TTL cap is a
+    data-retention lie.  F5: a default ABOVE the cap is the same class of
+    config error — every default-path create would silently exceed the cap —
+    so it fails loud here too (refusing, not clamping: the operator asked for
+    a 48h default on a 24h cap, and silently shortening it would be a third,
+    unrequested policy)."""
+    try:
+        default_h = int(os.environ.get("RAG_STM_DEFAULT_TTL_HOURS", "6"))
+        max_h = int(os.environ.get("RAG_STM_MAX_TTL_HOURS", "24"))
+    except ValueError:
+        raise HTTPException(503, "RAG_STM_DEFAULT_TTL_HOURS / RAG_STM_MAX_TTL_HOURS must be integers")
+    if default_h <= 0 or max_h <= 0:
+        raise HTTPException(503, "RAG_STM_DEFAULT_TTL_HOURS / RAG_STM_MAX_TTL_HOURS must be positive")
+    if default_h > max_h:
+        raise HTTPException(
+            503,
+            f"RAG_STM_DEFAULT_TTL_HOURS ({default_h}h) exceeds RAG_STM_MAX_TTL_HOURS "
+            f"({max_h}h) — every default-TTL create would exceed the cap. Fix the chart values "
+            "(shortTermMemory.defaultTtlHours / maxTtlHours).",
+        )
+    return default_h, max_h
+
+
+def _stm_mint_name(session_id: str) -> str:
+    """The non-guessable STM dataset name (INTERFACE-FREEZE section 1):
+
+        stm-<base32(hmac_sha256(salt, session_id))[:16]>
+
+    FAILS LOUDLY (503) when the salt is unset — HMAC with an empty key makes
+    every session's dataset name guessable, and the catalog hiding makes the
+    name the ONLY handle, so a guessable name would be a discovery bypass.
+    Lower-cased base32 keeps the token inside the dataset-name charset
+    ([A-Za-z0-9._-], the same one _validate_name enforces).
+    """
+    salt = os.environ.get("RAG_STM_NAME_SALT", "")
+    if not salt:
+        raise HTTPException(
+            503,
+            "Short-term memory is not configured: RAG_STM_NAME_SALT (chart values "
+            "shortTermMemory.nameSalt) must be set — refusing to mint guessable "
+            "dataset names with an empty salt.",
+        )
+    import base64
+    import hashlib
+    import hmac
+
+    digest = hmac.new(salt.encode("utf-8"), session_id.encode("utf-8"), hashlib.sha256).digest()
+    return "stm-" + base64.b32encode(digest).decode("ascii")[:16].lower()
+
+
+@app.post("/api/short-term-memory")
+async def api_create_short_term_memory(body: dict[str, Any] = Body(...)):
+    """Create an ephemeral short-term-memory dataset for one agent session.
+
+    Request body::
+
+        {"session_id": "swarm-abc", "ttl_seconds": 3600, "name": null}
+
+    Mints the non-guessable dataset name
+    `stm-<base32(hmac_sha256(RAG_STM_NAME_SALT, session_id))[:16]>` (an
+    explicit `name` overrides the mint — the caller must KEEP the name,
+    because the dataset is hidden from the catalog and the name is the only
+    handle), creates it with `kind="short_term"` and a dataset `lifetime`
+    (`ttl_seconds`, capped at `shortTermMemory.maxTtlHours`, or the
+    `shortTermMemory.defaultTtlHours` default), and grants it to the CREATING
+    IDENTITY ONLY — a D16 self-selection, nobody else (PLAN section 4.4).
+    NO password is set: STM datasets are passwordless by design
+    (INTERFACE-FREEZE section 2) — that is what keeps them reapable.
+
+    Errors: 400 bad input / ttl above the cap, 409 name collision, 503 when
+    the name salt is unset (fail loudly — never mint guessable names) or the
+    storage layer does not carry dataset lifetimes yet (T1 not deployed).
+    """
+    # F11: a session_id is a STRING identifier, not an opaque payload — a
+    # non-string ({"session_id": 12345}, a list, a dict) is a client bug and
+    # is refused rather than silently coerced (str(12345) would make 12345
+    # and "12345" silently the SAME session, mapping to the same dataset).
+    session_id = body.get("session_id")
+    if not isinstance(session_id, str) or not session_id.strip():
+        raise HTTPException(400, "Field 'session_id' must be a non-empty string")
+    session_id = session_id.strip()
+    default_h, max_h = _stm_ttl_config()
+    ttl = body.get("ttl_seconds")
+    if ttl is not None:
+        if (
+            isinstance(ttl, bool)
+            or not isinstance(ttl, (int, float))
+            or (isinstance(ttl, float) and not ttl.is_integer())
+        ):
+            raise HTTPException(400, "Field 'ttl_seconds' must be a whole number of seconds")
+        ttl = int(ttl)
+        if ttl <= 0:
+            raise HTTPException(400, "Field 'ttl_seconds' must be a positive number of seconds")
+        if ttl > max_h * 3600:
+            raise HTTPException(
+                400,
+                f"ttl_seconds={ttl} exceeds the deployment cap of {max_h}h (chart values shortTermMemory.maxTtlHours)",
+            )
+    override = body.get("name")
+    if override is not None:
+        override = str(override).strip()
+        if not override:
+            raise HTTPException(400, "Field 'name' must be a non-empty string when provided")
+    name = override or _stm_mint_name(session_id)
+    lifetime = ttl if ttl is not None else default_h * 3600
+    dm = await get_manager_async()
+    creator = _creator_name_for_request()
+    try:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            sync_pool,
+            partial(
+                dm.create_dataset,
+                name,
+                f"Short-term memory for session '{session_id}' (auto-expiring)",
+                created_by=creator,
+                lifetime=lifetime,
+                kind="short_term",
+            ),
+        )
+    except TypeError as e:
+        # The frozen T1 signature carries lifetime/kind; a storage layer
+        # without them is a DEPLOYMENT GAP, not a caller error — say so
+        # instead of surfacing an opaque 500.
+        raise HTTPException(503, f"Storage layer lacks dataset lifetime/kind support (T1): {e}")
+    except FileExistsError as e:
+        # F6 (Lead fix): the minted name is the ONLY handle to a hidden
+        # dataset, and the session->name map is a pure function of
+        # (salt, session_id).  Echoing the name here would let ANY second
+        # caller probe someone else's session for free: send the same
+        # session_id, read the name off the 409, then GET it by name.
+        # Refuse WITHOUT the name.  The genuine owner already has it from its
+        # own create response, so nothing legitimate is lost.
+        raise HTTPException(
+            409,
+            "A short-term-memory dataset already exists for this session_id.",
+        ) from e
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    # Grant the CREATING IDENTITY ONLY (PLAN section 4.4): the D16
+    # self-selection is the per-identity grant channel.  Best-effort — a
+    # store-off deployment (single shared key, D20 anonymous) has no
+    # per-identity store to select into and needs no grant at all.
+    granted = False
+    identity = _clients_registry.current_identity()
+    if identity is not None and not identity.is_admin and _access_store.store_enabled():
+        try:
+            _access_store.select_dataset(identity, name)
+            granted = True
+        except Exception as exc:
+            logger.warning("STM self-selection grant failed for '%s': %s", name, exc)
+    logger.info(
+        "Short-term memory dataset '%s' created (session '%s', creator '%s', lifetime %ss, granted_to_creator=%s)",
+        name,
+        session_id,
+        creator,
+        lifetime,
+        granted,
+    )
+    return {
+        "status": "ok",
+        "dataset": name,
+        "session_id": session_id,
+        "lifetime_seconds": lifetime,
+        "granted_to_creator": granted,
+        "password_protected": False,
+        "note": "Keep the dataset name — short-term-memory datasets are hidden from the catalog listing.",
+    }
+
+
+@app.delete("/api/short-term-memory/{name}")
+async def api_end_short_term_memory(
+    name: str,
+    request: Request,
+    x_dataset_password: str | None = Header(None, alias="X-Dataset-Password"),
+):
+    """Explicit teardown of a short-term-memory dataset (PLAN section 4.3.2).
+
+    Owner-or-admin gated (the SAME D23 `_identity_may_manage_dataset` gate as
+    `DELETE /api/datasets/{name}`) and REFUSES any dataset that is not
+    `kind == "short_term"` — this tool must never become a general
+    dataset-deletion backdoor (safety invariant 6).  STM datasets are created
+    passwordless, so the password header is normally unnecessary; if one was
+    set by hand, the standard proof is still demanded (invariant 7: no
+    password bypass anywhere).
+    """
+    dm = await get_manager_async()
+    loop = asyncio.get_running_loop()
+    identity = _clients_registry.current_identity()
+    is_admin = identity is not None and identity.is_admin
+    # F3: ownership BEFORE existence — the D23 ordering.  A 404 here before
+    # the gate would be a dataset-existence ORACLE: a non-owner could
+    # distinguish "exists but not mine" (403) from "does not exist" (404).
+    # Non-owners therefore get ONE generic denial regardless of existence;
+    # the specific 404 (and the real 403 body) is reserved for callers the
+    # gate has already vetted.  NOTE: the specific ownership-gate messages
+    # ("owned by 'X'") are ALSO an existence oracle in principle — but that
+    # is the D23 route's ratified behaviour and the gate helper is shared,
+    # so the oracle test pins MESSAGE-EQUALITY between existing/missing only
+    # for the generic branch, and the specific 403 is out of scope here.
+    if not is_admin:
+        caller = str(getattr(identity, "name", "") or "").strip()
+        creator = ""
+        try:
+            creator = str(await loop.run_in_executor(sync_pool, dm.read_created_by, name) or "").strip()
+        except Exception:
+            creator = ""
+        if not caller or caller != creator:
+            # Same single NAMELESS denial whether it exists (not yours) or
+            # not (nothing there): echoing the name back would let the
+            # denial body itself act as the oracle the status code refuses
+            # to be (bob could diff the echoed name against a probe list).
+            raise HTTPException(
+                403,
+                "Dataset not permitted for this API key (dataset ownership is configured — D23).",
+            )
+    try:
+        meta = await loop.run_in_executor(sync_pool, lambda: dm._read_meta(name))
+    except Exception:
+        meta = None
+    if not meta:
+        raise HTTPException(404, f"Dataset '{name}' not found")
+    # Kind refusal AFTER ownership: a non-owner learns nothing about a
+    # dataset's kind from this surface (gate first, leak nothing).
+    kind = str(meta.get("kind") or "")
+    if kind != "short_term":
+        raise HTTPException(
+            409,
+            f"Refusing to end '{name}': it is not a short-term-memory dataset "
+            f"(kind={kind or 'normal'!r}) — this tool never deletes normal datasets.",
+        )
+    await _require_dataset_password(dm, name, x_dataset_password, request)
+    await loop.run_in_executor(sync_pool, dm.delete_dataset, name)
+    logger.info(
+        "Short-term memory dataset '%s' ended (deleted) by '%s'",
+        name,
+        _creator_name_for_request(),
+    )
+    return {"status": "ok", "deleted": name, "kind": "short_term"}
 
 
 @app.post("/api/datasets/{name}/verify-password")
@@ -1940,6 +2758,39 @@ async def api_select_dataset(name: str, request: Request, body: dict[str, Any] =
         await loop.run_in_executor(sync_pool, dm.get_dataset, name, False)
     except FileNotFoundError:
         raise HTTPException(404, f"Dataset '{name}' not found")
+    # Admins hold deployment authority, but a dataset password still
+    # protects the USER's data from the operator: an admin must PROVE the
+    # password exactly like anyone else.  What an admin cannot do is
+    # self-select (there is nothing to select INTO — _require_select_identity
+    # 409s), which used to leave the panel's only password affordance
+    # ("Select...") dead for admins, so a protected download fell through to
+    # 401 "is password protected" with no way to unlock.  Serve the admin's
+    # select as an UNLOCK: verify the password, warm the unlock cache, and
+    # say so.  No bypass — a wrong/missing password still 403s.
+    _ident = _clients_registry.current_identity()
+    if _ident is not None and _ident.is_admin:
+        # Only a PASSWORD-PROTECTED dataset needs this path.  For anything
+        # else the historical 409 stands (an admin has nothing to select
+        # into) — this branch exists solely so the panel can obtain a
+        # password proof for a protected dataset it must unlock to read.
+        if not await loop.run_in_executor(sync_pool, dm.has_password, name):
+            raise HTTPException(409, "Dataset selection applies to per-user API keys (registry keys).")
+        cid = _unlock_client_id(request)
+        password = (body or {}).get("password") if isinstance(body, dict) else None
+        if not password:
+            raise HTTPException(400, "Field 'password' is required")
+        _check_pw_throttle(cid)
+        if not await loop.run_in_executor(sync_pool, dm.verify_password, name, password):
+            _pw_record_failure(cid)
+            raise HTTPException(403, f"Incorrect password for dataset '{name}'")
+        _pw_reset_failures(cid)
+        _unlock_cache_set(name, cid, password)
+        return {
+            "status": "ok",
+            "message": f"Password verified for '{name}' — unlocked for this session.",
+            "source": "admin-unlock",
+        }
+
     identity = _require_select_identity()
     cid = _unlock_client_id(request)
     password = (body or {}).get("password") if isinstance(body, dict) else None
@@ -2088,7 +2939,12 @@ def _sso_proof_for_identity(request: Request, identity: Any) -> "str | None":
     of one human; the mint still acts only on that identity's own entry.
     """
     pairs = _presented_pairs(request)
-    if _trust_proxy_identity():
+    # P3-4 (audit 2026-11-10): pass *request*.  The no-argument form returns
+    # True on the env flag alone; that is safe today only because
+    # _presented_pairs refuses to emit a "proxy-identity" candidate without
+    # the enforcing-proxy assertion.  An implicit coupling like that must not
+    # be the only thing between a flag flip and a mintable durable key.
+    if _trust_proxy_identity(request):
         for candidate, via in pairs:
             if via == "proxy-identity" and candidate == str(identity.name):
                 return "proxy-identity"
@@ -2459,9 +3315,15 @@ def _creator_name_for_request() -> str:
             return "admin"
         name = str(getattr(identity, "name", "") or "").strip()
         # The D20 fallback name is a SENTINEL, not a user: a dataset created
-        # unauthenticated is nobody's — "anonymous" (a name the registry's
-        # own regex can never mint, so it can never collide with a real key
-        # identity).
+        # unauthenticated is nobody's — it stamps "anonymous".
+        # (2026-10 correction: the old comment claimed the registry's regex
+        # "can never mint" the sentinel — FALSE for the ENV path, where
+        # parse_clients applies NO name validation, so RAG_API_KEY_CLIENTS
+        # could install "__anonymous__" as a real client name and the
+        # exact-name comparison would misread it as the sentinel.
+        # impl-storage is warn-and-refusing sentinel entries at parse time;
+        # the ownership decision itself must ALSO treat the reserved stamps
+        # via identity_owns_dataset, not string equality.)
         if name and name != "__anonymous__":
             return name
     return "anonymous"
@@ -2474,8 +3336,15 @@ def _identity_may_manage_dataset(dm: DatasetManager, name: str) -> None:
 
     Rules (fleet decision D23):
       * an ADMIN identity always passes (deployment keys, MCP keyset keys);
-      * otherwise the caller's identity NAME must equal the dataset's
-        ``created_by`` stamp (meta.json, written at create time);
+      * otherwise OWNERSHIP is decided by
+        ``clients_registry.identity_owns_dataset`` — the caller's identity
+        NAME must equal the dataset's ``created_by`` stamp (meta.json,
+        written at create time) AND the stamp must not be a RESERVED
+        sentinel (S1, 2026-10: the strings "admin" and "anonymous" are both
+        the stamps admins / nameless creators leave AND legal client names —
+        a client named "admin" used to pass this gate on EVERY admin-created
+        dataset by simple string equality; the helper refuses to treat a
+        reserved stamp as an owner name for a non-admin identity);
       * a dataset with NO stamp — pre-D23, or one whose meta is missing /
         unreadable — is ADMIN-ONLY: no backfill, no proof of creation, and
         a corrupt read must never widen a non-admin's powers (fail-closed).
@@ -2485,14 +3354,37 @@ def _identity_may_manage_dataset(dm: DatasetManager, name: str) -> None:
     identity = _clients_registry.current_identity()
     if identity is not None and identity.is_admin:
         return
-    caller = str(getattr(identity, "name", "") or "").strip()
+    # Read the stamp ONCE, through the INJECTED manager, and hand it to the
+    # ownership helper.  Two reasons this is the right seam:
+    #   1. the helper must not re-read the meta from disk behind a caller
+    #      that already holds a DatasetManager (that hidden coupling made the
+    #      decision ignore an injected manager, so a test double and the real
+    #      object could disagree);
+    #   2. the message below needs the stamp anyway, so a single read serves
+    #      both the decision and the diagnostic.
     creator = ""
     try:
         creator = str(dm.read_created_by(name) or "").strip()
     except Exception:
         creator = ""  # unreadable meta → no provable creator → admin-only
-    if creator and caller and caller == creator:
+    try:
+        owner = _clients_registry.identity_owns_dataset(identity, name, creator or None)
+    except AttributeError:
+        # SSO-CREATE-A not deployed: failing over to the old string-equality
+        # branch would silently REINTRODUCE the S1 collision, so fail loud.
+        raise HTTPException(
+            503,
+            "ownership helper missing: SSO-CREATE-A (identity_owns_dataset) is not deployed",
+        )
+    if owner:
         return
+    # NO string-equality fallback here.  identity_owns_dataset IS the
+    # ownership decision, including its reserved-stamp refusal; re-deciding
+    # it locally would re-open the S1 collision this gate was fixed for
+    # (a client named "admin" matching every admin-created dataset).  A
+    # `creator == caller` check used to sit here and DID exactly that: the
+    # helper returned False, execution fell through, and the comparison
+    # below passed anyway.
     if not creator:
         raise HTTPException(
             403,
@@ -2585,24 +3477,29 @@ async def api_admin_grant_client(name: str, request: Request, body: dict[str, An
     datasets = body.get("datasets")
     oidc_field = body.get("oidc")
     blocked_field = body.get("blocked")
+    can_create_field = body.get("can_create_datasets")
     # D21 flag-only PATCHes (the SPA's Block and OIDC-bind buttons) carry NO
     # datasets field — grant validation applies only when datasets is
-    # actually present.  A body with none of the three fields is still a
+    # actually present.  A body with none of the four fields is still a
     # 400 (nothing to do).
-    if datasets is None and oidc_field is None and blocked_field is None:
-        raise HTTPException(400, "Provide 'datasets' (a list), 'oidc' (a string), or 'blocked' (a bool)")
+    if datasets is None and oidc_field is None and blocked_field is None and can_create_field is None:
+        raise HTTPException(
+            400, "Provide 'datasets' (a list), 'oidc' (a string), 'blocked' (a bool), or 'can_create_datasets' (a bool)"
+        )
     if datasets is not None and not isinstance(datasets, list):
         raise HTTPException(400, "Field 'datasets' must be a list of dataset names")
     if oidc_field is not None and (not isinstance(oidc_field, str)):
         raise HTTPException(400, "Field 'oidc' must be a string (an alias, or '' to clear)")
     if blocked_field is not None and not isinstance(blocked_field, bool):
         raise HTTPException(400, "Field 'blocked' must be a boolean")
+    if can_create_field is not None and not isinstance(can_create_field, bool):
+        raise HTTPException(400, "Field 'can_create_datasets' must be a boolean")
     loop = asyncio.get_running_loop()
     try:
         result = None
         if datasets is not None:
             result = await loop.run_in_executor(sync_pool, lambda: _admin_registry.grant_datasets(name, datasets))
-        if oidc_field is not None or blocked_field is not None:
+        if oidc_field is not None or blocked_field is not None or can_create_field is not None:
             # set_client_flags AUTO-MINTS an empty-grant entry for unknown
             # names (the observed-JWT-user flow) — so a flag-only PATCH on an
             # observed row works without a prior mint (Block and OIDC-bind).
@@ -2612,6 +3509,7 @@ async def api_admin_grant_client(name: str, request: Request, body: dict[str, An
                     name,
                     oidc=None if oidc_field is None else oidc_field,
                     blocked=None if blocked_field is None else blocked_field,
+                    can_create_datasets=None if can_create_field is None else can_create_field,
                 ),
             )
         else:
@@ -2644,6 +3542,10 @@ async def api_admin_grant_client(name: str, request: Request, body: dict[str, An
         if "oidc" in flags:
             detail.append(f"oidc={flags['oidc'] or '(cleared)'}")
         detail.append(f"blocked={flags['blocked']}")
+        if "can_create_datasets" in flags:
+            # None means "no per-user override recorded — deployment default".
+            ccd = flags.get("can_create_datasets")
+            detail.append(f"can_create_datasets={ccd if ccd is not None else '(default)'}")
         message += f" D21 flags: {', '.join(detail)}."
     return {
         "status": "ok",
@@ -2722,10 +3624,22 @@ def _rag_acl_filter_datasets(datasets: list, catalog: bool = False) -> tuple:
     """
     identity = _clients_registry.current_identity()
     if identity is None or identity.is_admin:
+        if catalog:
+            # Short-term-memory datasets are hidden from the PANEL for every
+            # viewer, admins included (PLAN section 4.4: "so it does not
+            # appear even for the creator").  The catalog view is where
+            # datasets are advertised for opt-in — an ephemeral session
+            # store is nobody's opt-in.  Direct-name access is unaffected.
+            visible = [d for d in datasets if str(d.get("kind") or "") != "short_term"]
+            return visible, len(datasets) - len(visible)
         return datasets, 0
     if not catalog:
         visible = [d for d in datasets if _access_store.dataset_allowed(identity, str(d.get("name", "")))]
         return visible, len(datasets) - len(visible)
+    # STM hiding (catalog view only): drop kind == "short_term" rows BEFORE
+    # the ACL math so they are never advertised, even to their creator.
+    # Direct-name access and the plain (world-only) listing still work.
+    datasets = [d for d in datasets if str(d.get("kind") or "") != "short_term"]
     excluded = _access_store.exclusions_for(identity)
     visible = []
     for d in datasets:
@@ -2795,7 +3709,16 @@ def _annotate_acl_granted(datasets: list) -> None:
     if not _clients_registry.registry_configured():
         return
     identity = _clients_registry.current_identity()
-    if identity is None or identity.is_admin:
+    if identity is None:
+        return
+    if identity.is_admin:
+        # An admin reaches every dataset (dataset_allowed returns True for
+        # admins), so stamp them granted: the /access page then offers the
+        # password affordance instead of a self-selection admins cannot make
+        # (which 409s).  This is accurate rendering, NOT an access bypass —
+        # a protected dataset still demands its password at read time.
+        for ds in datasets:
+            ds["acl_granted"] = True
         return
     for ds in datasets:
         name = str(ds.get("name", ""))
@@ -2809,6 +3732,41 @@ def _annotate_acl_granted(datasets: list) -> None:
             continue
         if _access_store.dataset_allowed(identity, name):
             ds["acl_granted"] = True
+
+
+def _unlock_cache_present_many(datasets: "list[str]", cid: str) -> "set[str]":
+    """The subset of *datasets* this caller currently has unlocked.
+
+    Reads the SAME store :func:`_unlock_cache_get` reads (Redis when
+    configured, the in-process dict otherwise) so ``GET /api/datasets``
+    reports the caller's REAL unlock state on a multi-replica deployment.
+    The previous raw ``(name, cid) in _UNLOCK_CACHE`` membership test only
+    ever saw unlocks created by THIS process, so every Redis-backed replica
+    reported ``unlocked: false`` for a dataset the caller had genuinely
+    unlocked elsewhere (audit 2026-10-16, P2-2).
+
+    One MGET when Redis is available (a listing can be long); the in-memory
+    path reuses :func:`_unlock_cache_get` so expiry handling is byte-identical
+    to what a real read would decide.
+    """
+    if not datasets:
+        return set()
+    r = _get_redis()
+    if r is not None:
+        keys = [_unlock_cache_key(name, cid) for name in datasets]
+        try:
+            mget = getattr(r, "mget", None)
+            if callable(mget):
+                values = mget(keys)
+            else:  # a client without MGET — one GET each
+                values = [r.get(k) for k in keys]
+            return {name for name, val in zip(datasets, values) if val is not None}
+        except Exception:
+            # Same posture as _unlock_cache_get: a broken Redis read means
+            # "no cached unlock" — never a stale in-process answer that a
+            # real read would contradict.
+            return set()
+    return {name for name in datasets if _unlock_cache_get(name, cid) is not None}
 
 
 @app.get("/api/datasets")
@@ -2832,9 +3790,12 @@ async def api_list_datasets(
     if not cursor and not limit:
         datasets = await loop.run_in_executor(sync_pool, dm.list_datasets)
         cid = _unlock_client_id(request)
-        with _UNLOCK_CACHE_LOCK:
-            for ds in datasets:
-                ds["unlocked"] = (ds["name"], cid) in _UNLOCK_CACHE
+        # P2-2: ask the SHARED unlock store (Redis when configured), not the
+        # in-process dict — a poll landing on another replica must report the
+        # unlock that replica's neighbour granted.
+        unlocked = _unlock_cache_present_many([str(ds.get("name", "")) for ds in datasets], cid)
+        for ds in datasets:
+            ds["unlocked"] = str(ds.get("name", "")) in unlocked
         datasets, _acl_hidden = _rag_acl_filter_datasets(datasets, catalog=catalog)
         _annotate_public(datasets)
         _annotate_acl_granted(datasets)
@@ -2847,9 +3808,9 @@ async def api_list_datasets(
         raise HTTPException(400, str(exc))
     datasets = page["datasets"]
     cid = _unlock_client_id(request)
-    with _UNLOCK_CACHE_LOCK:
-        for ds in datasets:
-            ds["unlocked"] = (ds["name"], cid) in _UNLOCK_CACHE
+    unlocked = _unlock_cache_present_many([str(ds.get("name", "")) for ds in datasets], cid)
+    for ds in datasets:
+        ds["unlocked"] = str(ds.get("name", "")) in unlocked
     datasets, _acl_hidden = _rag_acl_filter_datasets(datasets, catalog=catalog)
     _annotate_public(datasets)
     _annotate_acl_granted(datasets)
@@ -3080,22 +4041,62 @@ async def _stats_body(identity) -> dict[str, Any]:
                     "used_percent": round(q_usage.used / q_usage.total * 100, 1),
                 }
             else:
-                qd_total = _parse_size_bytes(os.environ.get("QDRANT_PVC_SIZE", ""))
+                # Qdrant DB PVC summary for a SHARDED cluster (2026-10-15 fix):
+                # each peer holds its own RWO PVC of QDRANT_PVC_SIZE, so the
+                # cluster total is per-replica capacity x peer count — the old
+                # code compared the SUMMED used bytes against ONE replica's
+                # capacity (371 MB used vs 25 GB total on a 3x25 GB cluster),
+                # understating utilization ~3x and hiding the per-peer spread.
+                qd_each = _parse_size_bytes(os.environ.get("QDRANT_PVC_SIZE", ""))
                 replicas = _qdrant_cluster_replicas()
                 replica_usage = _qdrant_replica_usage(
                     replicas, os.environ.get("QDRANT_HOST", ""), os.environ.get("QDRANT_PORT", "6333")
                 )
                 qd_used = sum(replica_usage.values())
+                peer_count = len(replicas) or (_qdrant_expected_replicas() or 1)
+                qd_total = qd_each * peer_count if qd_each else None
+                # Real PVC names for the per-replica table: the StatefulSet's
+                # volumeClaimTemplate mounts as data-<sts-name>-<ordinal>,
+                # and the replica host label IS <sts-name>-<ordinal>.
+                for _r in replicas:
+                    _r["pvc"] = f"data-{_r['host']}"
+                # Merge per-replica used bytes + local point counts into the
+                # replica rows (2026-10-15 fix): the raw cluster rows carry
+                # only host/shards/status, so the UI rendered "—" for both
+                # columns even when telemetry had answered — the summed
+                # total above came from the same data.
+                _points = dict(_QDRANT_TELEMETRY_CACHE.get("points") or {})
+                for _r in replicas:
+                    _u = replica_usage.get(_r["host"])
+                    if _u is not None:
+                        _r["used_bytes"] = _u
+                    if _r["host"] in _points:
+                        _r["local_points"] = _points[_r["host"]]
                 if qd_total and qd_used:
+                    # full card only when BOTH capacity and a nonzero used
+                    # arrived (2026-10-15 hotfix: a zero used must not hide
+                    # the card — fall through to the rows-only shape)
                     qdrant_pvc = {
                         "total_bytes": qd_total,
                         "used_bytes": qd_used,
                         "free_bytes": max(qd_total - qd_used, 0),
                         "used_percent": round(qd_used / qd_total * 100, 1),
+                        # per-peer capacity so the UI can show "3 x 25 GB"
+                        "per_replica_capacity_bytes": qd_each,
+                        "replica_count": peer_count,
                         "replicas": dict(replica_usage),
+                        # full replica rows from the cluster API (host, shards,
+                        # readyz status, used_bytes, local_points) — same shape
+                        # /api/admin/health's cluster block carries
+                        "per_replica": replicas,
                     }
                 elif replica_usage:
-                    qdrant_pvc = {"used_bytes": qd_used, "replicas": dict(replica_usage)}
+                    qdrant_pvc = {
+                        "used_bytes": qd_used,
+                        "replica_count": peer_count,
+                        "replicas": dict(replica_usage),
+                        "per_replica": replicas,
+                    }
         except Exception:
             qdrant_pvc = None
 
@@ -3141,6 +4142,13 @@ async def api_update_dataset(
 ):
     """Update dataset metadata (e.g. description).
 
+    Accepts a ``chunk`` object for per-dataset chunk-size overrides
+    (feature: per-dataset chunk size): any subset of ``chunk_size``,
+    ``chunk_overlap``, ``code_chunk_size``, ``code_chunk_overlap``.  A null
+    value clears that one override; an empty object clears them all,
+    restoring the "inherit the embedder model" default.  Overrides affect
+    NEW ingests only — Recreate re-chunks existing files.
+
     Password-protected datasets require the ``X-Dataset-Password`` header
     (or a cached unlock) — metadata changes must not be possible for
     callers who cannot read the dataset.
@@ -3153,8 +4161,11 @@ async def api_update_dataset(
         return {"status": "ok", "updated": name}
     except FileNotFoundError:
         raise HTTPException(404, f"Dataset '{name}' not found")
-    except ValueError as exc:
-        # Includes the admin-only 'public' key rejection (fail loud, not 500).
+    except (TypeError, ValueError) as exc:
+        # ValueError: the admin-only 'public' key rejection and chunk
+        # range errors (fail loud, not 500).  TypeError: a chunk override
+        # of the wrong TYPE (TRY004 raises TypeError for invalid types).
+        # Both are caller errors -> 400.
         raise HTTPException(400, str(exc))
 
 
@@ -3191,6 +4202,58 @@ async def api_delete_dataset(
 
 
 # -- Documents ----------------------------------------------------------------
+
+
+@app.post("/api/datasets/{name}/late-interaction")
+async def api_set_late_interaction(
+    name: str,
+    request: Request,
+    body: Any = Body(None),
+    x_dataset_password: str | None = Header(None, alias="X-Dataset-Password"),
+):
+    """Enable/disable multi-vector late interaction (Feature D) for a dataset.
+
+    Body: '{"enabled": <bool>, "token_dim": <int | null>}'.
+
+    Enabling FAILS CLOSED (HTTP 400) when no token-level embedder is
+    configured - the deployment's document embedder is single-vector and
+    cannot produce token embeddings; token vectors are never faked from
+    pooled vectors.  The response carries the sidecar collection name, the
+    document count and 'reingest_required' when documents already exist
+    (re-ingest to backfill the sidecar's token matrices).  Disabling stops
+    writing/reading but retains the sidecar; the response names the delete
+    command that reclaims its space.
+    """
+    if not isinstance(body, dict):
+        raise HTTPException(422, 'Send JSON: {"enabled": <bool>, "token_dim": <int|null>}')
+    enabled = body.get("enabled")
+    if not isinstance(enabled, bool):
+        raise HTTPException(422, "'enabled' must be a boolean")
+    token_dim = body.get("token_dim")
+    if token_dim is not None and (isinstance(token_dim, bool) or not isinstance(token_dim, int)):
+        raise HTTPException(422, "'token_dim' must be an integer or null")
+
+    from multimodal_rag import late_interaction as late_interaction_mod
+    from multimodal_rag.vector_store import set_dataset_late_interaction
+
+    try:
+        dm = await get_manager_async()
+        await _require_dataset_password(dm, name, x_dataset_password, request)
+        result = await _submit_with_context(
+            sync_pool,
+            set_dataset_late_interaction,
+            dm,
+            name,
+            enabled=enabled,
+            token_dim=token_dim,
+        )
+        return result
+    except FileNotFoundError:
+        raise HTTPException(404, f"Dataset '{name}' not found")
+    except late_interaction_mod.LateInteractionUnavailable as exc:
+        raise HTTPException(400, str(exc))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
 
 
 @app.post("/api/datasets/{name}/documents")
@@ -3697,6 +4760,89 @@ async def api_search(
         raise HTTPException(404, f"Dataset '{name}' not found")
 
 
+def _agentic_request_params(body: dict[str, Any]) -> tuple[bool, int]:
+    """Read (agentic, agentic_max_rounds) from a search request body.
+
+    Both fields are optional and default to off / 2 rounds.  A non-boolean
+    'agentic' value is REJECTED rather than truthy-coerced: a client that sends
+    the string "false" must not silently switch on an LLM-driven retrieval
+    loop.  The round count is bounded to [1, MAX_AGENTIC_ROUNDS] so one request
+    cannot fan a search out into an arbitrary number of judge calls.
+    """
+    raw = body.get("agentic", False)
+    if not isinstance(raw, bool):
+        raise HTTPException(400, "Field 'agentic' must be a boolean")
+    rounds = body.get("agentic_max_rounds", 2)
+    if not isinstance(rounds, int) or isinstance(rounds, bool) or not 1 <= rounds <= MAX_AGENTIC_ROUNDS:
+        raise HTTPException(400, f"Field 'agentic_max_rounds' must be an integer between 1 and {MAX_AGENTIC_ROUNDS}")
+    return raw, rounds
+
+
+def _agentic_trace_block(trace: AgenticTrace) -> dict[str, Any]:
+    """The response-level 'agentic' block (mirrors the 'rrf' request block)."""
+    return trace.as_dict()
+
+
+async def _agentic_dataset_search(
+    dm: DatasetManager,
+    name: str,
+    query: "str | dict[str, Any]",
+    *,
+    top_k: int,
+    use_reranker: bool,
+    reranker_top_k: int,
+    filters: dict[str, Any] | None,
+    rrf: "RrfParams | None",
+    max_rounds: int,
+) -> tuple[list[dict[str, Any]], AgenticTrace]:
+    """Agentic loop over 'dm.search' for POST /api/datasets/{name}/search.
+
+    Each round is the EXACT sync 'dm.search' call the non-agentic endpoint makes
+    (same kwargs, same entry formatting), offloaded to 'sync_pool'.  The judge is
+    the dataset's configured chat model ('rag.vlm'); a deployment without one
+    degrades to a single plain search with stop_reason='judge_unavailable'
+    instead of failing the request.  Any unexpected loop failure falls back the
+    same way (stop_reason='error_fallback') -- an agentic request can never turn
+    a working search into an error.
+    """
+    loop = asyncio.get_running_loop()
+
+    def _search(effective_query: "str | dict[str, Any]") -> list[dict[str, Any]]:
+        return dm.search(
+            name,
+            effective_query,
+            top_k=top_k,
+            use_reranker=use_reranker,
+            reranker_top_k=reranker_top_k,
+            filters=filters,
+            rrf=rrf,
+        )
+
+    async def _asearch(effective_query: "str | dict[str, Any]") -> list[dict[str, Any]]:
+        return await loop.run_in_executor(sync_pool, partial(_search, effective_query))
+
+    rag = await loop.run_in_executor(sync_pool, dm._get_rag, name)
+    judge_fn = build_chat_judge(getattr(rag, "vlm", None))
+    if judge_fn is None:
+        logger.warning(
+            "Agentic search requested for dataset %r but no judge chat model is configured -- "
+            "running a single plain search.",
+            name,
+        )
+        results = await _asearch(query)
+        return results, AgenticTrace(rounds=1, queries=[query_text(query)], stop_reason="judge_unavailable")
+    try:
+        return await run_agentic_entries(query, _asearch, judge_fn, AgenticConfig(max_rounds=max_rounds))
+    except Exception:
+        logger.warning(
+            "Agentic search failed for dataset %r -- falling back to a single plain search",
+            name,
+            exc_info=True,
+        )
+        results = await _asearch(query)
+        return results, AgenticTrace(rounds=1, queries=[query_text(query)], stop_reason="error_fallback")
+
+
 @app.post("/api/datasets/{name}/search")
 async def api_search_multimodal(
     name: str,
@@ -3750,16 +4896,34 @@ async def api_search_multimodal(
     block (``{dense, sparse, k, applied}``) — ``applied=false`` on
     dense-degraded searches rather than labelling dense results with weights.
 
+    Opt-in agentic retrieval (feature: agentic retrieval): "agentic": true runs
+    the retrieve -> judge -> rewrite loop (bounded by "agentic_max_rounds",
+    default 2) and returns the union of the rounds' results plus an agentic
+    block carrying the trace.  Omitted (or false) keeps the single-pass
+    behaviour exactly as before; a missing or failing judge degrades to that
+    single pass instead of erroring.
+
     Returns ranked results with content and similarity scores.
     """
     query = body.get("query")
     if query is None:
         raise HTTPException(400, "Field 'query' is required (string or dict)")
     password = body.get("password") or None
+    # P1-10: the GET twin declares these via Query(ge=, le=) and the
+    # federated POST /api/search validates them the same way — this handler
+    # was the odd one out and passed raw JSON straight into Qdrant, so a
+    # string crashed pydantic (500) and a negative/zero raised Qdrant's
+    # "limit value -5 is invalid" (500), while 10**9 was forwarded verbatim
+    # as an unbounded limit.  Same bounds and same 400 shape as the twins.
     top_k = body.get("top_k", 10)
-    use_reranker = body.get("use_reranker", False)
+    if not isinstance(top_k, int) or isinstance(top_k, bool) or not 1 <= top_k <= 100:
+        raise HTTPException(400, "Field 'top_k' must be an integer between 1 and 100")
     reranker_top_k = body.get("reranker_top_k", 3)
+    if not isinstance(reranker_top_k, int) or isinstance(reranker_top_k, bool) or not 1 <= reranker_top_k <= 50:
+        raise HTTPException(400, "Field 'reranker_top_k' must be an integer between 1 and 50")
+    use_reranker = bool(body.get("use_reranker", False))
     rrf = _rrf_params_from_request(body.get("dense_weight"), body.get("sparse_weight"), body.get("k"))
+    agentic, agentic_max_rounds = _agentic_request_params(body)
 
     # Query-time SSRF guard: remote media URLs in the query are fetched
     # server-side by the embedder, so apply the same host policy as ingest
@@ -3788,6 +4952,27 @@ async def api_search_multimodal(
             build_payload_filter(raw_filters)  # validation pass (dates)
         except ValueError as exc:
             raise HTTPException(400, str(exc))
+        if agentic:
+            agentic_results, trace = await _agentic_dataset_search(
+                dm,
+                name,
+                query,
+                top_k=top_k,
+                use_reranker=use_reranker,
+                reranker_top_k=reranker_top_k,
+                filters=raw_filters,
+                rrf=rrf,
+                max_rounds=agentic_max_rounds,
+            )
+            agentic_payload: dict[str, Any] = {
+                "query": query,
+                "filters": raw_filters,
+                "results": agentic_results,
+                "agentic": _agentic_trace_block(trace),
+            }
+            if rrf is not None:
+                agentic_payload["rrf"] = _rrf_response_block(rrf, agentic_results)
+            return agentic_payload
         loop = asyncio.get_running_loop()
         results = await loop.run_in_executor(
             sync_pool,
@@ -3900,6 +5085,25 @@ async def _federated_rerank_rag(dm: DatasetManager, targets: list[str]) -> Any:
     return None
 
 
+async def _federated_judge(dm: DatasetManager, targets: list[str]) -> "Any":
+    """Judge for federated agentic search: the first target's chat model.
+
+    The chat model is server-wide (like the reranker), so any target's RAG
+    instance can judge a merged pool.  Returns None when no target has one --
+    the caller then runs a single plain round.
+    """
+    loop = asyncio.get_running_loop()
+    for name in targets:
+        try:
+            rag = await loop.run_in_executor(sync_pool, dm._get_rag, name)
+        except Exception:
+            continue
+        judge_fn = build_chat_judge(getattr(rag, "vlm", None))
+        if judge_fn is not None:
+            return judge_fn
+    return None
+
+
 async def _federated_rest_search(
     dm: DatasetManager,
     datasets: "str | list[Any] | tuple[Any, ...]",
@@ -3909,6 +5113,8 @@ async def _federated_rest_search(
     reranker_top_k: int = 3,
     filters: dict[str, Any] | None = None,
     is_unlocked: "Any" = None,
+    agentic: bool = False,
+    agentic_max_rounds: int = 2,
 ) -> dict[str, Any]:
     """Fan one query out over several datasets and merge the pools.
 
@@ -3928,12 +5134,26 @@ async def _federated_rest_search(
     skipped with a note — no password is accepted here, mirroring the MCP
     federated tool (v3.0.0: passwords stay out of request/tool signatures;
     use ``POST /api/datasets/{name}/unlock`` first).
+    *agentic* (feature: agentic retrieval) runs the retrieve -> judge -> rewrite
+    loop over that same fan-out (bounded by *agentic_max_rounds*), merging every
+    round's labelled entries by their dataset-qualified identity and returning an
+    extra agentic trace block.  Off by default; a deployment with no chat model to
+    judge with, or a judge that fails, degrades to the single plain round.
     """
     loop = asyncio.get_running_loop()
     # D15/D16: a registry-key identity's ACL ∪ self-selections restricts the
     # fan-out (skipped with a note, exactly like a password lock).
     # None = no enforcement.
-    identity = _clients_registry.current_identity() if _clients_registry.registry_configured() else None
+    #
+    # P1-1 (audit 2026-10-16): this read `... if registry_configured() else
+    # None` — inverted logic.  The fail-closed D20 `__anonymous__` identity
+    # exists PRECISELY on the unconfigured deployment, and the guard threw it
+    # away, so an unauthenticated caller read every dataset federated while
+    # being 403'd by name.  Use the BOUND identity whenever one exists
+    # (anonymous included); the middleware binds None only when there is no
+    # registry world to enforce, where "no enforcement" is the ratified
+    # single-user default.
+    identity = _clients_registry.current_identity()
     allowed = None
     if identity is not None and not identity.is_admin:
         allowed = lambda name: _access_store.dataset_allowed(identity, name)
@@ -3947,81 +5167,178 @@ async def _federated_rest_search(
     if not targets:
         return {"query": q, "filters": filters, "results": [], "skipped": skipped, "errors": errors}
 
-    async def _search_one(name: str) -> list[dict[str, Any]]:
-        return await loop.run_in_executor(
-            sync_pool,
-            partial(
-                dm.search,
-                name,
-                q,
-                top_k=top_k,
-                use_reranker=False,  # one rerank pass over the merged pool instead
-                reranker_top_k=top_k,
-                filters=filters,
-            ),
+    def _add_errors(new_notes: list[dict[str, Any]]) -> None:
+        """Append per-dataset error notes, de-duplicated across agentic rounds."""
+        for note in new_notes:
+            if note not in errors:
+                errors.append(note)
+
+    async def _run_query(effective_query: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """One federated round: fan the query out, merge, rerank, format.
+
+        Returns (results, per-dataset error notes for THIS round).  Factored out
+        of the body so the agentic loop can run it once per rewritten query while
+        a single call still produces exactly the historical output.
+        """
+
+        async def _search_one(name: str) -> list[dict[str, Any]]:
+            return await loop.run_in_executor(
+                sync_pool,
+                partial(
+                    dm.search,
+                    name,
+                    effective_query,
+                    top_k=top_k,
+                    use_reranker=False,  # one rerank pass over the merged pool instead
+                    reranker_top_k=top_k,
+                    filters=filters,
+                ),
+            )
+
+        # Bounded (RAG_FEDERATED_CONCURRENCY, default 8) and timed
+        # (RAG_FEDERATED_TIMEOUT_SECONDS, default 60, 0=disabled) per dataset,
+        # exactly like the MCP twin: without both, N targets meant N concurrent
+        # searches and one hung dataset pinned the whole gather.  A deadline
+        # surfaces as ``TimeoutError("timed out after Ns")`` below and takes the
+        # same per-dataset error-note path as any other failure.
+        sem = asyncio.Semaphore(_federated_concurrency())
+        outcomes = await asyncio.gather(
+            *(_afederated_bounded_call(sem, _search_one, name) for name in targets), return_exceptions=True
         )
 
-    # Bounded (RAG_FEDERATED_CONCURRENCY, default 8) and timed
-    # (RAG_FEDERATED_TIMEOUT_SECONDS, default 60, 0=disabled) per dataset,
-    # exactly like the MCP twin: without both, N targets meant N concurrent
-    # searches and one hung dataset pinned the whole gather.  A deadline
-    # surfaces as ``TimeoutError("timed out after Ns")`` below and takes the
-    # same per-dataset error-note path as any other failure.
-    sem = asyncio.Semaphore(_federated_concurrency())
-    outcomes = await asyncio.gather(
-        *(_afederated_bounded_call(sem, _search_one, name) for name in targets), return_exceptions=True
-    )
+        entries: list[tuple[str, Any, float]] = []
+        extra_fields: dict[int, dict[str, Any]] = {}
+        round_errors: list[dict[str, Any]] = []
+        for name, outcome in zip(targets, outcomes):
+            if isinstance(outcome, BaseException):
+                round_errors.append({"dataset": name, "error": f"{type(outcome).__name__}: {outcome}"})
+                continue
+            for entry in outcome:
+                doc = entry.get("content")
+                extra = {k: v for k, v in entry.items() if k not in ("content", "score")}
+                # dm.search reports the retrieval lane as an entry field and
+                # strips the private stamp from content, but the lane-aware
+                # merge below (and the shared rerank helper) still read it.
+                if isinstance(doc, dict) and extra.get("score_kind") == "rrf" and "_score_kind" not in doc:
+                    doc["_score_kind"] = "rrf"
+                if extra:
+                    extra_fields[id(doc)] = extra
+                entries.append((name, doc, float(entry.get("score", 0.0))))
 
-    entries: list[tuple[str, Any, float]] = []
-    extra_fields: dict[int, dict[str, Any]] = {}
-    for name, outcome in zip(targets, outcomes):
-        if isinstance(outcome, BaseException):
-            errors.append({"dataset": name, "error": f"{type(outcome).__name__}: {outcome}"})
-            continue
-        for entry in outcome:
-            doc = entry.get("content")
-            extra = {k: v for k, v in entry.items() if k not in ("content", "score")}
-            if extra:
-                extra_fields[id(doc)] = extra
-            entries.append((name, doc, float(entry.get("score", 0.0))))
+        merged = merge_federated_results(entries)
 
-    merged = merge_federated_results(entries)
+        if use_reranker and merged:
+            rerank_rag = await _federated_rerank_rag(dm, targets)
+            if rerank_rag is None:
+                logger.warning(
+                    "Federated rerank requested but no target dataset has a reranker — keeping embedding order."
+                )
+            else:
+                labelled: list[tuple[Any, float]] = []
+                for name, doc, score in merged:
+                    d = dict(doc) if isinstance(doc, dict) else {"text": str(doc)}
+                    # The label rides on the doc through the sort/truncate; the
+                    # reranker input conversion reads only text + media keys, so
+                    # the private key never reaches the model.
+                    d["_federated_dataset"] = name
+                    labelled.append((d, score))
+                ranked = await _arerank_with(
+                    rerank_rag.rank, rerank_rag._extract_doc, effective_query, labelled, reranker_top_k
+                )
+                merged = [
+                    ((d.pop("_federated_dataset", "") if isinstance(d, dict) else ""), d, score) for d, score in ranked
+                ]
 
-    if use_reranker and merged:
-        rerank_rag = await _federated_rerank_rag(dm, targets)
-        if rerank_rag is None:
-            logger.warning("Federated rerank requested but no target dataset has a reranker — keeping embedding order.")
-        else:
-            labelled: list[tuple[Any, float]] = []
-            for name, doc, score in merged:
-                d = dict(doc) if isinstance(doc, dict) else {"text": str(doc)}
-                # The label rides on the doc through the sort/truncate; the
-                # reranker input conversion reads only text + media keys, so
-                # the private key never reaches the model.
-                d["_federated_dataset"] = name
-                labelled.append((d, score))
-            ranked = await _arerank_with(rerank_rag.rank, rerank_rag._extract_doc, q, labelled, reranker_top_k)
-            merged = [
-                ((d.pop("_federated_dataset", "") if isinstance(d, dict) else ""), d, score) for d, score in ranked
-            ]
+        results: list[dict[str, Any]] = []
+        for name, doc, score in merged:
+            entry_out: dict[str, Any] = {"dataset": name}
+            # "extra" above already names a rerank-path dict — distinct name here.
+            extra_meta = extra_fields.get(id(doc))
+            if extra_meta:
+                entry_out.update(extra_meta)
+            entry_out["content"] = doc
+            entry_out["score"] = round(float(score), 4)
+            if isinstance(doc, dict):
+                if "_embedding_score" in doc and "embedding_score" not in entry_out:
+                    entry_out["embedding_score"] = doc["_embedding_score"]
+                if "_reranker_score" in doc and "reranker_score" not in entry_out:
+                    entry_out["reranker_score"] = doc["_reranker_score"]
+                # Label WHAT the emitted score is, with the MCP contract precedence:
+                # reranker relevance > RRF rank arithmetic > cosine.  The fan-out
+                # entry already carries the label dm.search derived; the merged
+                # rerank copy re-stamps the private keys on the doc instead.
+                if "_reranker_score" in doc:
+                    entry_out["score_kind"] = "reranker"
+                elif "_score_kind" in doc:
+                    entry_out["score_kind"] = "rrf" if doc["_score_kind"] == "rrf" else "cosine"
+                else:
+                    entry_out.setdefault("score_kind", "cosine")
+                if "_retrieval_score" in doc:
+                    # Pre-rerank score, kept visible alongside the reranker one.
+                    entry_out["retrieval_score"] = doc["_retrieval_score"]
+                # Private lane stamps stay out of the public content payload.
+                doc.pop("_score_kind", None)
+                doc.pop("_retrieval_score", None)
+            else:
+                entry_out.setdefault("score_kind", "cosine")
+            results.append(entry_out)
 
-    results: list[dict[str, Any]] = []
-    for name, doc, score in merged:
-        entry_out: dict[str, Any] = {"dataset": name}
-        # "extra" above already names a rerank-path dict — distinct name here.
-        extra_meta = extra_fields.get(id(doc))
-        if extra_meta:
-            entry_out.update(extra_meta)
-        entry_out["content"] = doc
-        entry_out["score"] = round(float(score), 4)
-        if isinstance(doc, dict):
-            if "_embedding_score" in doc and "embedding_score" not in entry_out:
-                entry_out["embedding_score"] = doc["_embedding_score"]
-            if "_reranker_score" in doc and "reranker_score" not in entry_out:
-                entry_out["reranker_score"] = doc["_reranker_score"]
-        results.append(entry_out)
+        return results, round_errors
 
-    return {"query": q, "filters": filters, "results": results, "skipped": skipped, "errors": errors}
+    if not agentic:
+        results, round_errors = await _run_query(q)
+        _add_errors(round_errors)
+        return {"query": q, "filters": filters, "results": results, "skipped": skipped, "errors": errors}
+
+    judge_fn = await _federated_judge(dm, targets)
+    if judge_fn is None:
+        logger.warning(
+            "Agentic federated search requested but no target dataset has a chat model to judge with -- "
+            "running a single plain search."
+        )
+        results, round_errors = await _run_query(q)
+        _add_errors(round_errors)
+        return {
+            "query": q,
+            "filters": filters,
+            "results": results,
+            "skipped": skipped,
+            "errors": errors,
+            "agentic": _agentic_trace_block(AgenticTrace(rounds=1, queries=[q], stop_reason="judge_unavailable")),
+        }
+
+    async def _asearch(effective_query: str) -> list[dict[str, Any]]:
+        round_results, round_errors = await _run_query(effective_query)
+        _add_errors(round_errors)
+        return round_results
+
+    try:
+        merged_entries, trace = await run_agentic_entries(
+            q, _asearch, judge_fn, AgenticConfig(max_rounds=agentic_max_rounds)
+        )
+    except Exception:
+        logger.warning(
+            "Agentic federated search failed -- falling back to a single plain search",
+            exc_info=True,
+        )
+        results, round_errors = await _run_query(q)
+        _add_errors(round_errors)
+        return {
+            "query": q,
+            "filters": filters,
+            "results": results,
+            "skipped": skipped,
+            "errors": errors,
+            "agentic": _agentic_trace_block(AgenticTrace(rounds=1, queries=[q], stop_reason="error_fallback")),
+        }
+    return {
+        "query": q,
+        "filters": filters,
+        "results": merged_entries,
+        "skipped": skipped,
+        "errors": errors,
+        "agentic": _agentic_trace_block(trace),
+    }
 
 
 @app.post("/api/search")
@@ -4060,6 +5377,12 @@ async def api_search_federated(
     skipped and reported under ``skipped`` (federated search never accepts a
     password — unlock the dataset first).  A dataset that fails to search is
     reported under ``errors``; the other datasets still contribute results.
+
+    Opt-in agentic retrieval (feature: agentic retrieval): "agentic": true runs
+    the retrieve -> judge -> rewrite loop over the same fan-out (bounded by
+    "agentic_max_rounds", default 2) and returns the union of the rounds plus an
+    agentic trace block.  Omitted keeps the single-round behaviour exactly as
+    before.
     """
     q = body.get("q")
     if not isinstance(q, str):
@@ -4079,6 +5402,7 @@ async def api_search_federated(
     if not isinstance(reranker_top_k, int) or isinstance(reranker_top_k, bool) or not 1 <= reranker_top_k <= 50:
         raise HTTPException(400, "Field 'reranker_top_k' must be an integer between 1 and 50")
     use_reranker = bool(body.get("use_reranker", False))
+    agentic, agentic_max_rounds = _agentic_request_params(body)
 
     raw_filters = body.get("filters")
     if raw_filters is not None and not isinstance(raw_filters, dict):
@@ -4102,6 +5426,8 @@ async def api_search_federated(
         reranker_top_k=reranker_top_k,
         filters=raw_filters,
         is_unlocked=lambda name: _unlock_cache_get(name, cid) is not None,
+        agentic=agentic,
+        agentic_max_rounds=agentic_max_rounds,
     )
 
 
@@ -4358,9 +5684,20 @@ def _documents_download_stream(dm: DatasetManager, name: str, fmt: str):
                 default=str,
                 ensure_ascii=False,
             )
-        # Markdown: heading from source/title, then the text, then media refs
+        # Markdown: heading from source/title, then the text, then media refs.
+        # 2026-10-15: the heading now always carries the document id and, for
+        # memories, the session id — the 2026-10-14 curation pass could not
+        # dedupe from a md backup because neither was rendered (the ids are
+        # what delete_memory / dataset_delete_documents consume, and the
+        # session id is what the gateway supersede-in-place gate matches on).
         heading = meta.get("source") or meta.get("title") or doc.get("id", "")
         extras = []
+        if doc.get("id") is not None:
+            extras.append(f"id {doc['id']}")
+        if meta.get("session_id"):
+            extras.append(f"session {meta['session_id']}")
+        if meta.get("memory_ts"):
+            extras.append(f"ts {meta['memory_ts']}")
         if meta.get("page") not in (None, ""):
             extras.append(f"page {meta['page']}")
         if meta.get("kind"):
@@ -4456,9 +5793,53 @@ async def api_serve_file(
     token is also accepted via ``?t=`` — LLM-generated markdown occasionally
     truncates ``token`` to ``t``, and verifying the short alias keeps those
     links working.
+
+    P0-2 (audit 2026-10-16): this route is no longer in the middleware's
+    PUBLIC set — the middleware only BINDS the presented identity for it.
+    The authorization decision is made here, in this order:
+
+      1. **D15/D16 identity ACL** — when a registry identity is bound, a
+         dataset outside its world is refused (403) BEFORE any password or
+         token is looked at.  Media serving is not an ACL bypass.
+      2. **Media token** — a valid HMAC token still fully authorises its own
+         file (the <img> flow carries no key, and the token was minted
+         through an authorized call).
+      3. **Dataset password / D16 saved password / unlock cache** — the
+         original gate, unchanged.
+
+    On an UNCONFIGURED deployment the middleware binds no identity and step
+    1 is skipped entirely: password/token-protected datasets behave exactly
+    as before (the ratified D20 posture), credential-less fetches of
+    passwordless datasets included — the legacy single-user flow, unchanged.
+
+    On a CONFIGURED (multi-user) deployment a request that presents NO
+    credential at all is refused (403): the same caller is 401'd by the
+    middleware on every other dataset route, and leaving media open let an
+    unauthenticated stranger read every passwordless dataset's bytes (the
+    audit's second reproduction).  Browsers still reach this route through a
+    media token (the SPA mints one before rendering media), the dataset
+    password, or a session cookie the browser attaches automatically.
     """
     if not token and t:
         token = t
+    # P0-2 step 1: the identity ACL, when an identity exists.  Deliberately
+    # BEFORE the token check: a media token is minted by an authorized call
+    # for a caller who already passed this gate, so this only ever refuses
+    # callers that were never allowed in the first place.
+    identity = _clients_registry.current_identity()
+    if identity is not None and not identity.is_admin and not _access_store.dataset_allowed(identity, name):
+        raise HTTPException(
+            403,
+            f"Dataset '{name}' is not permitted for this API key (dataset ACLs are configured — D15).",
+        )
+    presented_pw = password or x_dataset_password or None
+    if identity is None and not token and not presented_pw and _clients_registry.registry_configured():
+        raise HTTPException(
+            403,
+            "Authentication required to fetch dataset media on this deployment — present a media "
+            f"token (POST /api/datasets/{name}/media-token), the dataset password, or an "
+            "authenticated session.",
+        )
     dm = await get_manager_async()
     if token:
         # A media token fully authorises this specific file — no password check.
@@ -4466,7 +5847,7 @@ async def api_serve_file(
             raise HTTPException(403, "Invalid or expired media token")
     else:
         try:
-            await _require_dataset_password(dm, name, password or x_dataset_password or None, request)
+            await _require_dataset_password(dm, name, presented_pw, request)
         except FileNotFoundError:
             raise HTTPException(404, f"Dataset '{name}' not found")
 
@@ -4960,6 +6341,19 @@ def _parse_size_bytes(raw: str) -> int | None:
     return int(val * mult)
 
 
+def _qdrant_expected_replicas() -> int | None:
+    """Configured Qdrant StatefulSet size (QDRANT_REPLICAS env, rendered from
+    values qdrant.replicas).  None when unset (single-node / older chart) --
+    the UI only compares when a number exists."""
+    raw = os.environ.get("QDRANT_REPLICAS", "").strip()
+    if not raw:
+        return None
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return None
+
+
 def _peer_host_label(uri: str) -> str:
     """Best-effort human label for a Qdrant peer URI (e.g. ``qdrant-0``)."""
     try:
@@ -4978,12 +6372,22 @@ def _peer_host_label(uri: str) -> str:
 # health endpoint is polled every 10s.
 _QDRANT_TELEMETRY_CACHE: dict[str, Any] = {"ts": 0.0, "usage": {}}
 _QDRANT_TELEMETRY_TTL = 60.0
+# Replica/shard discovery is now one /cluster call + one
+# /collections/{name}/cluster call per collection + one readyz probe per peer
+# (2026-10-15 fix for the "0 shd" rendering) — cached briefly so the Stats
+# tab, the admin health poll and multiple UI users don't each re-issue the
+# full fan-out.
+_QDRANT_CLUSTER_CACHE: dict[str, Any] = {"ts": 0.0, "replicas": []}
+_QDRANT_CLUSTER_TTL = 30.0
 
 
 def _qdrant_cluster_replicas() -> "list[dict[str, Any]]":
     """Per-replica shard placement from Qdrant's /cluster API (the same
     discovery /api/admin/health performs inline), ordered by pod ordinal.
     Best-effort: [] on any failure (cluster disabled, unreachable)."""
+    now = time.time()
+    if now - _QDRANT_CLUSTER_CACHE["ts"] <= _QDRANT_CLUSTER_TTL:
+        return [dict(r) for r in _QDRANT_CLUSTER_CACHE["replicas"]]
     import httpx2
 
     qhost = os.environ.get("QDRANT_HOST", "")
@@ -4999,19 +6403,32 @@ def _qdrant_cluster_replicas() -> "list[dict[str, Any]]":
             if result.get("status") != "enabled":
                 return []
             peers = result.get("peers") or {}
+            # Shard placement comes from the per-collection
+            # /collections/{name}/cluster endpoint — the /cluster response's
+            # "collections" map is EMPTY in practice, so the old code counted
+            # zero shards for every peer and the stats page rendered "0 shd"
+            # (2026-10-15 fix; same approach /api/admin/health uses).
             peer_shards: dict[str, int] = {}
-            for cinfo in (
-                (result.get("collections") or {}).values() if isinstance(result.get("collections"), dict) else []
-            ):
-                if not isinstance(cinfo, dict):
-                    continue
-                for sh in cinfo.get("shards") or []:
-                    if not isinstance(sh, dict):
+            base = f"http://{qhost}:{qport}"
+            try:
+                coll_resp = client.get(f"{base}/collections")
+                col_names = (coll_resp.json().get("result") or {}).get("collections") or []
+                for col in col_names:
+                    name = col.get("name") if isinstance(col, dict) else None
+                    if not name:
                         continue
-                    pid = sh.get("peer_id")
-                    if pid is not None:
-                        key = str(pid)
-                        peer_shards[key] = peer_shards.get(key, 0) + 1
+                    cc = client.get(f"{base}/collections/{name}/cluster")
+                    c_res = cc.json().get("result") or {}
+                    self_pid = str(c_res.get("peer_id", ""))
+                    for sh in c_res.get("local_shards") or []:
+                        peer_shards[self_pid] = peer_shards.get(self_pid, 0) + 1
+                    for sh in c_res.get("remote_shards") or []:
+                        pid = sh.get("peer_id") if isinstance(sh, dict) else None
+                        if pid is not None:
+                            key = str(pid)
+                            peer_shards[key] = peer_shards.get(key, 0) + 1
+            except Exception:
+                logger.debug("Suppressed exception", exc_info=True)
             replicas: list[dict[str, Any]] = []
             for pid in sorted(peers.keys(), key=lambda p: str(p)):
                 ps = peer_shards.get(str(pid), 0)
@@ -5022,6 +6439,27 @@ def _qdrant_cluster_replicas() -> "list[dict[str, Any]]":
                     label = f"peer-{pid}"
                 replicas.append({"host": label, "shards": ps, "uri": uri})
             replicas.sort(key=lambda r: int(m.group(1)) if (m := re.search(r"(\d+)$", r["host"])) else -1)
+            # Per-peer readiness (2026-10-15): the UI must distinguish a
+            # healthy 3-peer cluster from a degraded one — a peer that drops
+            # from the raft response is invisible today (the page then shows
+            # fewer rows with no signal).  readyz against each peer's
+            # pod-ordinal DNS name; a failed probe reads "unreachable", not
+            # silent omission.  1.5s budget x3 worst-case ~4.5s, under the
+            # 5s client timeout of the /cluster call above.
+            for r in replicas:
+                m2 = re.search(r"(\d+)$", r["host"])
+                if not m2:
+                    r["status"] = "unknown"
+                    continue
+                try:
+                    rz = client.get(
+                        f"http://{qhost}-{m2.group(1)}.{qhost}:{qport}/readyz",
+                        timeout=1.5,
+                    )
+                    r["status"] = "ok" if rz.status_code == 200 else f"http-{rz.status_code}"
+                except Exception:
+                    r["status"] = "unreachable"
+            _QDRANT_CLUSTER_CACHE.update({"ts": now, "replicas": [dict(r) for r in replicas]})
             return replicas
     except Exception:
         logger.debug("Suppressed exception", exc_info=True)
@@ -5035,10 +6473,23 @@ def _qdrant_replica_usage(
 ) -> dict[str, int]:
     """Best-effort used bytes per replica host from Qdrant telemetry.
 
-    Each node's telemetry lists only its own ``local`` shard segments; sum
-    ``indexed_vectors_size`` + ``payload_data_size`` per segment.  Returns
-    ``{host: used_bytes}`` for the replicas that answered; failures and nodes
-    without detail telemetry are simply omitted.
+    Each node's telemetry lists only its own ``local`` shard segments.  The
+    per-segment ``info.disk_usage_bytes`` is the segment's ACTUAL on-disk
+    footprint (vectors + payloads + payload index as real blocks) — the
+    primary measure (2026-10-15: the previous sum used the shard-level
+    ``vectors_size_bytes``/``payloads_size_bytes`` ESTIMATES, which exclude
+    the payload index and other disk overhead and undercounted a 3-replica
+    cluster by ~3x vs kubelet ground truth).  Servers whose telemetry
+    carries no per-segment detail fall back to the estimate fields.
+    Returns ``{host: used_bytes}`` for the replicas that answered; failures
+    and nodes without detail telemetry are simply omitted.
+
+    2026-10-15: the same pass also records per-peer LOCAL point counts into
+    _QDRANT_TELEMETRY_CACHE["points"] ({host: int}, from each shard's local
+    points_count) so the admin page can show where a collection's points
+    actually live -- the aggregate total_points says nothing about shard
+    spread.  Cache shape stays backward-compatible: the points map is
+    additive and simply absent on older cache entries.
     """
     now = time.time()
     if now - _QDRANT_TELEMETRY_CACHE["ts"] <= _QDRANT_TELEMETRY_TTL:
@@ -5047,6 +6498,7 @@ def _qdrant_replica_usage(
         import httpx2
 
         usage: dict[str, int] = {}
+        points: dict[str, int] = {}
         for r in replicas:
             host = r.get("host", "")
             if not host:
@@ -5060,7 +6512,12 @@ def _qdrant_replica_usage(
                     cols = res.get("collections") or {}
                     inner = cols.get("collections") if isinstance(cols, dict) else None
                     items = inner.values() if isinstance(inner, dict) else (inner if isinstance(inner, list) else [])
-                    total = 0
+                    total = 0  # per-segment disk_usage_bytes sum
+                    seg_est = 0  # per-segment vectors+payloads ESTIMATE sum
+                    fallback = 0  # shard-level ESTIMATE sum
+                    have_segments = False
+                    seg_points_total = 0
+                    shard_points_total = 0
                     for cinfo in items:
                         if not isinstance(cinfo, dict):
                             continue
@@ -5068,61 +6525,91 @@ def _qdrant_replica_usage(
                             if not isinstance(sh, dict):
                                 continue
                             local = sh.get("local")
-                            if isinstance(local, dict):
-                                total += int(local.get("vectors_size_bytes") or 0)
-                                total += int(local.get("payloads_size_bytes") or 0)
-                    usage[host] = total
+                            if not isinstance(local, dict):
+                                continue
+                            shard_points_total += int(local.get("points_count") or 0)
+                            # Shard-level ESTIMATES (exclude the payload
+                            # index) — fallback when the server's telemetry
+                            # detail level carries no per-segment info.
+                            fallback += int(local.get("vectors_size_bytes") or 0)
+                            fallback += int(local.get("payloads_size_bytes") or 0)
+                            for seg in local.get("segments") or []:
+                                if not isinstance(seg, dict):
+                                    continue
+                                info = seg.get("info")
+                                if not isinstance(info, dict):
+                                    continue
+                                have_segments = True
+                                # actual on-disk blocks of this segment
+                                # (vectors + payloads + payload index) —
+                                # absent/0 on some server versions
+                                total += int(info.get("disk_usage_bytes") or 0)
+                                seg_est += int(info.get("vectors_size_bytes") or 0)
+                                seg_est += int(info.get("payloads_size_bytes") or 0)
+                                seg_points_total += int(info.get("num_points") or 0)
+                    # per-segment point counts are the reliable source; the
+                    # shard-level field is absent on some server versions
+                    points[host] = seg_points_total if have_segments else shard_points_total
+                    # Tiered used-bytes pick (2026-10-15 hotfix): a segment
+                    # list that carries disk_usage_bytes=0/absent must NOT
+                    # zero the card — v1.19.0 omits the field entirely, so
+                    # prefer real disk bytes, then per-segment estimates,
+                    # then the shard-level estimates.
+                    if total > 0:
+                        usage[host] = total
+                    elif have_segments and seg_est > 0:
+                        usage[host] = seg_est
+                    else:
+                        usage[host] = fallback
             except Exception:
                 logger.debug("Suppressed exception", exc_info=True)
-        _QDRANT_TELEMETRY_CACHE.update({"ts": now, "usage": usage})
+        _QDRANT_TELEMETRY_CACHE.update({"ts": now, "usage": usage, "points": points})
         return dict(usage)
     except Exception:
         logger.debug("Suppressed exception", exc_info=True)
         return dict(_QDRANT_TELEMETRY_CACHE.get("usage") or {})
 
 
-def _collect_health_stats() -> dict[str, Any]:
-    """Synchronous helper that does the actual work for /api/admin/health."""
-    global _last_cpu_time, _last_wall_time
+# Qdrant status / collection count / total points for /api/admin/health: one
+# /collections call plus ONE /collections/{name} call per collection.  The
+# management UI polls the endpoint every 10s, so 12 collections meant ~13
+# Qdrant round trips per poll per open browser — the same fan-out shape the
+# telemetry/cluster caches above already cover; this one was missed.  Cached
+# for _QDRANT_HEALTH_FANOUT_TTL (30s, matching _QDRANT_CLUSTER_TTL).  Only
+# successful fan-outs are cached: a failure is never stored, so "unreachable"
+# surfaces on the very next poll, and a cached "ok" can mask a dead Qdrant
+# for at most _QDRANT_HEALTH_FANOUT_TTL (30s, ~3 UI polls) after the last
+# successful fan-out — that is the deliberate staleness bound.
+_QDRANT_HEALTH_FANOUT_CACHE: dict[str, Any] = {
+    "ts": 0.0,
+    "status": "unknown",
+    "collections": 0,
+    "total_points": 0,
+}
+_QDRANT_HEALTH_FANOUT_TTL = 30.0
 
-    import shutil
 
-    # -- CPU (delta from last call) -------------------------------------------
-    rusage = resource.getrusage(resource.RUSAGE_SELF)
-    cpu_seconds = rusage.ru_utime + rusage.ru_stime
-    now = time.monotonic()
-    cpu_limit = _read_cpu_limit()
-    if _last_wall_time > 0:
-        delta_cpu = cpu_seconds - _last_cpu_time
-        delta_wall = now - _last_wall_time
-        cpu_percent = round(min(delta_cpu / delta_wall / cpu_limit * 100, 100.0), 1) if delta_wall > 0 else 0.0
-    else:
-        cpu_percent = 0.0
-    _last_cpu_time = cpu_seconds
-    _last_wall_time = now
+def _qdrant_health_fanout() -> "tuple[str, int, int]":
+    """(status, collection count, total points) for /api/admin/health.
 
-    # -- Memory ----------------------------------------------------------------
-    rss_kb = rusage.ru_maxrss  # max RSS in KB (Linux)
-    # Also read current VmRSS from /proc for live value
-    try:
-        for line in Path("/proc/self/status").read_text().splitlines():
-            if line.startswith("VmRSS:"):
-                rss_kb = int(line.split()[1])
-                break
-    except Exception:
-        logger.debug("Suppressed exception", exc_info=True)
-    rss_bytes = rss_kb * 1024
-    mem_limit = _read_cgroup_memory_limit()
-    mem_percent = round(rss_bytes / mem_limit * 100, 1) if mem_limit > 0 else 0.0
-
-    # -- File PVC disk ----------------------------------------------------------
-    dm = get_manager()
-    usage = shutil.disk_usage(str(dm.base_path))
-
-    # -- Qdrant status + total points ------------------------------------------
-    qdrant_status = "unknown"
-    qdrant_collections = 0
-    qdrant_total_points = 0
+    Re-runs the 1 + per-collection GET fan-out only when
+    ``_QDRANT_HEALTH_FANOUT_CACHE`` is older than
+    ``_QDRANT_HEALTH_FANOUT_TTL``; within the TTL the cached trio is
+    served.  Exceptions (→ "unreachable") are NOT cached — the next poll
+    retries immediately, so a dead Qdrant is reported on the following poll
+    and a cached "ok" masks an outage for at most
+    ``_QDRANT_HEALTH_FANOUT_TTL`` seconds (the staleness bound).
+    """
+    now = time.time()
+    if now - _QDRANT_HEALTH_FANOUT_CACHE["ts"] <= _QDRANT_HEALTH_FANOUT_TTL:
+        return (
+            str(_QDRANT_HEALTH_FANOUT_CACHE["status"]),
+            int(_QDRANT_HEALTH_FANOUT_CACHE["collections"]),
+            int(_QDRANT_HEALTH_FANOUT_CACHE["total_points"]),
+        )
+    status = "unknown"
+    collections = 0
+    total_points = 0
     try:
         import httpx2
 
@@ -5133,38 +6620,60 @@ def _collect_health_stats() -> dict[str, Any]:
                 base = f"http://{qhost}:{qport}"
                 resp = client.get(f"{base}/collections")
                 if resp.status_code == 200:
-                    qdrant_status = "ok"
+                    status = "ok"
                     cols = resp.json()["result"]["collections"]
-                    qdrant_collections = len(cols)
+                    collections = len(cols)
                     for col in cols:
                         info = client.get(f"{base}/collections/{col['name']}").json()["result"]
-                        qdrant_total_points += info.get("points_count", 0)
+                        total_points += info.get("points_count", 0)
     except Exception:
-        qdrant_status = "unreachable"
+        # Failure: report it now and leave the cache untouched so the next
+        # health poll re-attempts the fan-out (recovery is seen immediately).
+        return ("unreachable", collections, total_points)
+    _QDRANT_HEALTH_FANOUT_CACHE.update(
+        {"ts": now, "status": status, "collections": collections, "total_points": total_points}
+    )
+    return (status, collections, total_points)
 
-    # -- Qdrant PVC disk usage (only when mounted read-only) -------------------
-    # The Qdrant PVC is a separate volume from the file PVC; Qdrant's HTTP API
-    # does not expose on-disk usage, so we read it from the read-only mount
-    # configured in the Helm chart (env QDRANT_STORAGE_PATH).
-    qdrant_pvc: dict[str, Any] | None = None
-    if QDRANT_STORAGE_PATH and Path(QDRANT_STORAGE_PATH).exists():
-        try:
-            q_usage = shutil.disk_usage(QDRANT_STORAGE_PATH)
-            qdrant_pvc = {
-                "total_bytes": q_usage.total,
-                "used_bytes": q_usage.used,
-                "free_bytes": q_usage.free,
-                "used_percent": round(q_usage.used / q_usage.total * 100, 1),
-            }
-        except Exception:
-            logger.debug("Suppressed exception", exc_info=True)
 
-    # -- Qdrant cluster (per-replica shard placement + configured capacity) ----
-    # Qdrant does not expose on-disk usage per node, so for a sharded cluster
-    # (one RWO PVC per replica, none mounted on the API pod) we surface the
-    # per-replica shard placement from the cluster API plus the configured
-    # per-replica PVC size (QDRANT_PVC_SIZE) so operators can gauge storage
-    # spread without exec/kubectl.
+# Cluster fan-out for /api/admin/health: one /cluster call, one /collections
+# listing and one /collections/{name}/cluster call PER COLLECTION (plus the
+# per-replica telemetry pass, itself TTL-cached) — the same defect class as
+# the points fan-out above, re-run on every 10s poll.  Cached here for
+# _QDRANT_HEALTH_CLUSTER_TTL (30s).  Deliberately a SEPARATE cache from
+# _qdrant_cluster_replicas()/_QDRANT_CLUSTER_CACHE: that variant readyz-probes
+# each peer and returns uri/status per replica, i.e. a different response
+# contract (/api/stats consumes it).  Only successful passes are cached — an
+# exception leaves the cache untouched, so a cluster-block outage surfaces on
+# the next poll and is never masked longer than the TTL (same bound as above).
+_QDRANT_HEALTH_CLUSTER_CACHE: dict[str, Any] = {"ts": 0.0, "info": None}
+_QDRANT_HEALTH_CLUSTER_TTL = 30.0
+
+
+def _copy_cluster_info(info: "dict[str, Any] | None") -> "dict[str, Any] | None":
+    """Defensive per-level copy of a cached cluster payload — the neighbour
+    caches copy their entries on every read too — so no caller can mutate the
+    cached object through a returned reference."""
+    if info is None:
+        return None
+    return {**info, "replicas": [dict(r) for r in info.get("replicas") or []]}
+
+
+def _qdrant_health_cluster_info() -> "dict[str, Any] | None":
+    """cluster_info payload for /api/admin/health, TTL-cached.
+
+    Serves ``_QDRANT_HEALTH_CLUSTER_CACHE`` within
+    ``_QDRANT_HEALTH_CLUSTER_TTL``; on a miss re-runs the /cluster +
+    per-collection-cluster fan-out (the body that used to live inline in
+    _collect_health_stats, verbatim).  Exceptions are NOT cached — the
+    endpoint reports cluster_info=None for that poll and the next poll
+    retries, so an outage is never masked longer than the TTL.  A computed
+    None (no QDRANT_HOST, non-200 /cluster) IS cached: the value is
+    deterministic for the TTL window.
+    """
+    now = time.time()
+    if now - _QDRANT_HEALTH_CLUSTER_CACHE["ts"] <= _QDRANT_HEALTH_CLUSTER_TTL:
+        return _copy_cluster_info(_QDRANT_HEALTH_CLUSTER_CACHE["info"])
     cluster_info: dict[str, Any] | None = None
     try:
         import httpx2
@@ -5182,6 +6691,7 @@ def _collect_health_stats() -> dict[str, Any]:
                             "replicas": [],
                             "total_shards": 0,
                             "per_replica_capacity_bytes": _parse_size_bytes(QDRANT_PVC_SIZE),
+                            "expected_replicas": _qdrant_expected_replicas(),
                         }
                     else:
                         peers = result.get("peers") or {}
@@ -5231,18 +6741,110 @@ def _collect_health_stats() -> dict[str, Any]:
                         # payload sizes ≈ used bytes (excludes WAL/meta).
                         if replicas:
                             _usage = _qdrant_replica_usage(replicas, qhost, qport)
+                            _points = dict(_QDRANT_TELEMETRY_CACHE.get("points") or {})
                             for _r in replicas:
                                 _u = _usage.get(_r["host"])
                                 if _u is not None:
                                     _r["used_bytes"] = _u
+                                if _r["host"] in _points:
+                                    _r["local_points"] = _points[_r["host"]]
+                                # status comes from _qdrant_cluster_replicas (readyz); default for entries that predate it
+                                _r.setdefault("status", "unknown")
                         cluster_info = {
                             "enabled": True,
                             "replicas": replicas,
                             "total_shards": sum(peer_shards.values()),
                             "per_replica_capacity_bytes": _parse_size_bytes(QDRANT_PVC_SIZE),
+                            # configured StatefulSet size: lets the UI flag a
+                            # degraded raft (peers < expected) instead of
+                            # silently rendering fewer rows
+                            "expected_replicas": _qdrant_expected_replicas(),
                         }
     except Exception:
+        # Failure: report None for this poll and leave the cache untouched so
+        # the next health poll re-attempts the fan-out.
         logger.debug("Suppressed exception", exc_info=True)
+        return None
+    _QDRANT_HEALTH_CLUSTER_CACHE.update({"ts": now, "info": cluster_info})
+    return _copy_cluster_info(cluster_info)
+
+
+def _collect_health_stats() -> dict[str, Any]:
+    """Synchronous helper that does the actual work for /api/admin/health."""
+    global _last_cpu_time, _last_wall_time
+
+    import shutil
+
+    # -- CPU (delta from last call) -------------------------------------------
+    rusage = resource.getrusage(resource.RUSAGE_SELF)
+    cpu_seconds = rusage.ru_utime + rusage.ru_stime
+    now = time.monotonic()
+    cpu_limit = _read_cpu_limit()
+    if _last_wall_time > 0:
+        delta_cpu = cpu_seconds - _last_cpu_time
+        delta_wall = now - _last_wall_time
+        cpu_percent = round(min(delta_cpu / delta_wall / cpu_limit * 100, 100.0), 1) if delta_wall > 0 else 0.0
+    else:
+        cpu_percent = 0.0
+    _last_cpu_time = cpu_seconds
+    _last_wall_time = now
+
+    # -- Memory ----------------------------------------------------------------
+    rss_kb = rusage.ru_maxrss  # max RSS in KB (Linux)
+    # Also read current VmRSS from /proc for live value
+    try:
+        for line in Path("/proc/self/status").read_text().splitlines():
+            if line.startswith("VmRSS:"):
+                rss_kb = int(line.split()[1])
+                break
+    except Exception:
+        logger.debug("Suppressed exception", exc_info=True)
+    rss_bytes = rss_kb * 1024
+    mem_limit = _read_cgroup_memory_limit()
+    mem_percent = round(rss_bytes / mem_limit * 100, 1) if mem_limit > 0 else 0.0
+
+    # -- File PVC disk ----------------------------------------------------------
+    dm = get_manager()
+    usage = shutil.disk_usage(str(dm.base_path))
+
+    # -- Qdrant status + total points ------------------------------------------
+    # The 1 + per-collection Qdrant fan-out used to run inline here on every
+    # health poll; it is now TTL-cached in _qdrant_health_fanout() (failures
+    # uncached, staleness bound = _QDRANT_HEALTH_FANOUT_TTL).  The CPU/memory/
+    # disk/PVC readings in this helper stay per-request fresh.
+    qdrant_status, qdrant_collections, qdrant_total_points = _qdrant_health_fanout()
+
+    # -- Qdrant PVC disk usage (only when mounted read-only) -------------------
+    # The Qdrant PVC is a separate volume from the file PVC; Qdrant's HTTP API
+    # does not expose on-disk usage, so we read it from the read-only mount
+    # configured in the Helm chart (env QDRANT_STORAGE_PATH).
+    qdrant_pvc: dict[str, Any] | None = None
+    if QDRANT_STORAGE_PATH and Path(QDRANT_STORAGE_PATH).exists():
+        try:
+            q_usage = shutil.disk_usage(QDRANT_STORAGE_PATH)
+            qdrant_pvc = {
+                "total_bytes": q_usage.total,
+                "used_bytes": q_usage.used,
+                "free_bytes": q_usage.free,
+                "used_percent": round(q_usage.used / q_usage.total * 100, 1),
+            }
+        except Exception:
+            logger.debug("Suppressed exception", exc_info=True)
+
+    # -- Qdrant cluster (per-replica shard placement + configured capacity) ----
+    # Qdrant does not expose on-disk usage per node, so for a sharded cluster
+    # (one RWO PVC per replica, none mounted on the API pod) we surface the
+    # per-replica shard placement from the cluster API plus the configured
+    # per-replica PVC size (QDRANT_PVC_SIZE) so operators can gauge storage
+    # spread without exec/kubectl.  The fan-out (1 /cluster + 1 /collections +
+    # one /collections/{name}/cluster per collection + the per-replica
+    # telemetry pass) used to run inline here on every poll; it is now
+    # TTL-cached in _qdrant_health_cluster_info() — failures uncached, same
+    # staleness bound as the points fan-out above.  It stays a SEPARATE cache
+    # from _qdrant_cluster_replicas()/_QDRANT_CLUSTER_CACHE: the stats
+    # endpoint's variant readyz-probes each peer and returns uri/status per
+    # replica — a different response contract.
+    cluster_info = _qdrant_health_cluster_info()
 
     return {
         "cpu": {
@@ -5541,6 +7143,99 @@ async def api_set_dataset_public_creator(
     return {"status": "ok", **result}
 
 
+@app.post("/api/admin/datasets/{name}/reset-password")
+async def api_admin_reset_dataset_password(
+    name: str,
+    request: Request,
+    body: dict[str, Any] = Body(...),
+):
+    """Recover a password-protected dataset whose password was LOST.
+
+    ADMIN-ONLY (deployment keys; the middleware 403s registry-client keys on
+    /api/admin/*): this deliberately reverses the standing rule that a
+    dataset password protects the user's data FROM the operator.  It exists
+    solely for the recovery case — the owner forgot the password and can no
+    longer unlock or delete the dataset, leaving it permanently orphaned.
+    Every call is audit-logged with the acting identity and the action taken.
+
+    Body: {"new_password": "…"} to set a fresh password, or {} /
+    {"new_password": null} to remove protection entirely (the dataset
+    becomes password-free; anyone granted access can then read it or delete
+    it through the normal ownership gate).  An empty STRING is refused
+    (422) — use null to remove, never "".
+
+    Effects on the other surfaces, all query-time:
+      * the per-replica has_password TTL cache (30s) and meta cache expire /
+        mtime-invalidate on their own — no restart, and the change is visible
+        on every replica within one TTL window;
+      * EVERY live unlock of this dataset is revoked (:func:``_unlock_cache_del_all``
+        — Redis SCAN by prefix / in-process purge), so a caller that had
+        unlocked the old password must prove the NEW one on its next request
+        (P1-8, audit 2026-10-16: the previous docstring claimed this and the
+        handler only deleted the ACTING identity's entry, so a third party's
+        unlock kept serving reads after a reset);
+      * saved D16 selection passwords for this dataset are cleared for every
+        identity that selected it (P1-8): without that, the /access saved
+        password — which is an implicit unlock — kept the old grant alive.
+    """
+    # Defense in depth on top of the /api/admin/* middleware.  The middleware
+    # is the universal gate (client keys 403 on /api/admin/*); this explicit
+    # check applies when the D15 registry is ON (an identity is bound per
+    # request).  With the registry OFF a correct deployment key reaches the
+    # handler WITHOUT a bound identity (the middleware's fast path) —
+    # demanding one here would 403 the very key this route exists for.
+    if _clients_registry.registry_configured():
+        _require_admin_identity()
+    raw = body.get("new_password") if isinstance(body, dict) else None
+    if isinstance(raw, str) and raw == "":
+        raise HTTPException(422, "Use null to REMOVE the password — an empty string is not a password")
+    new_password: str | None = str(raw) if raw else None
+    dm = await get_manager_async()
+    loop = asyncio.get_running_loop()
+    try:
+        # Verify the target EXISTS before touching it (set_password would
+        # FileNotFoundError anyway; this gives the route a clean 404 without
+        # having invalidated caches as a side effect of a failed call).
+        await loop.run_in_executor(sync_pool, dm.get_dataset, name, False)
+    except FileNotFoundError:
+        raise HTTPException(404, f"Dataset '{name}' not found")
+    had_password = await loop.run_in_executor(sync_pool, dm.has_password_fresh, name)
+    await loop.run_in_executor(sync_pool, lambda: dm.set_password(name, new_password))
+    # Safety net: belt-and-braces cache invalidation (the TTL/meta caches
+    # would recover on their own, but do not make the admin wait 30s).
+    try:
+        dm._invalidate_has_password(name)
+    except Exception:
+        logger.debug("Suppressed exception", exc_info=True)
+    # P1-8 (audit 2026-10-16) + P2-6 (audit 2026-11-10): a password CHANGE must
+    # actually revoke what the old password bought — every live unlock-cache
+    # entry for this dataset and every D16 saved selection password (an
+    # implicit unlock).  Shared with the import route via the helper so a
+    # future writer cannot forget one of the two legs.
+    revoked, cleared = await _revoke_password_grants(name)
+    identity = _clients_registry.current_identity()
+    actor = getattr(identity, "name", None) or "unknown"
+    action = "SET" if new_password else "REMOVED"
+    logger.warning(
+        "ADMIN PASSWORD RESET: identity '%s' %s the password of dataset '%s' (had_password=%s, unlocks_revoked=%s, selection_passwords_cleared=%s) via /api/admin/datasets/%s/reset-password",
+        actor,
+        action,
+        name,
+        had_password,
+        revoked,
+        cleared,
+        name,
+    )
+    return {
+        "status": "ok",
+        "dataset": name,
+        "action": "set" if new_password else "removed",
+        "had_password": had_password,
+        "unlocks_revoked": revoked,
+        "selection_passwords_cleared": cleared,
+    }
+
+
 @app.post("/api/admin/datasets/{name}/migrate-tier-schema")
 async def api_migrate_tier_schema(
     name: str,
@@ -5793,6 +7488,12 @@ async def api_import_dataset(request: Request) -> dict[str, Any]:
         target = plan["dataset"]
         if password:
             await loop.run_in_executor(sync_pool, dm.set_password, target, password)
+            # P2-6 (audit 2026-11-10): an import can REPLACE an existing
+            # dataset under the same name, so the new password must revoke the
+            # old grants exactly as the admin reset does — otherwise a caller
+            # who unlocked the previous dataset reads the imported content
+            # without ever proving the new password.
+            await _revoke_password_grants(target)
 
         expected = plan["file_count"] or plan["document_rows"] or 1
         job_id = _upload_jobs.create(target, expected, source="import")
@@ -5852,8 +7553,11 @@ def _whoami_flags() -> dict:
     """The D23 ``flags`` object for an AUTHENTICATED whoami (snake_case).
 
     * ``can_create_datasets`` — matches the middleware's POST /api/datasets
-      rule (``_rag_acl_path_denial``): the registry is NOT configured, or
-      the identity carries the ``*`` grant, or it is an admin.
+      rule (``_rag_acl_path_denial``) EXACTLY: both call
+      ``_identity_may_create`` — the per-user ``can_create_datasets``
+      override (admin PATCH /api/admin/clients/{name}) → the deployment
+      default (RAG_DATASETS_CREATE_ALLOWED) → the identity-shape rules in
+      ``access_store.identity_may_create_datasets``.
     * ``sso_enabled`` — the D22 browser SSO flow is fully configured.
     * ``memory_dataset`` — the caller's effective ★ binding or null (the
       same fail-soft resolution the MCP memory tools use).
@@ -5862,18 +7566,18 @@ def _whoami_flags() -> dict:
       the endpoints re-check everything server-side per request.
     """
     identity = _clients_registry.current_identity()
-    can_create = False
-    if identity is None:
-        # No identity bound: creation is governed by the D15 config — the
-        # middleware's rule denies only when the registry is configured
-        # without the ``*`` grant; with nothing configured there is no
-        # registry gate (the D20 fail-closed branch binds an identity, so
-        # None here means a genuinely legacy surface — creation allowed).
-        can_create = not _clients_registry.registry_configured()
-    elif identity.is_admin:
-        can_create = True
-    else:
-        can_create = "*" in (identity.datasets or frozenset())
+    # 2026-10 configurable-create: the SPA greys out the Create button from
+    # THIS flag (index.html reads ``flags.can_create_datasets``), so it must
+    # be the SAME three-level decision the middleware's create gate makes
+    # (per-user override → deployment default → identity shape).  A mismatch
+    # here is a visible button that 403s, or a hidden one that would have
+    # worked — the gate and the flag call ONE helper so they cannot drift.
+    try:
+        can_create = _identity_may_create(identity)
+    except AttributeError:
+        # SSO-CREATE-A predicate not deployed yet: refuse to guess (a wrong
+        # guess greys out a working button or shows a broken one).
+        raise RuntimeError("create predicate missing: SSO-CREATE-A (identity_may_create_datasets) is not deployed")
     memory = None
     try:
         memory = _access_store.memory_dataset_for(identity, None)
@@ -6015,47 +7719,112 @@ async def api_oidc_session(request: Request):
 # ---------------------------------------------------------------------------
 
 
+_COOKIE_PREFIX_WARNED: set[str] = set()
+
+
+def _sso_cookie_name() -> str:
+    """The configured SSO session cookie name, with the P3-5 advisory.
+
+    P3-5 (audit 2026-11-10): a plain name is shadowable by a sibling
+    subdomain on a shared ingress host (cookie tossing).  The ``__Host-``
+    prefix binds the cookie to this exact origin — Path=/ , Secure and NO
+    Domain attribute, all of which this server already satisfies.  The
+    SHIPPED DEFAULT NAME IS DELIBERATELY UNCHANGED (the charts own it, and
+    renaming it would invalidate every live session); the operator opts in
+    via OIDC_SSO_COOKIE_NAME=__Host-<name>.  One advisory per process.
+    """
+    from multimodal_rag.utils import oidc_sso
+
+    name = oidc_sso.cookie_name()
+    if not name.startswith("__Host-") and name not in _COOKIE_PREFIX_WARNED:
+        _COOKIE_PREFIX_WARNED.add(name)
+        logger.warning(
+            "SSO session cookie is named '%s' (no __Host- prefix): a sibling subdomain on a shared "
+            "ingress host can shadow it. Set OIDC_SSO_COOKIE_NAME=__Host-%s to bind the cookie to "
+            "this origin (Secure is already required by the prefix).",
+            name,
+            name,
+        )
+    return name
+
+
+def _cookie_secure_for(name: str, secure: bool) -> bool:
+    """``Secure`` for *name* — forced ON for a ``__Host-`` cookie.
+
+    A ``__Host-`` cookie without ``Secure`` is REJECTED by every browser, so
+    honouring a ``OIDC_SSO_COOKIE_SECURE=0`` override there would silently
+    stop the session (and the logout) from ever persisting.  The prefix
+    itself mandates the attribute, so the prefix wins.
+    """
+    if name.startswith("__Host-"):
+        return True
+    return secure
+
+
 def _sso_cookie_headers(token: str, max_age: int, secure: bool) -> list[tuple[str, str]]:
     """Set-Cookie for the SSO session: HttpOnly (page JS never sees the
     token), SameSite=Lax (CSRF-hard default; the OIDC round trip is
-    top-level navigation so Lax works), Secure on https deployments."""
-    from multimodal_rag.utils import oidc_sso
+    top-level navigation so Lax works), Secure on https deployments.
 
+    P3-5: honours a ``__Host-`` prefixed name (see :func:`_sso_cookie_name`);
+    no Domain attribute is ever emitted, which is what the prefix requires."""
+    name = _sso_cookie_name()
     parts = [
-        f"{oidc_sso.cookie_name()}={token}",
+        f"{name}={token}",
         "Path=/",
         "HttpOnly",
         "SameSite=Lax",
         f"Max-Age={max_age}",
     ]
-    if secure:
+    if _cookie_secure_for(name, secure):
         parts.append("Secure")
     return [("set-cookie", "; ".join(parts))]
 
 
 def _sso_state_cookie_headers(state: str, secure: bool) -> list[tuple[str, str]]:
     """Set-Cookie for the login-attempt CSRF state (short-lived, HttpOnly,
-    SameSite=Lax — read back at the callback and cleared immediately)."""
+    SameSite=Lax — read back at the callback and cleared immediately).
+
+    P1-3: this is the ONLY place the state cookie value is built, so the
+    ``next`` target cannot reach a header unencoded again."""
     from multimodal_rag.utils import oidc_sso
 
+    name = oidc_sso.state_cookie_name()
     parts = [
-        f"{oidc_sso.state_cookie_name()}={state}",
+        f"{name}={state}",
         "Path=/",
         "HttpOnly",
         "SameSite=Lax",
         f"Max-Age={600}",
     ]
-    if secure:
+    if _cookie_secure_for(name, secure):
         parts.append("Secure")
     return [("set-cookie", "; ".join(parts))]
+
+
+def _sso_clear_cookie(name: str) -> str:
+    """The ``Set-Cookie`` VALUE that deletes *name*, with the same attributes
+    the setter used.
+
+    P3-5 / Wave-2: a ``__Host-``/Secure cookie is only cleared by a MATCHING
+    Secure ``Set-Cookie``.  The callback used to clear the state cookie with a
+    bare ``Max-Age=0``, so a Secure (or ``__Host-``) state cookie survived the
+    successful sign-in until its own Max-Age elapsed.
+    """
+    from multimodal_rag.utils import oidc_sso
+
+    attrs = f"{name}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
+    if _cookie_secure_for(name, oidc_sso.cookie_secure()):
+        attrs += "; Secure"
+    return attrs
 
 
 def _sso_clear_cookie_headers() -> list[tuple[str, str]]:
     from multimodal_rag.utils import oidc_sso
 
     return [
-        ("set-cookie", f"{oidc_sso.cookie_name()}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"),
-        ("set-cookie", f"{oidc_sso.state_cookie_name()}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"),
+        ("set-cookie", _sso_clear_cookie(oidc_sso.cookie_name())),
+        ("set-cookie", _sso_clear_cookie(oidc_sso.state_cookie_name())),
     ]
 
 
@@ -6070,25 +7839,32 @@ async def oauth_login(next: str = "/"):
 
     if not oidc_sso.sso_enabled():
         raise HTTPException(404, "SSO is not enabled on this deployment")
-    url = oidc_sso.build_authorization_url(oidc_sso.new_state())
+    # P3-3 (audit 2026-11-10): keep the value we generated.  This used to be
+    # recovered with url.split("state=")[-1], which works only while
+    # build_authorization_url happens to append `state` LAST — any future
+    # parameter after it would plant a wrong state cookie and fail every
+    # login with no diagnostic.
+    state = oidc_sso.new_state()
+    url = oidc_sso.build_authorization_url(state)
     if not url:
         raise HTTPException(503, "OIDC provider discovery unavailable — try again shortly")
-    # The state cookie value is "<state>|<safe-next>" — the callback splits
-    # it back (never trusting the query string for the redirect target).
-    state = url.split("state=")[-1]
-    target = oidc_sso.safe_next_path(next)
+    # The state cookie value is "<state>|<percent-encoded safe-next>" — the
+    # callback splits it back and decodes the target (never trusting the query
+    # string for the redirect target).
+    #
+    # P1-3 (audit 2026-11-10): the target is PERCENT-ENCODED here and decoded
+    # at the callback.  It rides inside a raw Set-Cookie header value, so a
+    # decoded CR/LF in `next` used to split the response headers, and a
+    # TAB/LF would be stripped by the browser and re-form the "//host"
+    # protocol-relative form safe_next_path exists to refuse.  The cookie is
+    # also built by _sso_state_cookie_headers() now (one definition of the
+    # attribute set) instead of being hand-rolled here.
+    from urllib.parse import quote
+
+    target = quote(oidc_sso.safe_next_path(next), safe="/")
     resp = RedirectResponse(url, status_code=302)
-    secure = oidc_sso.cookie_secure()
-    parts = [
-        f"{oidc_sso.state_cookie_name()}={state}|{target}",
-        "Path=/",
-        "HttpOnly",
-        "SameSite=Lax",
-        "Max-Age=600",
-    ]
-    if secure:
-        parts.append("Secure")
-    resp.headers.append("set-cookie", "; ".join(parts))
+    for header in _sso_state_cookie_headers(f"{state}|{target}", oidc_sso.cookie_secure()):
+        resp.headers.append(*header)
     return resp
 
 
@@ -6128,7 +7904,12 @@ async def oauth_callback(request: Request, code: str = "", state: str = ""):
     if ident is None:
         logger.warning("OIDC SSO callback: token did not resolve to an identity (verification failed)")
         return RedirectResponse("/?sso=error", status_code=302)
-    target = oidc_sso.safe_next_path(cookie_target or "/")
+    # P1-3: the target rode in the cookie percent-encoded (it must never reach
+    # a header value raw); safe_next_path is re-applied to the DECODED value,
+    # so a hand-set cookie still cannot open a redirect.
+    from urllib.parse import unquote
+
+    target = oidc_sso.safe_next_path(unquote(cookie_target or "/"))
     resp = RedirectResponse(target, status_code=302)
     for header in _sso_cookie_headers(
         token,
@@ -6136,11 +7917,10 @@ async def oauth_callback(request: Request, code: str = "", state: str = ""):
         oidc_sso.cookie_secure(),
     ):
         resp.headers.append(*header)
-    # Clear the state cookie (its one job is done).
-    resp.headers.append(
-        "set-cookie",
-        f"{oidc_sso.state_cookie_name()}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
-    )
+    # Clear the state cookie (its one job is done) — with the SAME attributes
+    # the set used, or a Secure/__Host- cookie would survive the callback
+    # until its Max-Age (Wave-2).
+    resp.headers.append("set-cookie", _sso_clear_cookie(oidc_sso.state_cookie_name()))
     logger.info("SSO sign-in: identity '%s' session established", ident.name)
     return resp
 

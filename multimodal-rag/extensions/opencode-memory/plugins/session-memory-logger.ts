@@ -111,7 +111,7 @@ const NOISE_TOOLS = new Set([
   "todowrite",
   "question",
   "session-id",
-  "describe_media",
+  "inspect_media",
   "list_datasets",
   "get_dataset_files",
   "get_dataset_info",
@@ -548,6 +548,11 @@ const sessionMemoryLogger: Plugin = async ({ client, $, directory, worktree }) =
       if (!text) return
 
       const metadata: Record<string, unknown> = {
+        // WRITER IDENTITY (2026-10-17): the server no longer invents a
+        // source, so each writer names itself. This used to be implicit —
+        // mm-rag hardcoded "opencode:memory" for every writer, which
+        // mislabelled DSH and gateway-distiller memories as opencode's.
+        source: "opencode:memory",
         kind: "session_history",
         session_id: sid,
         session_title: title,

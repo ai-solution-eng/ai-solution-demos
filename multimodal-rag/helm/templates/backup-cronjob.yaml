@@ -1,10 +1,15 @@
 {{- if .Values.backups.enabled }}
-# Opt-in scheduled dataset backups: exports every non-password-protected
-# dataset via GET /api/datasets/{name}/export and uploads the .tar.gz to the
-# configured S3/MinIO bucket (reuses the app image's httpx + boto3 and the
-# existing S3_* credentials from the model-keys Secret).  Protected datasets
-# are skipped — their exports require the dataset password, which backups
-# deliberately do not hold.
+# Opt-in scheduled dataset backups: exports every dataset via
+# GET /api/datasets/{name}/export and uploads the .tar.gz to the configured
+# S3/MinIO bucket (reuses the app image's httpx + boto3 and the existing S3_*
+# credentials from the model-keys Secret).  Password-protected datasets are
+# exported too WHEN their password is available in the optional
+# protected-passwords Secret (backups.protectedPasswords.existingSecret —
+# one key per dataset name, value = the dataset password, mounted read-only
+# at /etc/rag/dataset-passwords; a volume mount rather than envFrom because
+# dataset names carry hyphens/dots that envFrom would silently drop).
+# A protected dataset WITHOUT a matching key is skipped with a loud
+# SKIP-PROTECTED log line naming the missing key — never silently.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -20,6 +25,13 @@ spec:
   jobTemplate:
     spec:
       backoffLimit: 1
+      # Keep the finished Job (and its failed pod) around long enough to
+      # read the logs: the TTL controller deletes the Job cascadingly
+      # (pods included) after this many seconds.  failedJobsHistoryLimit
+      # above is what evicts the JOB after 3 later ticks; this bounds the
+      # pod lifetime WITHIN that window so a failing tick is debuggable.
+      # (Same contract watched-sources ships.)
+      ttlSecondsAfterFinished: 3600
       template:
         metadata:
           # Deliberately NO hpe-ezua vendor labels on cron pods: the platform's
@@ -31,10 +43,49 @@ spec:
             app: {{ .Values.deployment.appName }}
         spec:
           automountServiceAccountToken: false
-          restartPolicy: OnFailure
+          # ── qdrant readiness gate (2026-10-17 incident; P2-8 2026-11-10) ──
+          # A cron tick must NOT touch qdrant while the cluster is still
+          # forming: after a cold STS restart a node can answer 503 for
+          # minutes, and a read that lands on an orphaned shard panics the
+          # leader (min > max).  Wait for /readyz, bounded by
+          # cronQdrantReadyTimeoutSeconds (default 1800 = 30 min); on
+          # timeout this tick FAILS loudly (the next tick retries) rather
+          # than hammering a half-joined cluster.  (Copied from the
+          # watched-sources cron, which got the gate first.)
+          initContainers:
+            - name: wait-for-qdrant
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}{{ if .Values.image.digest }}@{{ .Values.image.digest }}{{ end }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command:
+                - python
+                - -c
+                - |
+                  import sys, time, urllib.request
+                  url = "http://{{ .Values.deployment.name }}-qdrant:{{ .Values.qdrant.httpPort }}/readyz"
+                  budget = int("{{ .Values.cronQdrantReadyTimeoutSeconds | default 1800 }}")
+                  deadline = time.time() + budget
+                  while True:
+                      try:
+                          with urllib.request.urlopen(url, timeout=5) as r:
+                              if r.status == 200:
+                                  print("qdrant /readyz OK"); sys.exit(0)
+                      except Exception:
+                          pass
+                      if time.time() >= deadline:
+                          print("qdrant not ready after " + str(budget) + "s - failing this tick (next tick retries)"); sys.exit(1)
+                      time.sleep(10)
+          # Never (not OnFailure): with OnFailure the job controller DELETES
+          # the pod the moment backoffLimit is reached - the failed tick's
+          # output was unreachable (2026-09 pcai-se, the same loss
+          # watched-sources fixed).  With Never the failed pod stays in
+          # place as a terminated pod owned by the (TTL-retained) Job, so
+          # kubectl logs <pod> still works after the failure.  The export is
+          # idempotent (dataset/<stamp>.tar.gz keys never overwrite), so a
+          # fresh pod on retry costs nothing.
+          restartPolicy: Never
           containers:
             - name: backup
-              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}{{ if .Values.image.digest }}@{{ .Values.image.digest }}{{ end }}"
               imagePullPolicy: {{ .Values.image.pullPolicy }}
               command:
                 - python
@@ -51,6 +102,7 @@ spec:
                   if not headers:
                       print("[backup] WARNING: RAG_API_KEY empty - auth-enabled deployments will 401 every call")
                   api = os.environ["BACKUP_API_URL"].rstrip("/")
+                  PW_DIR = "/etc/rag/dataset-passwords"
                   bucket = os.environ["BACKUP_BUCKET"]
                   endpoint = os.environ.get("S3_ENDPOINT_URL") or None
                   s3 = boto3.client(
@@ -68,13 +120,24 @@ spec:
                       name = ds.get("name", "")
                       if not name:
                           continue
+                      pw = None
                       if ds.get("has_password"):
-                          print(f"[backup] skip {name}: password protected (export needs the dataset password)")
-                          skipped += 1
-                          continue
+                          pw_file = os.path.join(PW_DIR, name)
+                          try:
+                              with open(pw_file, "r", encoding="utf-8") as pf:
+                                  pw = pf.read().rstrip("\r\n") or None
+                          except OSError:
+                              pw = None
+                          if not pw:
+                              print(f"[backup] SKIP-PROTECTED {name}: no key '{name}' in the protected-passwords Secret - add it to enable this dataset's backup")
+                              skipped += 1
+                              continue
                       try:
                           with tempfile.NamedTemporaryFile(suffix=".tar.gz") as f:
-                              with httpx.stream("GET", f"{api}/api/datasets/{name}/export", headers=headers or None, timeout=httpx.Timeout(1800.0, connect=30.0)) as r:
+                              export_headers = dict(headers)
+                              if pw:
+                                  export_headers["X-Dataset-Password"] = pw
+                              with httpx.stream("GET", f"{api}/api/datasets/{name}/export", headers=export_headers or None, timeout=httpx.Timeout(1800.0, connect=30.0)) as r:
                                   r.raise_for_status()
                                   for chunk in r.iter_bytes():
                                       f.write(chunk)
@@ -120,7 +183,11 @@ spec:
                       except Exception as exc:
                           print(f"[backup] retention prune failed (non-fatal): {exc}")
                   print(f"[backup] done: {exported} exported, {skipped} skipped (protected), {failed} failed")
-                  raise SystemExit(1 if failed and not exported else 0)
+                  # P2-9 (2026-11-10 audit): ANY failed dataset fails the tick -
+                  # a 3/10 backup must not report Job Succeeded.  The next tick
+                  # retries every dataset; exports are idempotent
+                  # (dataset/<stamp>.tar.gz keys never overwrite).
+                  raise SystemExit(1 if failed else 0)
               envFrom:
                 - configMapRef:
                     name: {{ .Values.deployment.name }}-config
@@ -157,6 +224,10 @@ spec:
                       name: {{ .Values.security.existingSecret }}
                       key: {{ .Values.security.existingSecretMediaTokenKey }}
                 {{- end }}
+                {{- range $key, $val := .Values.extraEnv }}
+                - name: {{ $key }}
+                  value: {{ $val | quote }}
+                {{- end }}
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true
@@ -165,6 +236,11 @@ spec:
               volumeMounts:
                 - name: tmp
                   mountPath: /tmp
+                {{- if .Values.backups.protectedPasswords.existingSecret }}
+                - name: dataset-passwords
+                  mountPath: /etc/rag/dataset-passwords
+                  readOnly: true
+                {{- end }}
               resources:
                 requests:
                   memory: "256Mi"
@@ -175,4 +251,9 @@ spec:
           volumes:
             - name: tmp
               emptyDir: {}
+            {{- if .Values.backups.protectedPasswords.existingSecret }}
+            - name: dataset-passwords
+              secret:
+                secretName: {{ .Values.backups.protectedPasswords.existingSecret }}
+            {{- end }}
 {{- end }}

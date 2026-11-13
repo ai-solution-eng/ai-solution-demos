@@ -24,6 +24,11 @@ spec:
       # tests/full_pipeline/test_kyverno_vendor_labels_render.py).
       labels:
         app: {{ .Values.deployment.appName }}
+        # M4 (wave-2 review): dedicated component label — the PDB for this
+        # Deployment selects on it, because CronJob pods carry the bare
+        # app=<appName> label and would otherwise zero the disruption budget
+        # while they wait out their qdrant readiness gate.
+        app.kubernetes.io/component: api
         hpe-ezua/type: vendor-service
         hpe-ezua/app: {{ .Chart.Name }}
     spec:
@@ -33,9 +38,23 @@ spec:
         fsGroup: 1000
       initContainers:
         - name: fix-pvc-permissions
-          image: busybox:latest
+          # PINNED (audit 2026-10-16): busybox:latest is unpinned mutable
+          # supply-chain surface for a root init container. resources keep the
+          # chown walk from bursting node memory on large NFS trees.
+          image: "{{ .Values.initContainer.busybox.repository }}:{{ .Values.initContainer.busybox.tag }}{{ if .Values.initContainer.busybox.digest }}@{{ .Values.initContainer.busybox.digest }}{{ end }}"
+          imagePullPolicy: IfNotPresent
           securityContext:
             runAsUser: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+              # chown/chgrp need CAP_CHOWN; find over NFS wants DAC bypass on
+              # foreign-owned files. Nothing else.
+              add: ["CHOWN", "DAC_OVERRIDE"]
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 500m, memory: 128Mi}
           # Skip the walk when ownership is already correct: the data PVC
           # can hold hundreds of thousands of files (NFS), and chown -R
           # over NFS on every pod start stalls the rollout in Init for
@@ -47,7 +66,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: rag-api-server
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}{{ if .Values.image.digest }}@{{ .Values.image.digest }}{{ end }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
             allowPrivilegeEscalation: false
@@ -129,28 +148,28 @@ spec:
             # per-user registry identity — rendered ONLY when enabled
             # (default render byte-identical). The registry serves BOTH
             # containers (REST + MCP must resolve the same identities).
-            # ENABLED WITHOUT AN ISSUER still renders RAG_OIDC_ENABLED (the
+            # ENABLED WITHOUT AN ISSUER still renders OIDC_ENABLED (the
             # app logs a loud startup warning and fails closed) — the env is
             # never silently dropped.
-            - name: RAG_OIDC_ENABLED
+            - name: OIDC_ENABLED
               value: "true"
-            - name: RAG_OIDC_ISSUER
+            - name: OIDC_ISSUER
               value: {{ .Values.security.oidc.issuer | quote }}
-            - name: RAG_OIDC_AUDIENCE
+            - name: OIDC_AUDIENCE
               value: {{ .Values.security.oidc.audience | quote }}
-            - name: RAG_OIDC_IDENTITY_CLAIM
+            - name: OIDC_IDENTITY_CLAIM
               value: {{ .Values.security.oidc.identityClaim | quote }}
             {{- if .Values.security.oidc.jwksUrl }}
-            - name: RAG_OIDC_JWKS_URL
+            - name: OIDC_JWKS_URL
               value: {{ .Values.security.oidc.jwksUrl | quote }}
             {{- end }}
-            - name: RAG_OIDC_JWKS_REFRESH_SECONDS
+            - name: OIDC_JWKS_REFRESH_SECONDS
               value: {{ .Values.security.oidc.jwksRefreshSeconds | quote }}
-            - name: RAG_OIDC_OBSERVED_TTL
+            - name: OIDC_OBSERVED_TTL
               value: {{ .Values.security.oidc.observedTtl | quote }}
-            - name: RAG_OIDC_FETCH_TIMEOUT_SECONDS
+            - name: OIDC_FETCH_TIMEOUT_SECONDS
               value: {{ .Values.security.oidc.fetchTimeoutSeconds | quote }}
-            - name: RAG_OIDC_CLOCK_SKEW_SECONDS
+            - name: OIDC_CLOCK_SKEW_SECONDS
               value: {{ .Values.security.oidc.clockSkewSeconds | quote }}
             {{- end }}
             {{- if .Values.security.oidc.sso.enabled }}
@@ -158,35 +177,35 @@ spec:
             # cookie envelope.  Rendered ONLY when sso.enabled — the default
             # render is byte-identical.  clientSecret prefers the existing
             # Secret; an inline value is back-compat.
-            - name: RAG_OIDC_SSO_ENABLED
+            - name: OIDC_SSO_ENABLED
               value: "true"
-            - name: RAG_OIDC_SSO_CLIENT_ID
+            - name: OIDC_SSO_CLIENT_ID
               value: {{ .Values.security.oidc.sso.clientId | quote }}
             {{- if .Values.security.oidc.sso.clientExistingSecret }}
-            - name: RAG_OIDC_SSO_CLIENT_SECRET
+            - name: OIDC_SSO_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.security.oidc.sso.clientExistingSecret }}
                   key: {{ .Values.security.oidc.sso.clientExistingSecretKey }}
             {{- else }}
-            - name: RAG_OIDC_SSO_CLIENT_SECRET
+            - name: OIDC_SSO_CLIENT_SECRET
               value: {{ .Values.security.oidc.sso.clientSecret | quote }}
             {{- end }}
             {{- if .Values.security.oidc.sso.redirectUri }}
-            - name: RAG_OIDC_SSO_REDIRECT_URI
+            - name: OIDC_SSO_REDIRECT_URI
               value: {{ .Values.security.oidc.sso.redirectUri | quote }}
             {{- end }}
             {{- if .Values.security.oidc.sso.providerUrl }}
-            - name: RAG_OIDC_SSO_PROVIDER_URL
+            - name: OIDC_SSO_PROVIDER_URL
               value: {{ .Values.security.oidc.sso.providerUrl | quote }}
             {{- end }}
-            - name: RAG_OIDC_SSO_SCOPES
+            - name: OIDC_SSO_SCOPES
               value: {{ .Values.security.oidc.sso.scopes | quote }}
-            - name: RAG_OIDC_SSO_COOKIE_NAME
+            - name: OIDC_SSO_COOKIE_NAME
               value: {{ .Values.security.oidc.sso.cookieName | quote }}
-            - name: RAG_OIDC_SSO_COOKIE_MAX_AGE
+            - name: OIDC_SSO_COOKIE_MAX_AGE
               value: {{ .Values.security.oidc.sso.cookieMaxAgeSeconds | quote }}
-            - name: RAG_OIDC_SSO_COOKIE_SECURE
+            - name: OIDC_SSO_COOKIE_SECURE
               value: {{ .Values.security.oidc.sso.cookieSecure | quote }}
             {{- end }}
             {{- if .Values.security.ssoGate }}
@@ -273,7 +292,7 @@ spec:
 
         {{- if .Values.mcp.enabled }}
         - name: rag-mcp-server
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}{{ if .Values.image.digest }}@{{ .Values.image.digest }}{{ end }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
             allowPrivilegeEscalation: false
@@ -348,28 +367,28 @@ spec:
             # per-user registry identity — rendered ONLY when enabled
             # (default render byte-identical). The registry serves BOTH
             # containers (REST + MCP must resolve the same identities).
-            # ENABLED WITHOUT AN ISSUER still renders RAG_OIDC_ENABLED (the
+            # ENABLED WITHOUT AN ISSUER still renders OIDC_ENABLED (the
             # app logs a loud startup warning and fails closed) — the env is
             # never silently dropped.
-            - name: RAG_OIDC_ENABLED
+            - name: OIDC_ENABLED
               value: "true"
-            - name: RAG_OIDC_ISSUER
+            - name: OIDC_ISSUER
               value: {{ .Values.security.oidc.issuer | quote }}
-            - name: RAG_OIDC_AUDIENCE
+            - name: OIDC_AUDIENCE
               value: {{ .Values.security.oidc.audience | quote }}
-            - name: RAG_OIDC_IDENTITY_CLAIM
+            - name: OIDC_IDENTITY_CLAIM
               value: {{ .Values.security.oidc.identityClaim | quote }}
             {{- if .Values.security.oidc.jwksUrl }}
-            - name: RAG_OIDC_JWKS_URL
+            - name: OIDC_JWKS_URL
               value: {{ .Values.security.oidc.jwksUrl | quote }}
             {{- end }}
-            - name: RAG_OIDC_JWKS_REFRESH_SECONDS
+            - name: OIDC_JWKS_REFRESH_SECONDS
               value: {{ .Values.security.oidc.jwksRefreshSeconds | quote }}
-            - name: RAG_OIDC_OBSERVED_TTL
+            - name: OIDC_OBSERVED_TTL
               value: {{ .Values.security.oidc.observedTtl | quote }}
-            - name: RAG_OIDC_FETCH_TIMEOUT_SECONDS
+            - name: OIDC_FETCH_TIMEOUT_SECONDS
               value: {{ .Values.security.oidc.fetchTimeoutSeconds | quote }}
-            - name: RAG_OIDC_CLOCK_SKEW_SECONDS
+            - name: OIDC_CLOCK_SKEW_SECONDS
               value: {{ .Values.security.oidc.clockSkewSeconds | quote }}
             {{- end }}
             {{- if .Values.security.oidc.sso.enabled }}
@@ -377,35 +396,35 @@ spec:
             # cookie envelope.  Rendered ONLY when sso.enabled — the default
             # render is byte-identical.  clientSecret prefers the existing
             # Secret; an inline value is back-compat.
-            - name: RAG_OIDC_SSO_ENABLED
+            - name: OIDC_SSO_ENABLED
               value: "true"
-            - name: RAG_OIDC_SSO_CLIENT_ID
+            - name: OIDC_SSO_CLIENT_ID
               value: {{ .Values.security.oidc.sso.clientId | quote }}
             {{- if .Values.security.oidc.sso.clientExistingSecret }}
-            - name: RAG_OIDC_SSO_CLIENT_SECRET
+            - name: OIDC_SSO_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.security.oidc.sso.clientExistingSecret }}
                   key: {{ .Values.security.oidc.sso.clientExistingSecretKey }}
             {{- else }}
-            - name: RAG_OIDC_SSO_CLIENT_SECRET
+            - name: OIDC_SSO_CLIENT_SECRET
               value: {{ .Values.security.oidc.sso.clientSecret | quote }}
             {{- end }}
             {{- if .Values.security.oidc.sso.redirectUri }}
-            - name: RAG_OIDC_SSO_REDIRECT_URI
+            - name: OIDC_SSO_REDIRECT_URI
               value: {{ .Values.security.oidc.sso.redirectUri | quote }}
             {{- end }}
             {{- if .Values.security.oidc.sso.providerUrl }}
-            - name: RAG_OIDC_SSO_PROVIDER_URL
+            - name: OIDC_SSO_PROVIDER_URL
               value: {{ .Values.security.oidc.sso.providerUrl | quote }}
             {{- end }}
-            - name: RAG_OIDC_SSO_SCOPES
+            - name: OIDC_SSO_SCOPES
               value: {{ .Values.security.oidc.sso.scopes | quote }}
-            - name: RAG_OIDC_SSO_COOKIE_NAME
+            - name: OIDC_SSO_COOKIE_NAME
               value: {{ .Values.security.oidc.sso.cookieName | quote }}
-            - name: RAG_OIDC_SSO_COOKIE_MAX_AGE
+            - name: OIDC_SSO_COOKIE_MAX_AGE
               value: {{ .Values.security.oidc.sso.cookieMaxAgeSeconds | quote }}
-            - name: RAG_OIDC_SSO_COOKIE_SECURE
+            - name: OIDC_SSO_COOKIE_SECURE
               value: {{ .Values.security.oidc.sso.cookieSecure | quote }}
             {{- end }}
             {{- if .Values.security.ssoGate }}

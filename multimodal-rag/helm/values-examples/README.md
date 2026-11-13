@@ -44,7 +44,7 @@ values.
 |---|---|
 | `values.g2.yaml` | **SE G2** — HPE internal cluster (`pcai-se-ai-application.hst.rdlabs.hpecorp.net`, `project-user-*` namespaces, HPE SSO at the gateway). Model URLs are the real shared serving endpoints (not secret); every credential is a filler. |
 | `values.hosted-trial.yaml` | **Hosted trial** — customer PCAI. Uses the `${DOMAIN_NAME}` placeholder (PCAI substitutes it before rendering), oauth2-proxy AuthorizationPolicy, and fillers for all model keys. |
-| `values-hardened-g2.yaml` | **Hardened G2 overlay** — NOT a standalone profile: a fragment to merge into (or paste below) a profile file that turns the MCP network zone ON (`networkPolicy.enabled: true`). Base chart only — the scale charts ship no NetworkPolicy template. |
+| `values-hardened-g2.yaml` | **Hardened G2 overlay** — NOT a standalone profile: a fragment to merge into (or paste below) a profile file that turns the MCP network zone ON (`networkPolicy.enabled: true`). The template is identical in all three charts, so the overlay applies unchanged to any of them; only the caller namespaces differ. |
 
 Both profile files also carry a commented-out `security.oidc` block (decision D21 — OIDC JWT as a second registry credential) at the same spot as the chart's `security` block: off by default, with the site-specific notes in the comments.
 

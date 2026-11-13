@@ -30,6 +30,10 @@ Environment knobs (read per call so tests and runtime changes take effect):
                                 MODEL_EMBED_MAX_CONCURRENCY semaphore pattern)
     RAG_CONTEXTUAL_DIGEST_CHARS document-excerpt size in the shared preamble
                                 (default 512)
+    RAG_MERGED_ANNOTATION       merged caption+context in ONE VLM call
+                                (default OFF - the merged prompt measured
+                                26 words vs 243 for the dedicated caption
+                                prompt on the same page)
 
 Skips (verified interplay gotchas, review 2026-09):
 
@@ -72,13 +76,17 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "CONTEXTUALIZED_META_KEY",
     "DOC_CONTEXT_MARKER",
+    "MERGED_CONTEXT_KEY",
     "OUTPUT_TOKENS_PER_CHUNK",
     "acontextualize_docs",
+    "annotate_media_merged",
     "concurrency",
     "contextualized_texts",
     "digest_chars",
     "estimate_tokens",
+    "merged_annotation_enabled",
     "sample_preamble_tokens",
+    "vlm_supports_images",
 ]
 
 # Stored-text marker and per-point provenance key.  The marker must NOT match
@@ -86,6 +94,41 @@ __all__ = [
 # caption stripping and _has_real_text are unaffected by its presence.
 DOC_CONTEXT_MARKER = "[Document context]:"
 CONTEXTUALIZED_META_KEY = "contextualized"
+
+# Merged-annotation contract (feature: merged caption+context).  When a doc
+# carries BOTH real text and image media, and the VLM supports image input,
+# ONE call produces both artifacts instead of two: the caption line the
+# Preprocessor would otherwise get from its own `_describe` call, and the
+# document-context line this module writes.  The response is a two-section
+# block delimited by these labels; anything unparseable fails OPEN (the
+# caller falls back to its normal single-purpose path).
+CAPTION_SECTION_LABEL = "CAPTION:"
+CONTEXT_SECTION_LABEL = "CONTEXT:"
+
+# Merged annotation is OFF by default (RAG_MERGED_ANNOTATION, chart values
+# rag.mergedAnnotation).  Measured against the live VLM on 2026-10-26, the
+# merged prompt produced a 26-word caption where the dedicated captioning
+# prompt produced 243 words on the same page - the caption feeds retrieval-
+# time reuse and the caption-twin embedding, so a thin caption degrades
+# image retrieval everywhere downstream.  The plumbing is complete and
+# tested; this flag stays false until the merged prompt is re-tuned to
+# match dedicated-caption quality.
+_MERGED_ANNOTATION_ENV = "RAG_MERGED_ANNOTATION"
+
+
+def merged_annotation_enabled() -> bool:
+    """Whether the merged caption+context call is enabled (default OFF).
+
+    Read per call so a ConfigMap change takes effect without a rebuild,
+    matching the RAG_CONTEXTUAL_* knob convention.
+    """
+    return os.environ.get(_MERGED_ANNOTATION_ENV, "").strip().lower() in ("true", "1", "yes", "on")
+
+
+# Doc-level stash key the Preprocessor writes and acontextualize_docs
+# consumes (defined in rag_system, duplicated here to keep this module
+# import-free of rag_system at module scope).
+MERGED_CONTEXT_KEY = "_merged_context"
 
 # Planning constant for the cost preview (POST /api/admin/datasets/{name}/
 # contextual-preview): a 1–2 sentence context is ~80 tokens of output.
@@ -280,6 +323,172 @@ async def _one_context(
     return _extract_context(response)
 
 
+_MERGED_SYSTEM_PROMPT = (
+    "You annotate one chunk of a document for retrieval-augmented generation. "
+    "You may be given the chunk's text and, when the chunk contains an image, "
+    "that image as well.\n"
+    "Write exactly two labelled sections and nothing else:\n"
+    "CAPTION: one or two sentences describing what the attached image shows, "
+    "or the single word NONE when no image is attached.\n"
+    "CONTEXT: one or two sentences situating this chunk within the document - "
+    "what the document is and how this chunk relates to it.\n"
+    "Do not add any other text, headings, quotes, or commentary."
+)
+
+# Images per merged prompt, mirroring EMBEDDING_MAX_IMAGES_PER_PROMPT: the
+# serving endpoint caps images per request, so a many-image chunk is described
+# in sequential calls and the captions concatenated - still exactly ONE
+# context section, produced from the call that carries the chunk text.
+_DEFAULT_MAX_IMAGES = 4
+
+
+def _max_images_per_prompt() -> int:
+    raw = os.environ.get("EMBEDDING_MAX_IMAGES_PER_PROMPT", "")
+    try:
+        return max(1, int(raw)) if raw.strip() else _DEFAULT_MAX_IMAGES
+    except (TypeError, ValueError):
+        return _DEFAULT_MAX_IMAGES
+
+
+def vlm_supports_images(vlm: Any) -> bool:
+    """Whether *vlm* advertises image input.
+
+    Read, never assumed: allowable_modalities is a ChatModel field that a
+    deployment can override via MODEL_VLM_EXTRA.  A false negative merely
+    falls back to the two-call path, so the conservative answer is safe.
+    """
+    if vlm is None:
+        return False
+    return "image" in tuple(getattr(vlm, "allowable_modalities", ()) or ())
+
+
+def _parse_merged(text: str) -> tuple[str, str] | None:
+    """Split a merged completion into (caption, context).
+
+    Returns None when either section is missing or the shape is
+    unrecognisable - the caller then falls back to the normal two-call path
+    rather than storing a half-parsed annotation.  A caption of NONE (the
+    model's "no image attached" answer) normalises to an empty string.
+    """
+    if not text:
+        return None
+    upper = text.upper()
+    cap_at = upper.find(CAPTION_SECTION_LABEL)
+    ctx_at = upper.find(CONTEXT_SECTION_LABEL)
+    if cap_at < 0 or ctx_at < 0 or ctx_at < cap_at:
+        return None
+    caption = text[cap_at + len(CAPTION_SECTION_LABEL) : ctx_at]
+    context = text[ctx_at + len(CONTEXT_SECTION_LABEL) :]
+    caption = " ".join(caption.split()).strip().strip("*").strip()
+    context = " ".join(context.split()).strip().strip("*").strip()
+    if not context:
+        return None
+    if caption.upper().rstrip(".") in ("NONE", "N/A", "(NONE)"):
+        caption = ""
+    return caption, context
+
+
+async def annotate_media_merged(
+    doc: dict[str, Any],
+    vlm: Any,
+    sem: asyncio.Semaphore | None = None,
+) -> tuple[str, str] | None:
+    """ONE VLM call producing both the caption and the document context.
+
+    Used only when the doc carries real text AND image media AND the VLM
+    accepts images - the case where the two-call pipeline would otherwise ask
+    the same model twice: once for the image description and again for the
+    document context (the second reading the first's output as text, never
+    seeing the pixels).  Merging gives both artifacts a single
+    globally-informed view of text + image + document preamble.
+
+    Call count: ONE when the doc carries at most EMBEDDING_MAX_IMAGES_PER_PROMPT
+    images (default 4); a doc with more issues one call per batch so the
+    endpoint limit is respected, and the captions are concatenated.  Either
+    way exactly ONE context section is produced, from the first batch.
+
+    Returns (caption, context); caption is "" when the model reported no
+    image.  Returns None on ANY failure (transport error, unparseable
+    response) so the caller can fall back - this function never raises and
+    never records an ingest warning; the fallback path owns that discipline.
+    """
+    if vlm is None or not doc:
+        return None
+
+    # Media helpers live in rag_system (which imports this module) - import
+    # lazily to keep the import graph acyclic, same pattern as _is_skipped.
+    from multimodal_rag.rag_system import _as_url_list, _file_url_to_data_url
+
+    image_urls: list[str] = []
+    for url in _as_url_list(doc.get("image", [])):
+        data_url = _file_url_to_data_url(url)
+        if data_url and not data_url.startswith("file://"):
+            image_urls.append(data_url)
+    if not image_urls:
+        return None
+
+    preamble = doc_preamble(doc)
+    chunk_text = (doc.get("text") or "").strip()
+    if len(chunk_text) > _MAX_PROMPT_CHARS:
+        chunk_text = chunk_text[:_MAX_PROMPT_CHARS] + "..."
+    user_text = f"{preamble}\nChunk:\n{chunk_text}"
+
+    limit = _max_images_per_prompt()
+    batches = [image_urls[i : i + limit] for i in range(0, len(image_urls), limit)]
+
+    captions: list[str] = []
+    context = ""
+    try:
+        for idx, batch in enumerate(batches):
+            parts: list[dict[str, Any]] = []
+            # The text (preamble + chunk) rides EVERY call so each
+            # description is grounded in the surrounding prose; only the
+            # first call's context section is kept (document context is
+            # per-chunk, not per-image).
+            parts.append({"type": "text", "text": user_text})
+            if len(batches) > 1:
+                parts.append(
+                    {
+                        "type": "text",
+                        "text": f"(Images {idx * limit + 1}-{idx * limit + len(batch)} of {len(image_urls)})",
+                    }
+                )
+            for url in batch:
+                parts.append({"type": "image_url", "image_url": {"url": url}})
+            messages = [
+                {"role": "system", "content": _MERGED_SYSTEM_PROMPT},
+                {"role": "user", "content": parts},
+            ]
+            if sem is not None:
+                async with sem:
+                    response = await vlm.llm_async_chat_function_call(messages)
+            else:
+                response = await vlm.llm_async_chat_function_call(messages)
+            raw = response.choices[0].message.content or ""
+            parsed = _parse_merged(raw)
+            if parsed is None:
+                return None
+            cap, ctx = parsed
+            if cap:
+                captions.append(cap)
+            if idx == 0:
+                context = ctx
+    except Exception as exc:
+        # WARNING, not verbose: a persistent failure silently doubles the
+        # VLM call count for every qualifying doc (caption + context issued
+        # separately), so it must be visible at default logging.
+        logger.warning(
+            "Merged caption+context failed for %s - falling back to separate calls: %s",
+            _filename_of(doc),
+            exc,
+        )
+        return None
+
+    if not context:
+        return None
+    return " ".join(captions).strip(), context
+
+
 async def acontextualize_docs(
     docs: Sequence[str | dict[str, Any]],
     vlm: Any,
@@ -314,6 +523,10 @@ async def acontextualize_docs(
     skipped = {i for i in range(len(docs)) if _is_skipped(docs[i]) and isinstance(docs[i], dict)}
     for i in skipped:
         d = dict(docs[i])  # type: ignore[arg-type]
+        # A skipped doc never consumes the merged-annotation stash (memory
+        # docs, twins), so drop it here rather than letting an internal key
+        # ride into the stored payload.
+        d.pop(MERGED_CONTEXT_KEY, None)
         d[CONTEXTUALIZED_META_KEY] = False
         out[i] = d
 
@@ -352,6 +565,18 @@ async def acontextualize_docs(
         total = len(run)
 
         async def _contextualize_at(i: int, doc: dict[str, Any]) -> None:
+            # Merged annotation already produced this chunk's context in the
+            # same call that produced its caption (feature: merged
+            # caption+context).  Consume it and drop the stash key so it never
+            # reaches the stored payload as metadata.
+            precomputed = doc.get(MERGED_CONTEXT_KEY)
+            if isinstance(precomputed, str) and precomputed.strip():
+                d = dict(doc)
+                d.pop(MERGED_CONTEXT_KEY, None)
+                d["text"] = f"{DOC_CONTEXT_MARKER} {precomputed.strip()}\n{doc.get('text') or ''}"
+                d[CONTEXTUALIZED_META_KEY] = True
+                out[i] = d
+                return
             prompt = _build_user_prompt(preamble, doc.get("text") or "", (run.index(i) + 1, total))
             try:
                 ctx = await _one_context(vlm, prompt, sem)
@@ -362,6 +587,7 @@ async def acontextualize_docs(
 
                 _record_ingest_warning(msg)
                 d = dict(doc)
+                d.pop(MERGED_CONTEXT_KEY, None)
                 d[CONTEXTUALIZED_META_KEY] = False
                 out[i] = d
                 return
@@ -375,6 +601,7 @@ async def acontextualize_docs(
                     total,
                 )
                 d = dict(doc)
+                d.pop(MERGED_CONTEXT_KEY, None)
                 d[CONTEXTUALIZED_META_KEY] = False
                 out[i] = d
                 return

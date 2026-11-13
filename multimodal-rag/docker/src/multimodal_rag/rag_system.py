@@ -10,11 +10,20 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from io import BytesIO
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import numpy as np
 
 import multimodal_rag.utils.bm25 as bm25_lane
+from multimodal_rag.agentic_retrieval import (
+    AgenticConfig,
+    AgenticTrace,
+    build_chat_judge,
+    coerce_agentic_config,
+    query_text,
+    run_agentic_retrieval,
+)
+from multimodal_rag.stm_lifetime import stamp_point_times
 from multimodal_rag.utils import contextualizer
 from multimodal_rag.utils.general_tools import (
     cosine_sim,
@@ -47,7 +56,11 @@ from multimodal_rag.vector_store import (
     VectorStore,
     ensure_search_payload_indexes,
     filters_to_predicate,
+    write_late_sidecar_for_docs,
 )
+
+if TYPE_CHECKING:
+    from qdrant_client.models import Datatype, Memory, ScalarQuantization
 
 logger = logging.getLogger(__name__)
 
@@ -242,6 +255,69 @@ def dedup_federated_results(entries: list[tuple[str, Any, float]]) -> list[tuple
     return [((item.dataset or ""), item.doc, item.score) for item in out]
 
 
+# Federated lanes -> one comparable space (P1-3, audit 2026-10-16).
+#
+# A federated pool mixes hits from datasets that may sit on DIFFERENT
+# retrieval lanes: a dense-only dataset contributes an embedder cosine
+# (higher = better, bounded ~[-1, 1]), while a hybrid dataset contributes RRF
+# rank arithmetic (sum of 1/(rank + k) over the dense + BM25 prefetches --
+# see vector_store._query_requests and the _score_kind stamp it writes on
+# every fused result).  Those numbers are NOT on a common scale: a 0.5 cosine
+# and a 0.5 RRF sum mean entirely different things, and an RRF sum is bounded
+# by the number of fused lanes (~2/(k+1) at best for two lanes), so a raw
+# score sort systematically buries every hybrid hit behind every dense hit
+# with a middling cosine.
+#
+# The common space is therefore RANK POSITION within each lane -- the same
+# "trust the order, not the magnitude" rule the RRF lane itself encodes, and
+# the rule _arerank_with already follows when it labels the incoming score
+# honestly (_retrieval_score for RRF, _embedding_score for cosine).  Each lane
+# is sorted by its own score (stable, so ties keep the caller's dataset
+# order), every entry is then scored 1/(k + rank) in lane-local rank space,
+# and the merged pool is ordered by that.  Rank 0 of either lane competes on
+# equal terms; within a single lane the resulting order is exactly the
+# historical score-descending order.
+_FEDERATED_RRF_K = 2  # qdrant-client's DEFAULT_RANKING_CONSTANT_K
+
+
+def federated_score_kind(doc: Any) -> str:
+    """Retrieval lane behind one federated entry's score.
+
+    ``"rrf"`` when the hit carries the hybrid lane's stamp (``vector_store``
+    writes ``_score_kind = "rrf"`` on every fused result), else ``"cosine"``
+    -- the default for every other path (dense cosine, reranker relevance, or
+    a bare non-dict payload).  Mirrors the labelling
+    ``mcp_server._format_retrieval_result`` applies to the same docs.
+    """
+    if isinstance(doc, dict) and doc.get("_score_kind") == "rrf":
+        return "rrf"
+    return "cosine"
+
+
+def lane_rank_scores(lanes: "list[tuple[str, float]]", *, k: int = _FEDERATED_RRF_K) -> list[float]:
+    """Rank-space scores that make different retrieval lanes comparable.
+
+    *lanes* is ``[(lane_label, score), ...]`` in the pool's incoming order.
+    Entries are grouped by label, each group is sorted by score descending
+    (stable -- ties keep the incoming order), and entry *i* is assigned
+    ``1/(k + rank)`` where *rank* is its position within its own group.
+
+    The result is monotone-decreasing in each lane's own score, so a
+    single-lane pool sorts identically to a raw score sort; a mixed pool
+    compares rank positions instead of incomparable magnitudes.  The returned
+    values are for ORDERING only -- callers keep the original scores.
+    """
+    by_lane: dict[str, list[int]] = {}
+    for i, (lane, _score) in enumerate(lanes):
+        by_lane.setdefault(str(lane), []).append(i)
+    out = [0.0] * len(lanes)
+    for indices in by_lane.values():
+        indices.sort(key=lambda i: lanes[i][1], reverse=True)
+        for rank, i in enumerate(indices):
+            out[i] = 1.0 / (k + rank)
+    return out
+
+
 def merge_federated_results(
     entries: list[tuple[str, Any, float]],
     *,
@@ -249,16 +325,30 @@ def merge_federated_results(
 ) -> list[tuple[str, Any, float]]:
     """Merge per-dataset result pools into one ranked, dataset-labelled pool.
 
-    Dedups on the dataset-qualified identity key (optional) and sorts by
-    score, descending — scores are embedder cosine similarities from the same
-    server-side embedder, so they are comparable across datasets.  Ties keep
-    the caller's dataset order (Python's stable sort).
+    Dedups on the dataset-qualified identity key (optional), then ranks the
+    survivors in a space that is meaningful ACROSS retrieval lanes.
+
+    Scores from different datasets are not directly comparable when those
+    datasets sit on different lanes: a dense-only dataset contributes an
+    embedder cosine, while a hybrid (dense + BM25, the default) dataset
+    contributes RRF rank arithmetic -- see :func:`lane_rank_scores` for the
+    full reasoning and the ``1/(k + rank)`` conversion.  Each lane is ranked
+    within itself and the merged pool is ordered by that lane-local rank, so
+    the best hit of each lane competes on equal terms instead of the hybrid
+    lane's bounded sums losing to dense cosines.
+
+    Ties keep the caller's dataset order (stable sorts throughout), and the
+    scores carried out are the ORIGINAL ones -- only the order is rewritten.
+    A single-lane pool (the common case: one dataset, or several datasets on
+    the same lane) sorts exactly as the historical score-descending merge.
     """
     if not entries:
         return []
     if dedup:
         entries = dedup_federated_results(entries)
-    return sorted(entries, key=lambda e: e[2], reverse=True)
+    ranks = lane_rank_scores([(federated_score_kind(doc), score) for _ds, doc, score in entries])
+    order = sorted(range(len(entries)), key=lambda i: ranks[i], reverse=True)
+    return [entries[i] for i in order]
 
 
 async def _arerank_with(
@@ -304,6 +394,52 @@ async def _arerank_with(
         paired.append((d, rerank_score))
     paired.sort(key=lambda x: x[1], reverse=True)
     return paired[:reranker_top_k]
+
+
+def _write_vector_name(vs: Any) -> str | None:
+    """The dense lane name a WRITE must target, resolved the same way as reads.
+
+    Audit 2026-10-16, P1-6.  ``QdrantVectorStore._dense_using()`` resolves
+    the dense lane defensively on every search: it prefers the name a
+    successful capability probe detected (``_dense_vector_name``), falls
+    back to the configured name, targets the server default (``None``) on a
+    probe-confirmed UNNAMED collection, and only then uses the "dense"
+    fallback.  ``supports_hybrid()`` re-probes a FAILED probe every
+    ``RAG_HYBRID_REPROBE_S``, so a store constructed during a Qdrant outage
+    recovers on the read path without a restart.
+
+    The write paths (upsert, dedup probe) used to read the raw
+    ``vs.vector_name`` attribute instead, which is frozen at construction
+    time.  A store built while that probe failed therefore kept writing to a
+    lane that search had already moved off — and on a named-vector
+    collection a bare (unnamed) vector is a hard Qdrant rejection, so
+    ingest failed while search worked.
+
+    Prefer the store's own resolver so both paths share one answer; fall
+    back to the attribute for stores that are not ``QdrantVectorStore``
+    (test doubles) or that predate the resolver.
+    """
+    # The capability probe is what populates ``_dense_vector_name`` (and
+    # flips ``_dense_name_probed`` for a confirmed-unnamed collection), and
+    # the search path always runs it before resolving.  A write must do the
+    # same: without it a store whose construction probe failed would resolve
+    # from a cold cache and fall back to the "dense" guess on an unnamed
+    # collection — the exact mismatch this helper exists to remove.
+    probe = getattr(vs, "supports_hybrid", None)
+    if callable(probe):
+        try:
+            probe()
+        except Exception:  # pragma: no cover - defensive: never break a write
+            logger.debug(
+                "Hybrid capability probe failed before a write; resolving from the last known shape", exc_info=True
+            )
+    resolve = getattr(vs, "_dense_using", None)
+    if callable(resolve):
+        try:
+            return resolve()
+        except Exception:  # pragma: no cover - defensive: never break a write
+            logger.debug("Dense-lane resolution failed; using the configured name", exc_info=True)
+    return getattr(vs, "vector_name", None)
 
 
 def _store_write_guard(vs: Any) -> Any:
@@ -356,7 +492,123 @@ def _qdrant_client_timeout():
         return None
 
 
-def _qdrant_quantization_config():
+def _qdrant_memory_tier(env_var: str, default: str) -> "Memory | None":
+    """Resolve a Qdrant v1.19 memory tier (``pinned`` / ``cached`` / ``cold``).
+
+    Qdrant 1.19 replaced the legacy boolean flags (``always_ram`` on
+    quantization, ``on_disk`` on vectors/sparse indexes) with one
+    three-valued ``memory`` parameter per structure. The tiers are not
+    interchangeable with the old booleans: ``cached`` is an *evictable*
+    mmap'd page-cache warm-up, whereas ``pinned`` is a heap allocation
+    that must fit in RAM. Only ``pinned`` can OOM a node.
+
+    Returns ``None`` for an unknown/blank value so the caller can fall
+    back to Qdrant's own default for that structure.
+    """
+    from qdrant_client.models import Memory
+
+    raw = (os.environ.get(env_var) or default).lower().strip()
+    try:
+        return Memory(raw)
+    except ValueError:
+        logger.warning("Unknown %s='%s', using Qdrant default", env_var, raw)
+        return None
+
+
+def _qdrant_dense_memory() -> "Memory | None":
+    """Resolved memory tier for DENSE vectors (``QDRANT_DENSE_MEMORY``).
+
+    Wraps :func:`_qdrant_memory_tier` with the one server-side constraint that
+    matters: Qdrant REJECTS ``pinned`` for dense vectors (they are mmap-only
+    representations — only the quantized copy has a heap-backed form). Asking
+    for it is downgraded to ``cached`` with a warning rather than failing
+    collection creation with an obscure server error.
+
+    Kept as a separate function so the guard is directly testable — a test
+    that re-implements the downgrade inline would keep passing even if this
+    logic regressed.
+    """
+    from qdrant_client.models import Memory
+
+    tier = _qdrant_memory_tier("QDRANT_DENSE_MEMORY", "cold")
+    if tier == Memory.PINNED:
+        logger.warning(
+            "QDRANT_DENSE_MEMORY=pinned is not supported for dense vectors (mmap-only); using 'cached' instead"
+        )
+        return Memory.CACHED
+    return tier
+
+
+def _qdrant_vector_datatype() -> "Datatype | None":
+    """Dense-vector storage datatype for new collections (``QDRANT_DATATYPE``).
+
+    ``float32`` (default) or ``float16``. This is NOT quantization: a
+    datatype changes the *originals* themselves, so float16 halves both the
+    on-disk footprint and the page-cache pressure permanently, whereas
+    quantization adds a second compressed copy beside full-precision
+    originals.
+
+    CAUTION: the originals are still read on some non-scoring paths — e.g.
+    ``mcp_server._lookup_dataset_vector`` scrolls with ``with_vectors=True``
+    — so float16 silently rounds what those paths return. Enable it only
+    after confirming no consumer needs exact fp32 vectors.
+
+    Returns ``None`` for an unknown/blank value so Qdrant keeps its own
+    default (float32).
+    """
+    from qdrant_client.models import Datatype
+
+    raw = (os.environ.get("QDRANT_DATATYPE") or "float32").lower().strip()
+    try:
+        return Datatype(raw)
+    except ValueError:
+        logger.warning("Unknown QDRANT_DATATYPE='%s', using float32", raw)
+        return Datatype.FLOAT32
+
+
+def _qdrant_shard_multiple() -> int:
+    """Shards per node for new collections (``QDRANT_SHARD_MULTIPLE``).
+
+    Qdrant defaults ``shard_number`` to the node count at collection
+    creation and CANNOT change it later without recreating the collection.
+    A multiple of 1 means the shard count equals the peer count *at creation
+    time*; Qdrant's own scaling guidance suggests >= 2 shards per node so a
+    later scale-out has shards to move. This is a trade-off, not a settled
+    default: more shards cost per-shard overhead. Applies to *new*
+    collections only.
+    """
+    raw = (os.environ.get("QDRANT_SHARD_MULTIPLE") or "1").strip()
+    try:
+        val = int(raw)
+    except (TypeError, ValueError):
+        logger.warning("Unknown QDRANT_SHARD_MULTIPLE='%s', using 1", raw)
+        return 1
+    return val if val > 0 else 1
+
+
+def _qdrant_node_count(client: Any) -> int:
+    """Best-effort peer count for shard_number math; 0 when unavailable.
+
+    Returns 0 when the count cannot be determined, so the caller falls back
+    to Qdrant's own default rather than pinning a wrong number. Note the
+    distinction: a cluster-ENABLED single node reports itself as one peer
+    (returns 1); only a cluster-DISABLED instance (or an unreachable one,
+    or embedded local mode, which raises NotImplementedError) yields 0.
+    """
+    try:
+        info = client.cluster_status()
+        peers = getattr(info, "peers", None)
+        if peers:
+            return len(peers)
+    except Exception as exc:
+        # Local (embedded) Qdrant raises NotImplementedError; an unreachable
+        # or single-node cluster may raise or return no peers. Either way we
+        # fall through to Qdrant's own default rather than pin a wrong count.
+        logger.debug("Qdrant cluster_status unavailable (%s); leaving shard_number default", exc)
+    return 0
+
+
+def _qdrant_quantization_config() -> "ScalarQuantization | None":
     """Scalar quantization config for new Qdrant collections.
 
     Defaults to int8 (4x memory reduction, ~1-2% recall loss, faster
@@ -365,10 +617,17 @@ def _qdrant_quantization_config():
     — the 1-2% recall loss is acceptable without the extra full-
     precision reranking pass.
 
-    ``QDRANT_QUANTIZATION_ALWAYS_RAM`` (default ``true``) controls whether
-    quantized vectors are pinned in RAM for fast search. Disable
-    (``false``) for very large datasets (2M+ points) to avoid OOM —
-    quantized vectors will be read from disk per-search instead.
+    ``QDRANT_QUANTIZATION_MEMORY`` (default ``pinned``) is the v1.19 memory
+    tier for the *quantized* copy. Pin it (heap, never evicted) so the
+    candidate-scoring pass never touches disk — that is the entire point
+    of keeping a compressed copy. Set ``cached``/``cold`` to make it
+    evictable instead, at the cost of a disk read per search once the
+    page cache is under pressure.
+
+    The legacy ``QDRANT_QUANTIZATION_ALWAYS_RAM`` boolean is still read as
+    a fallback so existing deployments keep their behaviour across the
+    upgrade: ``true`` -> ``pinned``, ``false`` -> ``cold``. It is
+    deprecated and ``QDRANT_QUANTIZATION_MEMORY`` wins when both are set.
 
     Only applies to *newly created* collections; existing collections
     keep their original config.
@@ -377,20 +636,24 @@ def _qdrant_quantization_config():
     if mode in ("none", "off", "false", "0"):
         return None
 
-    always_ram = os.environ.get("QDRANT_QUANTIZATION_ALWAYS_RAM", "true").lower() in ("true", "1", "yes")
-
     if mode not in ("int8", "scalar", "true", "1", ""):
         logger.warning("Unknown QDRANT_QUANTIZATION='%s', falling back to int8", mode)
 
     from qdrant_client.models import ScalarQuantization, ScalarQuantizationConfig, ScalarType
 
-    return ScalarQuantization(
-        scalar=ScalarQuantizationConfig(
-            type=ScalarType.INT8,
-            quantile=0.99,
-            always_ram=always_ram,
-        ),
-    )
+    # Legacy boolean -> tier, so a deployment that only sets the old var
+    # keeps its current placement (always_ram=true => pinned).
+    legacy = os.environ.get("QDRANT_QUANTIZATION_ALWAYS_RAM")
+    if legacy is None:
+        default_tier = "pinned"
+    else:
+        default_tier = "pinned" if legacy.lower() in ("true", "1", "yes") else "cold"
+    memory = _qdrant_memory_tier("QDRANT_QUANTIZATION_MEMORY", default_tier)
+
+    kwargs: dict[str, Any] = {"type": ScalarType.INT8, "quantile": 0.99}
+    if memory is not None:
+        kwargs["memory"] = memory
+    return ScalarQuantization(scalar=ScalarQuantizationConfig(**kwargs))
 
 
 # ---------------------------------------------------------------------------
@@ -449,6 +712,23 @@ _MEDIA_PLACEHOLDER_RE = re.compile(
     r"(?:\s*\[\s*\d+(?:\.\d+)?\s*s\s*(?:-|–|—)\s*\d+(?:\.\d+)?\s*s\s*\])?",
     re.IGNORECASE,
 )
+
+
+# Doc-level stash for the merged-annotation context (feature: merged
+# caption+context).  The Preprocessor writes it when ONE call produced both
+# the caption and the document context; acontextualize_docs consumes it and
+# removes the key so it never reaches metadata/payload.
+_MERGED_CONTEXT_KEY = "_merged_context"
+
+
+def _vlm_supports_images(vlm: Any) -> bool:
+    """Whether *vlm* advertises image input (read, never assumed).
+
+    allowable_modalities is a ChatModel field a deployment can override via
+    MODEL_VLM_EXTRA, so a text-only endpoint behind the VLM role is
+    possible.  A false negative just keeps the two-call path.
+    """
+    return "image" in tuple(getattr(vlm, "allowable_modalities", ()) or ())
 
 
 def _has_real_text(text: str) -> bool:
@@ -518,8 +798,13 @@ def _bm25_indexable_text(text: str) -> str:
     twins and exactly what text queries match against.  (This differs from
     :func:`_has_real_text`, which strips captions too: that gate decides
     embedding inputs, this one decides lexical index inputs.)
+
+    Delegates to :func:`multimodal_rag.utils.bm25.indexable_text` so the
+    ingest side and the delete-side df decrement share ONE definition of
+    indexable text (audit 2026-10-16, P1-7).  Kept as a named wrapper
+    because tests and the contextualizer reference it directly.
     """
-    return _MEDIA_PLACEHOLDER_RE.sub("", text or "").strip()
+    return bm25_lane.indexable_text(text)
 
 
 def _detect_dense_vector_name(client: Any, collection_name: str) -> str | None:
@@ -584,7 +869,11 @@ def _bm25_sparse_vectors(sub_docs: list[Document], ctx: dict[str, Any] | None) -
     if ctx is None:
         return out
     for i, doc in enumerate(sub_docs):
-        text = _bm25_indexable_text(doc.page_content)
+        # ONE shared counting rule for ingest and delete (P1-7): the
+        # placeholder-stripped text, counted through the same helper the
+        # decrement path uses.  Re-checked here so a doc reduced to bare
+        # placeholders keeps no sparse lane at all.
+        text = bm25_lane.indexable_text(doc.page_content)
         if not text:
             continue
         tf = bm25_lane.term_counts(text)
@@ -1134,6 +1423,13 @@ class Preprocessor:
     caption_with_asr: bool = False
     caption_with_vlm: bool = False
     chunk_size: int = 128
+    # Merged caption+context (feature: merged annotation).  When True AND
+    # the doc carries real text AND image media AND the VLM accepts images,
+    # ONE call produces both the [Image description] and the
+    # [Document context] artifacts.  The context half is stashed on the doc
+    # under _MERGED_CONTEXT_KEY for acontextualize_docs to consume without a
+    # second call.  False (or any unmet condition) keeps the two-call path.
+    contextualize: bool = False
 
     def __call__(
         self,
@@ -1226,7 +1522,46 @@ class Preprocessor:
             # below (see _strip_embed_caption).
             image_needs_vlm = "image" not in target_modalities and media["image"]
             image_captioned = False
-            if image_needs_vlm:
+            # Merged annotation (feature: merged caption+context): when this
+            # doc ALSO qualifies for contextual retrieval (real text present)
+            # and the VLM accepts images, one call yields both the caption and
+            # the document context.  The context is stashed for the
+            # contextualize stage to reuse, so the same model is not asked
+            # twice about the same chunk.  Falls back to the normal
+            # caption-only call on any failure.
+            # OFF by default: the merged prompt measured far thinner captions
+            # than the dedicated captioning prompt (26 vs 243 words on the
+            # same page), and the caption drives retrieval-time reuse plus the
+            # caption-twin embedding.  Enable with RAG_MERGED_ANNOTATION=true
+            # once the merged prompt matches dedicated-caption quality.
+            merged_used = False
+            if (
+                contextualizer.merged_annotation_enabled()
+                and self.contextualize
+                and self.vlm is not None
+                and media["image"]
+                and (image_needs_vlm or self.caption_img)
+                and _has_real_text(d.get("text") or "")
+                and _vlm_supports_images(self.vlm)
+            ):
+                merged = await contextualizer.annotate_media_merged(d, self.vlm)
+                if merged is not None:
+                    merged_caption, merged_context = merged
+                    # Keep the context half regardless - it is a real
+                    # artifact and the contextualize stage will consume it.
+                    if merged_context:
+                        d[_MERGED_CONTEXT_KEY] = merged_context
+                    # Only claim the merge when a CAPTION actually came back.
+                    # The merged prompt permits "CAPTION: NONE", so an
+                    # empty caption with an image attached must fall through
+                    # to the normal caption call rather than silently
+                    # dropping the caption artifact (no warning, no
+                    # fallback would be a data loss).
+                    if merged_caption:
+                        text_parts.append(f"[Image description]: {merged_caption}")
+                        image_captioned = True
+                        merged_used = True
+            if image_needs_vlm and not merged_used:
                 if self.vlm is not None:
                     vlm_tasks.append(self._describe(d, query=query))
                 else:
@@ -1236,7 +1571,7 @@ class Preprocessor:
                     # entirely" rule); the doc itself is omitted later if
                     # nothing embeddable remains.
                     d.pop("image", None)
-            elif self.caption_img and media["image"]:
+            elif self.caption_img and media["image"] and not merged_used:
                 # Caption generated for the stored payload; stripped from the
                 # embedding input below (see _strip_embed_caption).
                 vlm_tasks.append(self._describe(d, query=query))
@@ -1278,7 +1613,10 @@ class Preprocessor:
                 if vlm_results[vlm_idx]:
                     text_parts.append(f"[Video description]: {vlm_results[vlm_idx]}")
                 vlm_idx += 1
-            if (image_needs_vlm or image_captioned) and self.vlm is not None:
+            # merged_used: the caption was already appended above, and no
+            # _describe task was queued for this doc - consuming vlm_results
+            # here would index an empty list.
+            if (image_needs_vlm or image_captioned) and self.vlm is not None and not merged_used:
                 if vlm_results[vlm_idx]:
                     text_parts.append(f"[Image description]: {vlm_results[vlm_idx]}")
                 vlm_idx += 1
@@ -1599,6 +1937,7 @@ class MultimodalRAG:
             caption_with_asr=self.caption_with_asr,
             caption_with_vlm=self.caption_with_vlm,
             chunk_size=self.preprocess_chunk_size,
+            contextualize=self.contextualize,
         )
         # caption_with_asr is passed through so retrieval can still transcribe
         # video audio tracks for docs ingested WITHOUT captioning (e.g. created
@@ -1668,7 +2007,7 @@ class MultimodalRAG:
         or the dataset directory (DatasetManager passes the latter).
         """
         from qdrant_client import QdrantClient
-        from qdrant_client.models import Distance, SparseVectorParams, VectorParams
+        from qdrant_client.models import Distance, SparseIndexParams, SparseVectorParams, VectorParams
 
         if client is None:
             if qdrant_host:
@@ -1695,12 +2034,76 @@ class MultimodalRAG:
         )
         vector_name: str | None = None
         if not any(c.name == collection_name for c in collections):
-            client.create_collection(
-                collection_name=collection_name,
-                vectors_config={bm25_lane.DENSE_VECTOR_NAME: VectorParams(size=vector_size, distance=Distance.COSINE)},
-                sparse_vectors_config={bm25_lane.BM25_VECTOR_NAME: SparseVectorParams()},
-                quantization_config=_qdrant_quantization_config(),
-            )
+            # Memory placement (Qdrant v1.19 ``memory`` tiers). Every
+            # structure is mmap-backed and evictable EXCEPT the quantized
+            # copy, which is heap-pinned so the candidate-scoring pass never
+            # reads from disk. Originals go ``cold``: they are not read on
+            # the SCORING path (we do not rescore — see
+            # _qdrant_quantization_config), so pre-warming them would only
+            # evict structures that are used. They ARE still read on rare
+            # non-scoring paths (mcp_server._lookup_dataset_vector scrolls
+            # with with_vectors=True), which now page-fault.
+            dense_params: dict[str, Any] = {
+                "size": vector_size,
+                "distance": Distance.COSINE,
+            }
+            dense_memory = _qdrant_dense_memory()
+            if dense_memory is not None:
+                dense_params["memory"] = dense_memory
+            dense_datatype = _qdrant_vector_datatype()
+            if dense_datatype is not None:
+                dense_params["datatype"] = dense_datatype
+
+            # Sparse (BM25) inverted index. It is NOT negligible, and its
+            # size relative to the dense int8 lane depends entirely on chunk
+            # size. Measured on this repo — LOWER BOUND, because the dev
+            # checkout uses the regex tokenizer (production uses the bundled
+            # Qwen tokenizer, which yields MORE unique terms) and because
+            # postings here are float32-valued (~7.59 B/posting: 4 B doc id +
+            # 4 B value, calibrated against Qdrant's uint8 BM42 figure).
+            # Reproduce with: python tests/measurements/measure_sparse_footprint.py
+            #     chunk_size 2048 -> ~590-660 terms, ~1.1-1.2x dense int8
+            #     chunk_size 8192 -> ~1370-1380 terms, ~2.5x dense int8
+            # Both are read on every hybrid query, so it defaults to
+            # ``cached`` (evictable, warmed at startup) rather than ``pinned``
+            # (a heap allocation that must fit in RAM and can OOM).
+            sparse_index: dict[str, Any] = {}
+            sparse_memory = _qdrant_memory_tier("QDRANT_SPARSE_MEMORY", "cached")
+            if sparse_memory is not None:
+                sparse_index["memory"] = sparse_memory
+
+            create_kwargs: dict[str, Any] = {
+                "collection_name": collection_name,
+                "vectors_config": {bm25_lane.DENSE_VECTOR_NAME: VectorParams(**dense_params)},
+                "sparse_vectors_config": {
+                    bm25_lane.BM25_VECTOR_NAME: SparseVectorParams(
+                        index=SparseIndexParams(**sparse_index) if sparse_index else None,
+                    ),
+                },
+                "quantization_config": _qdrant_quantization_config(),
+            }
+            # shard_number is CREATE-TIME ONLY (Qdrant cannot change it
+            # without recreating the collection) and defaults to the QDRANT
+            # PEER count at creation — not the app's replicaCount, which is a
+            # different deployment. We leave it unset so that default applies,
+            # but allow an explicit multiple for clusters that plan to scale
+            # out later.
+            shard_multiple = _qdrant_shard_multiple()
+            if shard_multiple and shard_multiple > 1:
+                node_count = _qdrant_node_count(client)
+                if node_count:
+                    create_kwargs["shard_number"] = node_count * shard_multiple
+                else:
+                    # Silent no-op is the worst outcome: the operator asked
+                    # for N shards/node and would otherwise never learn the
+                    # request was dropped.
+                    logger.warning(
+                        "QDRANT_SHARD_MULTIPLE=%d ignored: could not determine Qdrant peer "
+                        "count; falling back to Qdrant's default shard_number",
+                        shard_multiple,
+                    )
+
+            client.create_collection(**create_kwargs)
             vector_name = bm25_lane.DENSE_VECTOR_NAME
             # Payload indexes for metadata-filtered search (best-effort —
             # filtering works without them, just slower).  Existing
@@ -1852,7 +2255,13 @@ class MultimodalRAG:
                 docs.append(Document(page_content=inp, metadata={}))
             elif isinstance(inp, dict):
                 text = inp.get("text", "")
-                meta = {k: v for k, v in inp.items() if k != "text"}
+                # _MERGED_CONTEXT_KEY is an INTERNAL ingest stash (the
+                # merged-annotation context, consumed by acontextualize_docs).
+                # It must never reach metadata: this converter copies every
+                # non-text key, and any doc the contextualizer SKIPS (memory
+                # docs, twins, no-VLM) never consumes it.  Strip it here so
+                # the guarantee holds on every path, not just the happy one.
+                meta = {k: v for k, v in inp.items() if k not in ("text", _MERGED_CONTEXT_KEY)}
                 # Metadata-filtered search keys off metadata.file_type —
                 # classify once at ingest from the document source.  Docs
                 # without any source (raw text drops) stay unlabelled.
@@ -1867,6 +2276,50 @@ class MultimodalRAG:
             else:
                 docs.append(Document(page_content=str(inp), metadata={}))
         return docs
+
+    @staticmethod
+    def _stamp_point_lifetimes(
+        docs: list[Document],
+        dataset_lifetime: int | None,
+        now: int,
+    ) -> None:
+        """Server-stamp the short-term-memory lifetime fields onto stored points.
+
+        stmem/PLAN sections 4.2 and 2.3.  The SERVER — never the client —
+        decides when a point was created and when it dies.  A writer with a
+        skewed clock could otherwise shorten or lengthen its own entries'
+        lives, and could simply POST an ``expires_at`` far in the future to
+        outlive the dataset it was written into.  So every stamp is computed
+        here, from the server clock, and merged OVER whatever the document
+        carried:
+
+            lifetime    the EFFECTIVE lifetime (min of point and dataset)
+            created_at  the server clock reading for this ingest
+            expires_at  created_at + lifetime, or None when infinite
+
+        All three keys are overwritten unconditionally: a client-supplied
+        ``created_at``/``expires_at`` never survives, and a client-supplied
+        ``lifetime`` is replaced by the EFFECTIVE value — the raw per-document
+        request value is deliberately not persisted, because the only lifetime
+        worth storing is the one the reaper will actually act on.
+
+        Both lifetimes ``None`` (every dataset that predates this feature) is
+        the default path: the stamp is still written so the payload always
+        says what it is, and ``expires_at=None`` is simply never matched by the
+        reaper's numeric Range filter — existing data stays immortal twice
+        over.
+
+        In-place on purpose: this runs for every stored point (twins and chunk
+        splits included) and must never copy the media-heavy dicts it touches.
+        """
+        for doc in docs:
+            doc.metadata.update(
+                stamp_point_times(
+                    now=now,
+                    point_lifetime=doc.metadata.get("lifetime"),
+                    dataset_lifetime=dataset_lifetime,
+                )
+            )
 
     @staticmethod
     def _from_documents(docs: list[Document]) -> list[str | dict[str, Any]]:
@@ -2021,15 +2474,24 @@ class MultimodalRAG:
         documents: Sequence[str | dict[str, Any]],
         deduplicate: bool = True,
         dedup_threshold: float | None = None,
+        dataset_lifetime: int | None = None,
         **kwargs,
     ) -> list[str]:
-        """Sync wrapper around :meth:`aadd_to_vector_store`."""
+        """Sync wrapper around :meth:`aadd_to_vector_store`.
+
+        ``dataset_lifetime`` is the target dataset's STM lifetime in seconds
+        (None = infinite) and is always supplied by the caller that owns the
+        dataset — see :meth:`DatasetManager.add_documents`.  It is named
+        explicitly rather than swept into ``**kwargs`` because ``**kwargs`` is
+        forwarded verbatim to the vector store's upsert.
+        """
         return sync_wrapper_safe(
             self.aadd_to_vector_store,
             dict(
                 documents=documents,
                 deduplicate=deduplicate,
                 dedup_threshold=dedup_threshold,
+                dataset_lifetime=dataset_lifetime,
                 **kwargs,
             ),
         )
@@ -2172,10 +2634,35 @@ class MultimodalRAG:
                             capture_output=True,
                             timeout=300,
                         )
+                        # A failed/empty transcode must never become a
+                        # stored payload (audit 2026-10-16, P2 empty-b64):
+                        # this branch used to b64-encode proc.stdout
+                        # unconditionally, so an ffmpeg failure produced
+                        # "data:video/mp4;base64," — an empty tier-3 payload
+                        # that the reranker and VLM then consume directly at
+                        # retrieval time.  Skip the URL instead (the doc keeps
+                        # its tier-2 preprocessed_* file ref, and a doc left
+                        # with no media is dropped by the usual skip rules).
+                        if proc.returncode != 0 or not proc.stdout:
+                            logger.warning(
+                                "Video resize failed for %s (exit %s, %d bytes out) — "
+                                "skipping this video payload rather than storing an empty one",
+                                path[:120],
+                                proc.returncode,
+                                len(proc.stdout or b""),
+                            )
+                            continue
                         mime = "video/mp4"
                         b64 = base64.b64encode(proc.stdout).decode("utf-8")
                         resized.append(f"data:{mime};base64,{b64}")
-                d[key] = resized if isinstance(val, list) else resized[0]
+                if not resized:
+                    # Every ref for this key was skipped (all failed to
+                    # transcode) — drop the key instead of writing an empty
+                    # list/string, so downstream sees "no media" rather than
+                    # a malformed payload.
+                    d.pop(key, None)
+                else:
+                    d[key] = resized if isinstance(val, list) else resized[0]
             out.append(d)
         return out
 
@@ -2321,7 +2808,16 @@ class MultimodalRAG:
 
             client = vs._client  # type: ignore[attr-defined]
             coll = vs.collection_name  # type: ignore[attr-defined]
-            vector_name = vs.vector_name  # type: ignore[attr-defined]
+            # Probe-backed lane resolution (audit 2026-10-16, P1-6): the
+            # build-time ``vs.vector_name`` is only as good as the
+            # ``get_collection`` probe that ran at construction.  When that
+            # probe failed (a Qdrant outage — the case the re-probe exists
+            # for), the attribute stays ``None`` while SEARCH self-heals
+            # through ``_dense_using()``.  Reading the attribute here made
+            # the dedup probe target a vector name search no longer used,
+            # so dedup silently stopped matching.  ``_dense_using()`` is the
+            # one resolution both paths must share.
+            vector_name = _write_vector_name(vs)
 
             responses = client.query_batch_points(
                 collection_name=coll,
@@ -2344,6 +2840,7 @@ class MultimodalRAG:
         documents: Sequence[str | dict[str, Any]],
         deduplicate: bool = True,
         dedup_threshold: float | None = None,
+        dataset_lifetime: int | None = None,
         **kwargs,
     ) -> list[str]:
         """Embed and add documents to the vector store.
@@ -2367,6 +2864,13 @@ class MultimodalRAG:
             Cosine similarity threshold above which a document is
             considered a duplicate (0.0 – 1.0).  When ``None`` (the
             default), falls back to ``self.dedup_threshold``.
+        dataset_lifetime:
+            Short-term-memory lifetime (seconds, ``None`` = infinite) of the
+            dataset these documents are being written INTO.  Supplied by the
+            dataset-owning caller, never by the request body.  It is a hard
+            CAP on every document's own ``lifetime`` (PLAN section 2.2:
+            ``min(point, dataset)``), and both ``None`` means the points are
+            immortal — the shape of every dataset that predates this feature.
         """
         if dedup_threshold is None:
             dedup_threshold = self.dedup_threshold
@@ -2590,6 +3094,21 @@ class MultimodalRAG:
             # ── 2. Build Document payloads ──────────────────────────────────
             sub_docs = self._to_documents(all_docs)
 
+            # ── 2a. Server-stamp the STM lifetime fields ─────────────────────
+            # LAST point before the payload is built, so the stamp covers
+            # every point this call will actually store: the preprocessed
+            # docs AND their twins (twins copy the parent's metadata, so they
+            # inherit the same lifetime), including docs produced by the
+            # audio/image chunk splitters.  After dedup, so no stamp is
+            # computed for a document that is about to be dropped.
+            #
+            # The clock is read HERE, per sub-batch, rather than once for the
+            # whole call: a long ingest can straddle minutes, and a point's
+            # created_at should be the moment its payload was built.
+            # int(time.time()) — not time.monotonic() — because the value is
+            # persisted and compared against the reaper's wall clock.
+            self._stamp_point_lifetimes(sub_docs, dataset_lifetime, int(time.time()))
+
             # ── 2b. Deduplicate ─────────────────────────────────────────────
             if deduplicate and sub_embs:
                 _probe_guard = _store_write_guard(vs)
@@ -2626,7 +3145,12 @@ class MultimodalRAG:
 
                 client = vs._client  # type: ignore[attr-defined]
                 coll = vs.collection_name  # type: ignore[attr-defined]
-                vector_name = vs.vector_name  # type: ignore[attr-defined]
+                # Probe-backed lane resolution (audit 2026-10-16, P1-6) — see
+                # _write_vector_name: the upsert must name the SAME lane
+                # search resolves, or a store built while the construction
+                # probe failed writes a bare vector into a named-vector
+                # collection and Qdrant rejects every point.
+                vector_name = _write_vector_name(vs)
 
                 # ── 3b. BM25 sparse vectors for the docs actually stored ────
                 # Runs after dedup so dropped duplicates never pollute the
@@ -2669,6 +3193,31 @@ class MultimodalRAG:
                         client.upsert(collection_name=coll, points=points, **kwargs)
 
                 await loop.run_in_executor(_QDRANT_IO_POOL, _upsert)
+
+                # ── 3c. Late-interaction sidecar (feature D) ────────────────
+                # The sidecar's container lives in vector_store, but the ONLY
+                # main-collection upsert in the codebase is the one directly
+                # above — so this is the one ingest hook it exposes, called
+                # with the SAME point ids (and the exact texts) the upsert just
+                # wrote, once per sub-batch.  It is a no-op unless the dataset's
+                # late-interaction state file is enabled (the helper reads that
+                # itself; there is deliberately no second gate here), and it is
+                # NOT wrapped in a try/except: an enabled dataset with no token
+                # embedder must FAIL the ingest (contract: fail closed) instead
+                # of silently storing points the late lane can never score.
+                # Offloaded like every other Qdrant-adjacent write on this path
+                # — token embedding and the sidecar upsert are both blocking.
+                _late_guard = _store_write_guard(vs)
+
+                def _write_late_sidecar() -> None:
+                    with _late_guard:
+                        write_late_sidecar_for_docs(
+                            vs,
+                            [str(p.id) for p in points],
+                            [d.page_content for d in sub_docs],
+                        )
+
+                await loop.run_in_executor(_QDRANT_IO_POOL, _write_late_sidecar)
 
             t_store_total += time.monotonic() - t2
             # sub_embs / sub_docs fall out of scope here — released before the
@@ -2858,6 +3407,43 @@ class MultimodalRAG:
             deduped.append(best_by_text[text_hash])
         return deduped
 
+    # -- agentic iterative retrieval (feature: agentic retrieval) --------------
+
+    @staticmethod
+    def _agentic_with_query_text(query: Any, text: str) -> Any:
+        """Fold a rewritten query STRING back into the caller's query form.
+
+        A text query becomes the rewrite itself; a multimodal query dict keeps
+        its media keys and only its `text` field is replaced.  The rewritten
+        query is re-embedded (no stale query vector is reused).
+        """
+        if isinstance(query, dict):
+            rewritten = dict(query)
+            rewritten["text"] = text
+            return rewritten
+        return text
+
+    @staticmethod
+    def _attach_agentic_trace(results: list[tuple[Any, float]], trace: AgenticTrace) -> None:
+        """Attach `metadata["_agentic"]` = trace dict on the first attachable result.
+
+        Dict results are shallow-copied first, so a caller's own document
+        objects (the `documents=` in-memory path) are never mutated.  Plain
+        string results cannot carry metadata; when every result is a string the
+        trace is simply not attached.
+        """
+        payload = trace.as_dict()
+        for index, (doc, score) in enumerate(results):
+            if isinstance(doc, dict):
+                enriched = dict(doc)
+                enriched["_agentic"] = payload
+                results[index] = (enriched, score)
+                return
+            metadata = getattr(doc, "metadata", None)
+            if isinstance(metadata, dict):
+                metadata["_agentic"] = payload
+                return
+
     async def _arerank_results(
         self,
         query: str | dict[str, Any],
@@ -2882,6 +3468,8 @@ class MultimodalRAG:
         need_media: bool | None = None,
         filters: dict[str, Any] | None = None,
         rrf: "RrfParams | None" = None,
+        agentic: bool = False,
+        agentic_config: dict[str, Any] | None = None,
     ) -> list[tuple[Any, float]]:
         """Sync wrapper around :meth:`aretrieve`."""
         return sync_wrapper_safe(
@@ -2896,10 +3484,101 @@ class MultimodalRAG:
                 "need_media": need_media,
                 "filters": filters,
                 "rrf": rrf,
+                "agentic": agentic,
+                "agentic_config": agentic_config,
             },
         )
 
     async def aretrieve(
+        self,
+        query: str | dict[str, Any],
+        documents: Sequence[str | dict[str, Any]] | None = None,
+        top_k: int = 10,
+        use_reranker: bool = False,
+        reranker_top_k: int = 3,
+        query_vector: list[float] | None = None,
+        need_media: bool | None = None,
+        filters: dict[str, Any] | None = None,
+        rrf: "RrfParams | None" = None,
+        agentic: bool = False,
+        agentic_config: dict[str, Any] | None = None,
+    ) -> list[tuple[Any, float]]:
+        """Retrieve documents for *query*, optionally with the agentic loop.
+
+        With `agentic=False` (the default) this is exactly the historical
+        single-pass retrieval -- see :meth:`_aretrieve_once`; not one argument,
+        branch or result changes.
+
+        With `agentic=True` the retrieve -> judge -> rewrite loop from the
+        agentic_retrieval module wraps that same single pass: the judge is the
+        configured chat model (self.vlm) unless `agentic_config["judge_fn"]`
+        injects one, it is asked whether the collected hits answer the query, and
+        a rewritten query is searched again -- bounded by `max_rounds` /
+        `max_total_searches`.  Results keep their shape and the accumulated list
+        carries `metadata["_agentic"]` (the trace dict) on the first attachable
+        result.  A judge that is missing, raises, times out or returns garbage
+        STOPS the loop and returns what was collected: never an exception, never
+        a repeated-rewrite spin.  The trace's `stop_reason` records which case
+        happened.
+        """
+        common: dict[str, Any] = {
+            "documents": documents,
+            "top_k": top_k,
+            "use_reranker": use_reranker,
+            "reranker_top_k": reranker_top_k,
+            "need_media": need_media,
+            "filters": filters,
+            "rrf": rrf,
+        }
+        if not agentic:
+            return await self._aretrieve_once(query, query_vector=query_vector, **common)
+
+        config = coerce_agentic_config(agentic_config)
+        injected = agentic_config.get("judge_fn") if isinstance(agentic_config, dict) else None
+        judge_fn = injected if callable(injected) else build_chat_judge(getattr(self, "vlm", None))
+
+        if judge_fn is None:
+            # Opted in, but this deployment has no chat model to judge with: run
+            # the plain single pass and SAY SO in the trace instead of failing
+            # the search (same posture as contextualize without a VLM).
+            logger.warning(
+                "Agentic retrieval requested but no judge chat model is configured and no "
+                "judge_fn was injected -- running a single retrieval pass."
+            )
+            results = await self._aretrieve_once(query, query_vector=query_vector, **common)
+            trace = AgenticTrace(
+                rounds=1,
+                queries=[query_text(query)],
+                stop_reason="judge_unavailable",
+            )
+            self._attach_agentic_trace(results, trace)
+            return results
+
+        async def _search(effective: Any) -> list[tuple[Any, float]]:
+            if effective is query:
+                return await self._aretrieve_once(query, query_vector=query_vector, **common)
+            # A rewrite is a new text query: re-embed it rather than reusing the
+            # original query's vector.
+            rewritten = self._agentic_with_query_text(query, effective)
+            return await self._aretrieve_once(rewritten, query_vector=None, **common)
+
+        try:
+            results, trace = await run_agentic_retrieval(query, _search, judge_fn, config)
+        except Exception:
+            logger.warning(
+                "Agentic retrieval failed -- falling back to a single retrieval pass",
+                exc_info=True,
+            )
+            results = await self._aretrieve_once(query, query_vector=query_vector, **common)
+            trace = AgenticTrace(
+                rounds=1,
+                queries=[query_text(query)],
+                stop_reason="error_fallback",
+            )
+        self._attach_agentic_trace(results, trace)
+        return results
+
+    async def _aretrieve_once(
         self,
         query: str | dict[str, Any],
         documents: Sequence[str | dict[str, Any]] | None = None,
@@ -3439,18 +4118,74 @@ class MultiModalRAGSystem:
     async def aadd_to_vector_store(self, documents, **kwargs):
         return await self._rag.aadd_to_vector_store(documents, **kwargs)
 
+    def _agentic_kwargs(self, agentic: bool, agentic_config: "dict[str, Any] | AgenticConfig | None") -> dict:
+        """Build the agentic kwargs forwarded to the inner MultimodalRAG.
+
+        The system facade owns the generation chat model (self.llm) while a bare
+        MultimodalRAG only has the VLM, which may be unset -- so when the caller
+        opted in and did not inject a judge, the generation model becomes the
+        judge here.  An injected judge_fn always wins.
+        """
+        if not agentic:
+            return {"agentic": False, "agentic_config": agentic_config}
+        config: dict[str, Any] = {}
+        if isinstance(agentic_config, AgenticConfig):
+            config = {
+                "max_rounds": agentic_config.max_rounds,
+                "max_total_searches": agentic_config.max_total_searches,
+                "min_round_gain": agentic_config.min_round_gain,
+                "judge_timeout_s": agentic_config.judge_timeout_s,
+            }
+        elif isinstance(agentic_config, dict):
+            config = dict(agentic_config)
+        if not callable(config.get("judge_fn")):
+            config["judge_fn"] = build_chat_judge(self.llm)
+        return {"agentic": True, "agentic_config": config}
+
     def retrieve(
-        self, query, documents=None, top_k=10, use_reranker=True, reranker_top_k=3, query_vector=None, rrf=None
+        self,
+        query,
+        documents=None,
+        top_k=10,
+        use_reranker=True,
+        reranker_top_k=3,
+        query_vector=None,
+        rrf=None,
+        agentic: bool = False,
+        agentic_config: "dict[str, Any] | AgenticConfig | None" = None,
     ):
         return self._rag.retrieve(
-            query, documents, top_k, use_reranker, reranker_top_k, query_vector=query_vector, rrf=rrf
+            query,
+            documents,
+            top_k,
+            use_reranker,
+            reranker_top_k,
+            query_vector=query_vector,
+            rrf=rrf,
+            **self._agentic_kwargs(agentic, agentic_config),
         )
 
     async def aretrieve(
-        self, query, documents=None, top_k=10, use_reranker=False, reranker_top_k=3, query_vector=None, rrf=None
+        self,
+        query,
+        documents=None,
+        top_k=10,
+        use_reranker=False,
+        reranker_top_k=3,
+        query_vector=None,
+        rrf=None,
+        agentic: bool = False,
+        agentic_config: "dict[str, Any] | AgenticConfig | None" = None,
     ):
         return await self._rag.aretrieve(
-            query, documents, top_k, use_reranker, reranker_top_k, query_vector=query_vector, rrf=rrf
+            query,
+            documents,
+            top_k,
+            use_reranker,
+            reranker_top_k,
+            query_vector=query_vector,
+            rrf=rrf,
+            **self._agentic_kwargs(agentic, agentic_config),
         )
 
     def list_documents(self, limit=50):

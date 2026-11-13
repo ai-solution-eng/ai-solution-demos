@@ -8,6 +8,13 @@ metadata:
 spec:
   type: ClusterIP
   clusterIP: None
+  # Peer discovery MUST survive a not-Ready pod (2026-10-17 incident): with
+  # the default (false) the Endpoints object only lists READY addresses, so a
+  # pod that is still catching up has no DNS record -> the leader cannot reach
+  # it to ship the missing raft log -> it never becomes Ready. That is a
+  # deadlock: the readiness probe gates DNS, and DNS is what the pod needs to
+  # become ready. Every clustered-database chart (and qdrant's own) sets this.
+  publishNotReadyAddresses: true
   ports:
     - name: grpc
       port: {{ .Values.qdrant.grpcPort }}

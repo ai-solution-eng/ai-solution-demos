@@ -1,0 +1,61 @@
+{{- if and .Values.podDisruptionBudget .Values.podDisruptionBudget.enabled }}
+{{- $name := .Values.deployment.name -}}
+{{- $appName := .Values.deployment.appName -}}
+{{- /* M2 (wave-2 review): the EFFECTIVE API replica floor — the HPA's
+       minReplicas when it owns the scale, else replicaCount. */ -}}
+{{- $apiReplicas := int .Values.replicaCount -}}
+{{- if and (hasKey .Values "autoscaling") .Values.autoscaling.enabled -}}
+{{-   $apiReplicas = int (.Values.autoscaling.minReplicas | default 1) -}}
+{{- end -}}
+{{- $qdrantReplicas := int (.Values.qdrant.replicas | default 1) -}}
+{{- /* P2-12 (wave 1) + M2/M3/M4/M5 (wave-2 review): one PDB per HA workload
+       caps concurrent VOLUNTARY evictions.  Rules this template enforces:
+       * NO PDB below 2 replicas: disruptionsAllowed = healthy -
+         (replicas - maxUnavailable) is >= 1 for a single pod, so a PDB there
+         is inert AND falsely reassuring (base chart: 1 API replica, 1 qdrant
+         node, single-replica Redis -> none of them get a PDB).
+       * qdrant: a 2-peer raft loses quorum on ANY single eviction, so
+         maxUnavailable is FORCED to 0 below 3 peers and clamped to
+         peers - 2 above (values express the intent; the topology bounds it).
+       * unhealthyPodEvictionPolicy: AlwaysAllow — a NOT-Ready peer (a cold
+         join replays the raft log over NFS under a 20-minute startup budget)
+         must never make a node drain impossible (force-delete territory).
+       * The API selector carries a DEDICATED component label: the bare
+         app=<appName> label also matches every CronJob pod, and a cron tick
+         waiting out its qdrant readiness gate (up to 30 min) would drop
+         disruptionsAllowed to 0 and block kubectl drain (M4).
+       Unmanaged disruptions (OOMKill, preemption by a higher-priority pod)
+       are NOT covered by a PDB — size requests/limits and priorities.
+*/ -}}
+{{- if ge $apiReplicas 2 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $name }}-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ $appName }}
+spec:
+  maxUnavailable: {{ min (int .Values.podDisruptionBudget.api.maxUnavailable) (sub $apiReplicas 1) }}
+  selector:
+    matchLabels:
+      app: {{ $appName }}
+      app.kubernetes.io/component: api
+{{- end }}
+{{- if ge $qdrantReplicas 2 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $name }}-qdrant
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ $name }}-qdrant
+spec:
+  maxUnavailable: {{ if lt $qdrantReplicas 3 }}0{{ else }}{{ min (int .Values.podDisruptionBudget.qdrant.maxUnavailable) (sub $qdrantReplicas 2) }}{{ end }}
+  unhealthyPodEvictionPolicy: AlwaysAllow
+  selector:
+    matchLabels:
+      app: {{ $name }}-qdrant
+{{- end }}
+{{- end }}

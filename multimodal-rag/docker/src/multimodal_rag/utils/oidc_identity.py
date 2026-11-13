@@ -9,36 +9,49 @@ A JWT-only user (no minted key, no env entry) still resolves, with ZERO
 datasets (fail-closed) until an admin grants datasets or the user
 self-selects.  A JWT is NEVER an admin identity.
 
-Configuration (all read PER REQUEST — a config change needs no restart):
+Configuration (all read PER REQUEST — a config change needs no restart; the
+env-var PREFIX is the one import-time setting, EMPTY by default so the names
+are app-agnostic ``OIDC_*``):
 
-* ``RAG_OIDC_ENABLED``               — ``1``/``true``/``yes`` activates the
+.. note::
+   The historical ``RAG_OIDC_*`` names are still read as a deprecated alias
+   (one warning per name) so a deployment that ships the pre-rename chart
+   keeps working.  ``PCAI_OIDC_ENV_PREFIX`` gives an app its own namespace
+   (``=SQLHANDLER`` -> ``SQLHANDLER_OIDC_*``) instead of a fork.
+
+* ``OIDC_ENABLED``               — ``1``/``true``/``yes`` activates the
   resolver.
-* ``RAG_OIDC_ISSUER``                — required when enabled; must equal the
+* ``OIDC_ISSUER``                — required when enabled; must equal the
   token's ``iss`` claim (e.g. a Keycloak realm URL).  Enabled WITHOUT an
   issuer keeps the resolver inert (fail-closed) and
   :func:`warn_if_misconfigured` — called from each server's HTTP startup —
   screams once.
-* ``RAG_OIDC_AUDIENCE``              — default ``"ua"``; validated against
+* ``OIDC_AUDIENCE``              — default ``"ua"``; validated against
   the token's ``azp`` (exact match when present) or its ``aud`` (string, or
   list membership).
-* ``RAG_OIDC_IDENTITY_CLAIM``        — default ``"preferred_username"``;
+* ``OIDC_IDENTITY_CLAIM``        — default ``"preferred_username"``;
   fallback chain: that claim → ``sub``.  The resulting name must satisfy
   the registry name rules (``admin_registry._NAME_RE`` semantics) after
   whitespace stripping — a present-but-unsuitable primary claim REJECTS the
   token rather than silently falling back (the fallback exists for absent
   claims, not for forged or malformed ones).
-* ``RAG_OIDC_JWKS_URL``              — optional explicit JWKS URL; default
+* ``OIDC_JWKS_URL``              — optional explicit JWKS URL; default
   ``{issuer}/protocol/openid-connect/certs`` (the Keycloak convention).
   There is deliberately NO OIDC discovery in v1 (one less network
   dependency, easier testing) — point this env at another IdP's JWKS
   endpoint when the issuer is not Keycloak-shaped.
-* ``RAG_OIDC_JWKS_REFRESH_SECONDS``  — default 3600; the JWKS cache TTL.  On
+* ``OIDC_JWKS_REFRESH_SECONDS``  — default 3600; the JWKS cache TTL.  On
   an unknown ``kid`` one immediate refetch happens before failing, so a
   signing-key rotation is picked up without waiting out the TTL.
-* ``RAG_OIDC_OBSERVED_TTL``          — default 86400; the minimum interval
+* ``JWKS_FORCE_MIN_INTERVAL``   — default 60; the minimum interval between
+  unknown-``kid`` forced refetches per JWKS URL.  That path is reachable with
+  an UNAUTHENTICATED garbage token, so without the limit every random ``kid`` would
+  drive one outbound fetch.  (No ``OIDC_`` segment: the existing convention is
+  ``{PREFIX}JWKS_FORCE_MIN_INTERVAL``, e.g. SQLHANDLER_JWKS_FORCE_MIN_INTERVAL.)
+* ``OIDC_OBSERVED_TTL``          — default 86400; the minimum interval
   between ``last_seen`` updates per name (bounds writes to observed.json).
-* ``RAG_OIDC_FETCH_TIMEOUT_SECONDS`` — default 3; the JWKS HTTP timeout.
-* ``RAG_OIDC_CLOCK_SKEW_SECONDS``    — default 60; leeway for ``exp``/``nbf``.
+* ``OIDC_FETCH_TIMEOUT_SECONDS`` — default 3; the JWKS HTTP timeout.
+* ``OIDC_CLOCK_SKEW_SECONDS``    — default 60; leeway for ``exp``/``nbf``.
 
 Security posture:
 
@@ -131,15 +144,40 @@ def _sibling(mod_name: str, *, required: bool = True):
         return None
 
 
-ENABLED_ENV = "RAG_OIDC_ENABLED"
-ISSUER_ENV = "RAG_OIDC_ISSUER"
-AUDIENCE_ENV = "RAG_OIDC_AUDIENCE"
-IDENTITY_CLAIM_ENV = "RAG_OIDC_IDENTITY_CLAIM"
-JWKS_URL_ENV = "RAG_OIDC_JWKS_URL"
-JWKS_REFRESH_ENV = "RAG_OIDC_JWKS_REFRESH_SECONDS"
-OBSERVED_TTL_ENV = "RAG_OIDC_OBSERVED_TTL"
-FETCH_TIMEOUT_ENV = "RAG_OIDC_FETCH_TIMEOUT_SECONDS"
-CLOCK_SKEW_ENV = "RAG_OIDC_CLOCK_SKEW_SECONDS"
+# Env-var prefix.  EMPTY by default: the OIDC variables are app-agnostic
+# (OIDC_ENABLED, OIDC_ISSUER, ...) — they were never RAG's to own.  The
+# pre-rename RAG_OIDC_* names are still READ as a deprecated alias (see
+# _env_str) so a deployment that still ships the old chart keeps working
+# through the transition; the alias goes away once every chart renders the
+# canonical names.
+#
+# An app that wants its OWN namespace sets PCAI_OIDC_ENV_PREFIX instead of
+# forking the module: PCAI_OIDC_ENV_PREFIX=SQLHANDLER gives
+# SQLHANDLER_OIDC_ENABLED, SQLHANDLER_OIDC_ISSUER, ...  Read at import time on
+# purpose — the prefix is a deployment identity, not a per-request toggle, and
+# every consumer sets its environment at container start.
+_ENV_PREFIX = os.environ.get("PCAI_OIDC_ENV_PREFIX", "").strip().upper()
+if _ENV_PREFIX:
+    _ENV_PREFIX += "_"
+
+
+def _env_name(suffix: str) -> str:
+    """Canonical env-var name: OIDC_X, or PREFIX_OIDC_X when a prefix is set."""
+    return f"{_ENV_PREFIX}{suffix}"
+
+
+ENABLED_ENV = _env_name("OIDC_ENABLED")
+ISSUER_ENV = _env_name("OIDC_ISSUER")
+AUDIENCE_ENV = _env_name("OIDC_AUDIENCE")
+IDENTITY_CLAIM_ENV = _env_name("OIDC_IDENTITY_CLAIM")
+JWKS_URL_ENV = _env_name("OIDC_JWKS_URL")
+JWKS_REFRESH_ENV = _env_name("OIDC_JWKS_REFRESH_SECONDS")
+OBSERVED_TTL_ENV = _env_name("OIDC_OBSERVED_TTL")
+FETCH_TIMEOUT_ENV = _env_name("OIDC_FETCH_TIMEOUT_SECONDS")
+CLOCK_SKEW_ENV = _env_name("OIDC_CLOCK_SKEW_SECONDS")
+# NOT OIDC-namespaced on purpose: the existing convention is
+# {PREFIX}JWKS_FORCE_MIN_INTERVAL (SQLHANDLER_JWKS_FORCE_MIN_INTERVAL).
+FORCE_MIN_INTERVAL_ENV = _env_name("JWKS_FORCE_MIN_INTERVAL")
 
 DEFAULT_AUDIENCE = "ua"
 DEFAULT_IDENTITY_CLAIM = "preferred_username"
@@ -147,6 +185,7 @@ DEFAULT_JWKS_REFRESH = 3600.0
 DEFAULT_OBSERVED_TTL = 86400.0
 DEFAULT_FETCH_TIMEOUT = 3.0
 DEFAULT_CLOCK_SKEW = 60.0
+DEFAULT_FORCE_MIN_INTERVAL = 60.0
 
 # The identity-claim fallback chain's last resort (stable, unique, opaque).
 _FALLBACK_CLAIM = "sub"
@@ -159,9 +198,38 @@ _JWT_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_-]+={0,2}$")
 
 _TRUE = ("1", "true", "yes")
 
+# Pre-rename env namespace: READ-ONLY aliases, never written or advertised.
+# Consulted only when the canonical name is unset AND no app prefix is
+# configured, so PCAI_OIDC_ENV_PREFIX=SQLHANDLER keeps its exact namespace.
+_LEGACY_PREFIX = "RAG_"
+_legacy_warned: set[str] = set()
+_legacy_lock = threading.Lock()
+
+
+def _warn_legacy(name: str) -> None:
+    """One-shot deprecation notice per legacy env name (never per request)."""
+    with _legacy_lock:
+        if name in _legacy_warned:
+            return
+        _legacy_warned.add(name)
+    logger.warning(
+        "OIDC env %s is deprecated — use %s (the fleet-wide name); the RAG_ alias is transitional",
+        name,
+        name[len(_LEGACY_PREFIX) :],
+    )
+
 
 def _env_str(name: str) -> str:
-    return os.environ.get(name, "").strip()
+    value = os.environ.get(name, "").strip()
+    if value:
+        return value
+    if not _ENV_PREFIX:
+        legacy = _LEGACY_PREFIX + name
+        value = os.environ.get(legacy, "").strip()
+        if value:
+            _warn_legacy(legacy)
+            return value
+    return ""
 
 
 def _env_float(name: str, default: float) -> float:
@@ -179,7 +247,7 @@ def _flag_set() -> bool:
 def oidc_enabled() -> bool:
     """True when the OIDC resolver is both switched on and fully configured.
 
-    ``RAG_OIDC_ENABLED`` alone is not enough: without ``RAG_OIDC_ISSUER``
+    ``OIDC_ENABLED`` alone is not enough: without ``OIDC_ISSUER``
     there is nothing to verify tokens against, so the resolver stays inert
     (fail-closed) and :func:`warn_if_misconfigured` screams once at startup.
     Read per request — enabling OIDC needs no restart.
@@ -190,7 +258,7 @@ def oidc_enabled() -> bool:
 def warn_if_misconfigured(server_label: str) -> bool:
     """Loud one-shot startup warning: enabled but unusable.
 
-    Returns True when ``RAG_OIDC_ENABLED`` is set without a usable issuer —
+    Returns True when ``OIDC_ENABLED`` is set without a usable issuer —
     the state in which the resolver is inert and every JWT 401s (D21
     fail-closed).  Mirrors ``mcp_auth.warn_if_open``: call from the server's
     HTTP-mode startup only (stdio dev use never verifies tokens).
@@ -273,11 +341,17 @@ def _jwks_url() -> str:
 
 
 # JWKS cache (per JWKS URL): stamp → keys, plus a negative cache so a down
-# IdP cannot be hammered per request.  Fetches happen under the lock —
-# serialized (bounded by the fetch timeout) instead of thundering-herd.
+# IdP cannot be hammered per request.  The LOCK protects the cache dicts ONLY —
+# the network fetch runs OUTSIDE it, so a slow/hostile IdP can never serialize
+# every request behind one in-flight fetch.  `_jwks_fetching` records the URLs
+# with a fetch in flight so concurrent callers do not stampede (single-process
+# semantics, like the caches themselves); `_forced_refetch_at` rate-limits the
+# unknown-kid force path per URL.
 _jwks_lock = threading.Lock()
 _jwks_cache: dict[str, tuple[float, dict[str, tuple[int, int]]]] = {}
 _jwks_negative: dict[str, float] = {}
+_jwks_fetching: set[str] = set()
+_forced_refetch_at: dict[str, float] = {}
 
 
 def _fetch_jwks(url: str, timeout: float) -> dict[str, tuple[int, int]]:
@@ -291,9 +365,10 @@ def _fetch_jwks(url: str, timeout: float) -> dict[str, tuple[int, int]]:
     """
     import ssl
     import urllib.parse
+    import urllib.request  # explicit: urllib.parse does NOT bind urllib.request
 
     req = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "multimodal-rag"})
-    handlers: list = []
+    handlers: list[urllib.request.BaseHandler] = []
     ca_bundle = os.environ.get("REMOTE_CA_BUNDLE", "").strip()
     if url.lower().startswith("https://") and ca_bundle and os.path.exists(ca_bundle):
         try:
@@ -302,8 +377,10 @@ def _fetch_jwks(url: str, timeout: float) -> dict[str, tuple[int, int]]:
             pass  # unusable bundle → default verification (fail closed as usual)
     host = urllib.parse.urlparse(url).hostname or ""
     if host.endswith((".svc", ".svc.cluster.local", ".local")) or host == "localhost":
-        # in-cluster: never route through an ambient proxy
-        handlers.append(urllib.request.ProxyHandler({}))
+        # in-cluster: never route through an ambient proxy.  Position is
+        # irrelevant (build_opener sorts handlers by handler_order), but the
+        # fork inserts here — keep the two implementations byte-comparable.
+        handlers.insert(0, urllib.request.ProxyHandler({}))
     if handlers:
         # build_opener takes handlers POSITIONALLY (*handlers) — the
         # handlers= kwarg raised TypeError on every fetch, killing the
@@ -342,13 +419,28 @@ def _jwks_keys(url: str, *, force: bool = False) -> dict[str, tuple[int, int]] |
     """``{kid: (n, e)}`` from the TTL-cached JWKS (fetch when stale/forced).
 
     ``force=True`` is the unknown-``kid`` rotation path: ONE immediate
-    refetch.  A failed fetch (network/parse) arms the negative cache —
-    forced or not, ``None`` comes back until the backoff elapses, so a down
-    IdP sees at most one attempt per backoff window per replica.
+    refetch — RATE LIMITED to at most one per ``url`` per
+    ``{PREFIX}_JWKS_FORCE_MIN_INTERVAL`` seconds (default 60), because an
+    UNAUTHENTICATED garbage token with a random ``kid`` reaches this path;
+    inside the window the cached keys are returned as-is (or None when there
+    are none) WITHOUT touching the network.  A failed fetch (network/parse)
+    arms the negative cache — forced or not, ``None`` comes back until the
+    backoff elapses, so a down IdP sees at most one attempt per backoff
+    window per replica.  The fetch runs OUTSIDE ``_jwks_lock`` (a
+    ``_jwks_fetching`` marker prevents concurrent stampedes), so a slow IdP
+    cannot serialize unrelated requests behind the lock.
     """
     ttl = _env_float(JWKS_REFRESH_ENV, DEFAULT_JWKS_REFRESH)
     timeout = _env_float(FETCH_TIMEOUT_ENV, DEFAULT_FETCH_TIMEOUT)
     now = time.time()
+    if force:
+        min_interval = _env_float(FORCE_MIN_INTERVAL_ENV, DEFAULT_FORCE_MIN_INTERVAL)
+        with _jwks_lock:
+            last = _forced_refetch_at.get(url)
+            if last is not None and (now - last) < min_interval:
+                cached = _jwks_cache.get(url)
+                return cached[1] if cached else None
+            _forced_refetch_at[url] = now
     with _jwks_lock:
         cached = _jwks_cache.get(url)
         if not force and cached and (now - cached[0]) < ttl:
@@ -356,19 +448,32 @@ def _jwks_keys(url: str, *, force: bool = False) -> dict[str, tuple[int, int]] |
         negative_until = _jwks_negative.get(url)
         if negative_until and now < negative_until:
             return None
+        if url in _jwks_fetching:
+            # Another thread is already fetching: never block on it — serve
+            # the stale copy (or None) rather than queue behind a timeout.
+            return cached[1] if cached else None
+        _jwks_fetching.add(url)
+    try:
         try:
-            keys = _fetch_jwks(url, timeout)
+            keys = _fetch_jwks(url, timeout)  # network, OUTSIDE the lock
         except Exception as exc:  # network/parse failure — fail closed, back off
-            _jwks_negative[url] = time.time() + _NEGATIVE_TTL
+            with _jwks_lock:
+                _jwks_negative[url] = time.time() + _NEGATIVE_TTL
             logger.warning(
                 "OIDC JWKS fetch failed (%s: %s) — JWT verification is briefly unavailable",
                 type(exc).__name__,
                 exc,
             )
             return None
-        _jwks_negative.pop(url, None)
-        _jwks_cache[url] = (time.time(), keys)
+        with _jwks_lock:
+            _jwks_negative.pop(url, None)
+            _jwks_cache[url] = (time.time(), keys)
         return keys
+    finally:
+        # Always release the stampede marker (even on a BaseException), so a
+        # single aborted fetch can never wedge the guard permanently.
+        with _jwks_lock:
+            _jwks_fetching.discard(url)
 
 
 def _verify_rs256(signing_input: bytes, signature: bytes, key: tuple[int, int]) -> bool:
@@ -591,7 +696,7 @@ def _observed_path() -> Path:
 def record_observed(name: str) -> None:
     """Best-effort ``{first_seen, last_seen}`` stamp for a resolved identity.
 
-    Throttled per name by ``RAG_OIDC_OBSERVED_TTL`` (per process — bounds
+    Throttled per name by ``OIDC_OBSERVED_TTL`` (per process — bounds
     the overlay writes without a per-request NFS round trip; first sight of
     a name always writes).  NEVER raises: an unwritable sidecar must not
     fail an otherwise-authenticated request.

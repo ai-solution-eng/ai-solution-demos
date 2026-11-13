@@ -16,7 +16,7 @@ file on the shared PVC:
 D21 — OIDC sign-in fields (optional, per client entry):
 
 * ``"oidc": "<alias>"`` — binds this client to the JWT identity whose
-  ``RAG_OIDC_IDENTITY_CLAIM`` (or ``sub``) resolves to ``<alias>``: the
+  ``OIDC_IDENTITY_CLAIM`` (or ``sub``) resolves to ``<alias>``: the
   verified token then adopts the CLIENT's name and datasets (both
   credentials, one identity — same client_id).  A JWT whose name matches a
   client's name by convention needs no alias.  Must satisfy the registry
@@ -24,6 +24,20 @@ D21 — OIDC sign-in fields (optional, per client entry):
 * ``"blocked": true`` — the identity (by name or alias) resolves to NOTHING:
   a minted key stops authenticating and a matching JWT 401s downstream.
   Env-registry names cannot be blocked (env has no place to say it).
+
+D27 — create permission (optional, per client entry):
+
+* ``"can_create_datasets": true | false`` — a PER-USER override of the
+  deployment-wide ``RAG_DATASETS_CREATE_ALLOWED`` default (which itself
+  defaults to allowed).  Absent = no override = the deployment default
+  governs, so an untouched entry keeps its existing behaviour.  Read by
+  :func:`can_create_override` and consumed by
+  ``access_store.identity_may_create_datasets``.  Env-registry names
+  cannot carry it (env has no place to say it), exactly like ``blocked``.
+* A RESERVED name (``admin`` / ``anonymous`` / ``__anonymous__``) is
+  refused outright: those are sentinel VALUES (the D23 creator stamp and
+  the D20 fallback identity), not user names — see
+  ``clients_registry.RESERVED_IDENTITY_NAMES`` (D27/S1).
 
 Resolution (the union is computed by ``clients_registry.resolve_presented``
 via :func:`overlay_clients` / :func:`overlay_acls` — both re-read per call):
@@ -68,7 +82,12 @@ import time
 from pathlib import Path
 
 from multimodal_rag.utils import access_store as _base
-from multimodal_rag.utils.clients_registry import ALL_DATASETS, GRANT_RO, GRANT_RW
+from multimodal_rag.utils.clients_registry import (
+    ALL_DATASETS,
+    GRANT_RO,
+    GRANT_RW,
+    RESERVED_IDENTITY_NAMES,
+)
 
 ADMIN_FILE_ENABLED_ENV = "RAG_ACCESS_ADMIN_FILE"
 CLIENTS_FILE = "clients.json"
@@ -107,15 +126,35 @@ def _validate_name(name: str) -> str:
     name = str(name).strip()
     if not _NAME_RE.match(name):
         raise ValueError("client name must be 1-64 chars of letters, digits, '.', '_' or '-' (must start alphanumeric)")
+    if name in RESERVED_IDENTITY_NAMES:
+        # D27/S1: "admin" / "anonymous" / "__anonymous__" are sentinel
+        # VALUES (the D23 creator stamp and the D20 fallback identity), not
+        # user names.  A client holding one would match the ownership stamp
+        # on every dataset created without a per-user identity.  Refusing
+        # here also covers the D21 oidc alias and the JWT identity claim,
+        # which both validate through valid_name.
+        raise ValueError(
+            f"client name {name!r} is reserved: 'admin', 'anonymous' and "
+            "'__anonymous__' are sentinel values (the D23 creator stamp / the "
+            "D20 fallback identity), not user names (D27/S1)"
+        )
     return name
 
 
 def valid_name(name: str) -> bool:
     """True when *name* satisfies the registry name rules (D21: the JWT
     identity claim must yield a name of exactly this shape — shared rules,
-    not a parallel vocabulary)."""
+    not a parallel vocabulary).
+
+    D27/S1: a RESERVED sentinel name is NOT valid.  This is the gate the
+    D21 JWT resolver applies to the identity claim, so a token whose
+    preferred_username is "admin" is rejected at resolution (fail-closed,
+    never adopted as a client identity) rather than silently becoming a
+    name that collides with the ownership stamp.
+    """
     try:
-        return bool(_NAME_RE.match(str(name).strip()))
+        stripped = str(name).strip()
+        return bool(_NAME_RE.match(stripped)) and stripped not in RESERVED_IDENTITY_NAMES
     except Exception:
         return False
 
@@ -342,6 +381,9 @@ def own_key_view(name: str) -> dict:
         "grants": [{"name": n, "mode": m} for n, m in sorted(grants.items())],
         "oidc": str(entry.get("oidc")) if entry.get("oidc") else None,
         "blocked": bool(entry.get("blocked")),
+        # D27: the owner sees its own create override (None = deployment
+        # default governs), mirroring how 'blocked' is reported here.
+        "can_create_datasets": (_override_value(entry.get("can_create_datasets"))),
         "env_managed": name in env_names,
         "created": entry.get("created"),
     }
@@ -455,10 +497,18 @@ def mint_client(name: str, datasets: list | None = None, key: str | None = None)
     return {"name": name, "key": new_key, "datasets": ds, "rotated": result.get("rotated", False)}
 
 
-def set_client_flags(name: str, *, oidc: str | None = None, blocked: bool | None = None) -> dict:
+def set_client_flags(
+    name: str,
+    *,
+    oidc: str | None = None,
+    blocked: bool | None = None,
+    can_create_datasets: bool | None = None,
+) -> dict:
     """Set (or clear) the D21 fields on an overlay client.
 
-    Pass ``oidc=""`` to CLEAR the alias, ``blocked=False`` to UNBLOCK.
+    Pass ``oidc=""`` to CLEAR the alias, ``blocked=False`` to UNBLOCK,
+    ``can_create_datasets=None`` to CLEAR the create override (back to the
+    deployment default).
     ``None`` leaves the field untouched.  The key and dataset grants are
     untouched.  Used by the REST PATCH handler (extend-grant shape) — no new
     route; a JWT-only blocked name that was never minted gets a minted entry
@@ -485,15 +535,77 @@ def set_client_flags(name: str, *, oidc: str | None = None, blocked: bool | None
                 entry.pop("oidc", None)
         if blocked is not None:
             entry["blocked"] = bool(blocked)
+        # D27: the per-user CREATE override (D1).
+        #
+        # The stored form is an OBJECT ({'value': true|false}), not a bare
+        # bool, so that 'clear the override' is expressible.  A bare-bool
+        # field cannot distinguish 'set to False' from 'no override
+        # recorded' once the key is absent - and False is a MEANINGFUL value
+        # here (this user may not create even though the deployment allows
+        # it).  So:
+        #
+        #   None       -> CLEAR the override (deployment default governs)
+        #   True/False -> set it
+        #
+        # Same leave-untouched-when-absent convention as 'blocked': a
+        # set_client_flags call that does not mention this flag must not
+        # disturb a stored override.  The value is coerced to a real bool so
+        # a hand-edited file cannot smuggle a truthy string.
+        if can_create_datasets is not None:
+            entry["can_create_datasets"] = {"value": bool(can_create_datasets)}
         return True
 
     _mutate(_apply)
     doc = _load().get("clients", {}).get(name, {})
+    override = doc.get("can_create_datasets")
     return {
         "name": name,
         "oidc": doc.get("oidc") or None,
         "blocked": bool(doc.get("blocked")),
+        # None = no override recorded -> the deployment default governs.
+        "can_create_datasets": _override_value(override),
     }
+
+
+def _override_value(raw: object) -> bool | None:
+    """Decode the stored D27 create-override field to True / False / None.
+
+    The stored form is an object {"value": <bool>}; a BARE bool is also
+    accepted so a hand-edited file written the obvious way still works.
+    Anything else - including the string "false", which is TRUTHY - is
+    treated as ABSENT (None, i.e. the deployment default governs).  Never
+    coerced: a typo must not be able to grant create.
+    """
+    if isinstance(raw, dict):
+        raw = raw.get("value")
+    return raw if isinstance(raw, bool) else None
+
+
+def can_create_override(name: str) -> bool | None:
+    """The per-user CREATE override for *name*, or None when none is recorded.
+
+    D27 (the D1 per-user half): the overlay stores ``can_create_datasets`` as
+    an object {"value": bool} on a client entry, managed through
+    :func:`set_client_flags` and
+    surfaced in :func:`list_clients` / :func:`own_key_view`.  ``None`` means
+    "no override recorded" and the caller falls back to the deployment default
+    (:func:`access_store.deployment_create_allowed`) - the same three-level
+    shape as the create predicate itself.
+
+    Overlay-only, exactly like ``blocked``: an ENV-registry name has nowhere to
+    record the override (the operator owns that entry), so it always reads
+    None.  A non-bool value in a hand-edited file is treated as ABSENT rather
+    than coerced - ``bool("false")`` is True, and a string must never be able
+    to grant create.  Fail-soft on an unreadable overlay for the same reason
+    as the reader it feeds: a broken admin file must not 500 a create.
+    """
+    try:
+        entry = _load().get("clients", {}).get(str(name).strip())
+    except Exception:
+        return None
+    if not isinstance(entry, dict):
+        return None
+    return _override_value(entry.get("can_create_datasets"))
 
 
 def revoke_client(name: str) -> bool:
@@ -652,6 +764,12 @@ def list_clients() -> list:
             row["oidc"] = str(entry["oidc"])
         if entry.get("blocked"):
             row["blocked"] = True
+        # D27: the per-user create override.  Surfaced only when it is a
+        # real bool (an absent key = "no override" = the deployment default),
+        # mirroring how 'blocked' appears above.
+        override = _override_value(entry.get("can_create_datasets"))
+        if override is not None:
+            row["can_create_datasets"] = override
         out.append(row)
     # Env-only clients are listed too (visible, not editable here — the env
     # is authoritative for them).

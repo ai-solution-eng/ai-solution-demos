@@ -8,8 +8,8 @@ description: >-
   models (embedder/reranker/VLM/ASR). Exposes ingestion and retrieval over
   REST and MCP (SSE) behind the PCAI Istio gateway.
 type: application
-version: 5.7.0
-appVersion: "5.7.0"
+version: 6.3.2
+appVersion: "6.3.2"
 keywords:
   - rag
   - multimodal

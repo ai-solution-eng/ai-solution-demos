@@ -68,3 +68,29 @@ rag-mcp-server {{ .Chart.Version }} (app {{ .Chart.AppVersion }}) deployed to na
   MCP      : :{{ .Values.mcp.port }}/mcp   (X-API-Key: <api-key> — only when enabled)
   MCP client config (when enabled):
   { "mcpServers": { "rag-knowledge": { "type": "remote", "url": "http://<host>/mcp", "headers": { "X-API-Key": "<api-key>" } } } }
+{{- /* P2-13 + M6 (wave-2 review): the offline-render key-mint warning.
+       The mint risk is PER KEY and exists whenever NO security.existingSecret
+       and NO stored release Secret covers them: pinning ONLY
+       security.apiKey still leaves MEDIA_TOKEN_SECRET minted fresh per
+       render (every signed media URL dies, silently — the proven M6 case).
+       The condition therefore fires unless BOTH keys are pinned inline;
+       security.requirePinnedKeys=true refuses the render outright while
+       EITHER is unpinned. */ -}}
+{{- $storedSecret := lookup "v1" "Secret" $ns (printf "%s-model-keys" $name) -}}
+{{- $restKeysPinned := and .Values.security.apiKey .Values.security.mediaTokenSecret -}}
+{{- if and (not .Values.security.existingSecret) (not $storedSecret) (not $restKeysPinned) }}
+
+════════════════════════════════════════════════════════════════════
+⚠  GITOPS / OFFLINE-RENDER WARNING (P2-13): REST key material is NOT fully
+   pinned (need BOTH security.apiKey AND security.mediaTokenSecret inline,
+   or a security.existingSecret).  Every UNPINNED key of the pair was
+   GENERATED for this install, and an OFFLINE re-render (helm template / a
+   GitOps apply) mints a NEW value for it per apply — clients 401 and every
+   signed media URL dies.  Pick one:
+     a) pin BOTH keys: --set security.apiKey=... --set security.mediaTokenSecret=...
+        (or a values file — never commit them);
+     b) own the Secret: --set security.existingSecret=<your-secret>;
+     c) fail fast instead of rotating: --set security.requirePinnedKeys=true.
+   In-cluster upgrades are safe either way (the stored Secret wins).
+{{- end }}
+

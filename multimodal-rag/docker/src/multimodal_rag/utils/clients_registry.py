@@ -37,15 +37,75 @@ import re
 import threading
 from contextvars import ContextVar
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
+from multimodal_rag.utils.logging_utils import logging
 from multimodal_rag.utils.mcp_auth import configured_keys
+
+logger = logging.getLogger(__name__)
 
 CLIENTS_ENV = "RAG_API_KEY_CLIENTS"
 ACLS_ENV = "RAG_DATASET_ACLS"
 # REST admin key (single). The MCP key set comes from mcp_auth.configured_keys.
 REST_API_KEY_ENV = "RAG_API_KEY"
 ALL_DATASETS = "*"
+
+# D27 - RESERVED identity names (the S1 sentinel-collision fix).
+#
+# "admin" and "anonymous" are the two SENTINEL VALUES the D23 creator stamp
+# writes when no per-user identity is behind a create (api_server's
+# _creator_name_for_request: an admin identity stamps "admin", an
+# unauthenticated / bound-but-nameless one stamps "anonymous").  "__anonymous__"
+# is the D20 fallback IDENTITY NAME the auth middleware binds on an
+# unconfigured deployment, and the exact string api_server compares against to
+# keep globals out of that identity's world.
+#
+# All three are VALUES, not users.  While they were also legal CLIENT names the
+# two vocabularies collided: a key minted for a user called "admin" resolved to
+# an identity whose NAME equals the stamp on every admin-created dataset, so it
+# passed the D23 owner-or-admin gate on all of them (and would have been granted
+# ownership access by D2).  A registry key is an UNPRIVILEGED credential, so
+# that is privilege escalation by naming.
+#
+# The names are therefore refused at every point that can mint an identity: the
+# env parsers below, the D17 overlay's name validation (admin_registry
+# valid_name / _validate_name - which also gates the D21 OIDC alias and the D21
+# JWT identity claim), and the ownership primitive itself
+# (identity_owns_dataset), which refuses the sentinels on BOTH sides of the
+# comparison so no future caller can re-open the hole by comparing names
+# directly.
+#
+# MATCHING IS DELIBERATELY EXACT-CASE: the D23 gate compares caller == creator
+# with == (api_server._identity_may_manage_dataset), so "Admin" can never equal
+# the "admin" stamp.  A case-insensitive refusal would break a legitimate user
+# named "Admin" for no security gain.
+RESERVED_IDENTITY_NAMES = frozenset({"admin", "anonymous", "__anonymous__"})
+
+# Names refused at parse time, for the admin listing ("why is my key not
+# working?" - a silently dropped entry is otherwise invisible).  Process-local
+# and last-parse-wins: it records what THIS replica's parsers saw, which is
+# exactly what an operator debugging one pod needs.
+_REFUSED_NAMES: dict[str, str] = {}
+_REFUSED_LOCK = threading.Lock()
+
+
+def _note_refused_name(name: str, source: str, kind: str) -> None:
+    """Log + record a reserved-name refusal (fail-closed, never raises)."""
+    reason = (
+        f"{name!r} is a reserved sentinel name ('admin' / 'anonymous' / "
+        "'__anonymous__') - a client holding it would collide with the D23 "
+        "ownership stamp. The entry is REFUSED (fail-closed)."
+    )
+    with _REFUSED_LOCK:
+        _REFUSED_NAMES[name] = reason
+    logger.warning("Refused reserved %s %r in %s: %s", kind, name, source, reason)
+
+
+def refused_names() -> dict:
+    """Return {name: reason} for entries refused as reserved (admin listing)."""
+    with _REFUSED_LOCK:
+        return dict(_REFUSED_NAMES)
+
 
 # D26 grant modes. A grant is either rw (read+write — the historical default,
 # byte-compatible) or ro (read-only: list/read/search/select/bind only; every
@@ -105,6 +165,18 @@ def parse_clients(raw: str) -> dict:
     Entries are ';'-separated, fields ':'-separated: ``name:key``.  Keys must
     not contain ``:`` or ``;`` (same rule as K8S_MCP_CLIENTS).  Duplicate
     keys: last entry wins (deterministic, no error — rotation friendliness).
+
+    D27: an entry whose NAME is reserved (:data:`RESERVED_IDENTITY_NAMES`) is
+    REFUSED — the entry is not registered, a warning is logged, and the name is
+    remembered in :data:`_REFUSED_NAMES` so the admin listing can surface it.
+
+    Refusal is WARN-AND-SKIP, not raise, and that is a deliberate exception to
+    this module's fail-loud convention.  Line 192 runs ``parse_clients`` at
+    MODULE IMPORT, so raising here is not "fail loud" — it is a crashlooping pod
+    on live config.  That trade is right for a typo an operator is actively
+    writing and wrong for a deployment that already carries ``admin:key`` in its
+    env and is upgraded into a container that will not boot.  A refused name is
+    fail-CLOSED (it grants nothing), which is the safe direction.
     """
     entries: dict[str, str] = {}
     raw = (raw or "").strip()
@@ -120,6 +192,9 @@ def parse_clients(raw: str) -> dict:
                 f"invalid client entry {chunk!r} in {CLIENTS_ENV}: expected name:key (keys must not contain ':' or ';')"
             )
         name, key = parts[0].strip(), parts[1].strip()
+        if name in RESERVED_IDENTITY_NAMES:
+            _note_refused_name(name, CLIENTS_ENV, "client entry")
+            continue
         entries[key] = name
     return entries
 
@@ -146,6 +221,13 @@ def parse_acls(raw: str) -> dict:
     registry must never silently degrade to "no ACLs enforced").
 
     Names with NO entry get no datasets (fail-closed).
+
+    D27: an entry whose NAME is reserved (:data:`RESERVED_IDENTITY_NAMES`) is
+    REFUSED (warn-and-skip, same posture as :func:`parse_clients` - this runs at
+    import too, so raising would be a crashlooping pod rather than a loud
+    failure).  Refusing the ACL alone is not enough to create a usable identity
+    (the registry entry is refused too), but a reserved name with an ACL and no
+    key would otherwise sit in the admin listing looking configured.
     """
     acls: dict[str, dict] = {}
     raw = (raw or "").strip()
@@ -159,6 +241,9 @@ def parse_acls(raw: str) -> dict:
         name = name.strip()
         if not sep or not name:
             raise ClientConfigError(f"invalid ACL entry {chunk!r} in {ACLS_ENV}: expected name:dataset[,dataset...]")
+        if name in RESERVED_IDENTITY_NAMES:
+            _note_refused_name(name, ACLS_ENV, "ACL entry")
+            continue
         grants: dict[str, str] = {}
         for token in datasets_raw.split(","):
             token = token.strip()
@@ -254,8 +339,8 @@ def registry_configured() -> bool:
     a restart; leaving both unset keeps the single-key behaviour
     byte-identical.
 
-    D21: a fully configured OIDC resolver (``RAG_OIDC_ENABLED`` +
-    ``RAG_OIDC_ISSUER``) counts as configured too — a JWT-only deployment
+    D21: a fully configured OIDC resolver (``OIDC_ENABLED`` +
+    ``OIDC_ISSUER``) counts as configured too — a JWT-only deployment
     must resolve identities (the D20 anonymous branch must NOT engage there),
     and once this returns True JWTs resolve through oidc_identity below.
 
@@ -558,6 +643,73 @@ def created_by_dataset(dataset_name: str) -> "str | None":
     return None
 
 
+def _identity_name(identity: "Identity | None") -> str:
+    """The caller's registry name, stripped ("" for admin / None)."""
+    return str(getattr(identity, "name", "") or "").strip()
+
+
+_CREATOR_UNSET: Any = object()
+
+
+def identity_owns_dataset(
+    identity: "Identity | None",
+    dataset_name: str,
+    creator: Any = _CREATOR_UNSET,
+) -> bool:
+    """D27/S1: may *identity* claim OWNERSHIP of *dataset_name*?
+
+    The single ownership primitive (stmem/INTERFACE-FREEZE.md section 2h).
+    True only when ALL of these hold:
+
+    * the identity is a non-admin CLIENT with a non-empty name;
+    * that name is NOT one of :data:`RESERVED_IDENTITY_NAMES`;
+    * the dataset's ``created_by`` stamp is set and is NOT reserved;
+    * the two are EXACTLY equal.
+
+    WHY THE SENTINEL REFUSALS LIVE HERE, not only in the D23 gate:
+    "admin" and "anonymous" are the VALUES the creator stamp writes when no
+    per-user identity is behind a create, so a client NAMED "admin" compares
+    equal to the stamp on every admin-created dataset.  A caller that
+    re-implemented this comparison (or a future ownership-as-access-source
+    check) would re-open that hole; refusing the sentinels on BOTH sides of
+    the comparison makes the primitive safe to hand to any caller, and the
+    reserved-name parse refusal keeps such a name from existing at all
+    (defence in depth - either layer alone closes it).
+
+    FAIL-CLOSED throughout: a missing / corrupt / unstamped meta (pre-D23)
+    yields ``created_by_dataset`` == None, which matches nothing, so a
+    pre-D23 dataset grants ownership to NOBODY.  Admins are handled by their
+    own gate and are NOT owners here (``False``) - an admin passes the
+    owner-or-admin check as an ADMIN, never by claiming a dataset.
+
+    Case-sensitive, mirroring the D23 comparison (``caller == creator``) and
+    the reserved-name matching: "Admin" is a different name from the "admin"
+    stamp and can never collide with it.
+
+    *creator* lets the CALLER supply the stamp it already read (a
+    DatasetManager holds one, and a caller that reads it once should not
+    pay a second read here).  Omit it and the meta is read from disk
+    through :func:`created_by_dataset`.  An explicit ``None`` means "the
+    caller read it and there is no stamp" (pre-D23) and is honoured as
+    such, which is why the default is a sentinel rather than ``None``:
+    "not supplied" and "supplied as absent" are different answers, and
+    conflating them would either re-read a disk the caller already read or
+    grant ownership on a stamp nobody proved.
+    """
+    if identity is None or getattr(identity, "is_admin", False):
+        return False
+    caller = _identity_name(identity)
+    if not caller or caller in RESERVED_IDENTITY_NAMES:
+        return False
+    if creator is _CREATOR_UNSET:
+        stamp = created_by_dataset(dataset_name)
+    else:
+        stamp = str(creator).strip() if creator else None
+    if not stamp or stamp in RESERVED_IDENTITY_NAMES:
+        return False
+    return caller == stamp
+
+
 def dataset_allowed(identity: "Identity | None", dataset_name: str) -> bool:
     """May *identity* touch *dataset_name*?
 
@@ -568,11 +720,22 @@ def dataset_allowed(identity: "Identity | None", dataset_name: str) -> bool:
     NOTE (2026-10): the public-dataset flag is NOT a grant — it is
     availability (password-free self-selection, enforced in access_store),
     so it deliberately does not appear here.
+
+    D27 (D2): OWNERSHIP is an access source.  The creator of a dataset can
+    read the dataset they made — without it a user could create one and
+    then be unable to open it (the reported D2 defect).  This branch lives
+    in the REGISTRY predicate as well as the store one on purpose: with
+    RAG_ACCESS_STORE off, access_store.dataset_allowed delegates straight
+    here, so a store-only change would grant ownership on store-enabled
+    deployments only.  The gate itself is :func:`identity_owns_dataset`,
+    which refuses the reserved sentinels and pre-D23 (unstamped) datasets.
     """
     if identity is None or identity.is_admin:
         return True
     datasets = identity.datasets or frozenset()
-    return dataset_name in datasets or ALL_DATASETS in datasets
+    if dataset_name in datasets or ALL_DATASETS in datasets:
+        return True
+    return identity_owns_dataset(identity, dataset_name)
 
 
 def require_dataset_access(identity: "Identity | None", dataset_name: str) -> None:

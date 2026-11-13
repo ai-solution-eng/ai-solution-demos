@@ -1,4 +1,12 @@
 {{- if .Values.networkPolicy.enabled }}
+# Render guard (the promise in values.yaml networkPolicy.probeCidrs): 0.0.0.0/0
+# with an EMPTY probeExceptCidrs would admit every source on the probe ports —
+# a hollow posture — so the render FAILS instead of shipping it.
+{{- range .Values.networkPolicy.probeCidrs }}
+{{- if and (eq (toString .) "0.0.0.0/0") (not $.Values.networkPolicy.probeExceptCidrs) }}
+{{- fail (printf "networkPolicy.probeCidrs contains 0.0.0.0/0 with an empty probeExceptCidrs — that admits ALL sources on the probe ports (hollow posture). Carve the pod CIDR back out with probeExceptCidrs, or drop 0.0.0.0/0.") }}
+{{- end }}
+{{- end }}
 # NetworkPolicy — the MCP network zone. ADDITIVE and OFF by default
 # (networkPolicy.enabled, default false): the DEFAULT render is byte-identical
 # to the baseline. Once enabled, this policy DEFAULT-DENIES all ingress to the
@@ -30,8 +38,8 @@
 # pod/namespace selector can match them, so the probe relief is an ipBlock
 # allowance (probeCidrs) with the pod CIDR carved back out
 # (probeExceptCidrs) so cross-namespace pod traffic stays governed by the
-# rules above. NEVER 0.0.0.0/0 with an empty probeExceptCidrs — harden that
-# in your values before enabling (hollow posture).
+# rules above. NEVER 0.0.0.0/0 with an empty probeExceptCidrs — the render now
+# FAILS on that combination (guard at the top of this file), it cannot ship.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

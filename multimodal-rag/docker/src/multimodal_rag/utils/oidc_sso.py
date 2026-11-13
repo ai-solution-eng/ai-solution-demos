@@ -12,6 +12,13 @@ so SSO sessions flow through the identical fail-closed registry resolution
 (same identity as the user's minted key, same zero-dataset default, never
 admin).
 
+Env-var prefix: the canonical names are app-agnostic (``OIDC_SSO_*``).
+A deployment may prefix them with ``PCAI_OIDC_ENV_PREFIX`` (read at import
+time — the SAME switch ``oidc_identity`` honours), so
+``PCAI_OIDC_ENV_PREFIX=SQLHANDLER`` gives ``SQLHANDLER_OIDC_SSO_*`` and
+``SQLHANDLER_OIDC_ISSUER``.  The pre-rename ``RAG_OIDC_SSO_*`` names are
+still read as a deprecated alias (one warning per name).
+
 Design notes:
 
 * **Stateless across replicas**: the CSRF ``state`` rides a short-lived
@@ -29,9 +36,9 @@ Design notes:
 * **No token material in logs or pages**: the cookie is HttpOnly (page JS
   never sees it), errors are reason-coded, and the whoami endpoint reports
   identity/datasets only.
-* **Inert by default**: without ``RAG_OIDC_SSO_ENABLED`` + client secret +
-  the D21 issuer, every route 404s and no cookie is ever accepted — the
-  deployment is byte-identical to pre-D22.
+* **Inert by default**: without ``{PREFIX}_OIDC_SSO_ENABLED`` + client secret +
+  the D21 issuer (``{PREFIX}_OIDC_ISSUER``), every route 404s and no cookie is
+  ever accepted — the deployment is byte-identical to pre-D22.
 
 Shared from pcai_utils (hardlink mesh — identical bytes in every consumer); stdlib-only; it never logs token material.
 """
@@ -74,18 +81,37 @@ def _sibling(mod_name: str):
     return _importlib.import_module(mod_name)
 
 
-ENABLED_ENV = "RAG_OIDC_SSO_ENABLED"
-CLIENT_ID_ENV = "RAG_OIDC_SSO_CLIENT_ID"
-CLIENT_SECRET_ENV = "RAG_OIDC_SSO_CLIENT_SECRET"
-REDIRECT_URI_ENV = "RAG_OIDC_SSO_REDIRECT_URI"
-PROVIDER_URL_ENV = "RAG_OIDC_SSO_PROVIDER_URL"
-AUTHZ_ENDPOINT_ENV = "RAG_OIDC_SSO_AUTHORIZATION_ENDPOINT"
-TOKEN_ENDPOINT_ENV = "RAG_OIDC_SSO_TOKEN_ENDPOINT"
-SCOPES_ENV = "RAG_OIDC_SSO_SCOPES"
-COOKIE_NAME_ENV = "RAG_OIDC_SSO_COOKIE_NAME"
-COOKIE_MAX_AGE_ENV = "RAG_OIDC_SSO_COOKIE_MAX_AGE"
-COOKIE_SECURE_ENV = "RAG_OIDC_SSO_COOKIE_SECURE"
-FETCH_TIMEOUT_ENV = "RAG_OIDC_SSO_FETCH_TIMEOUT_SECONDS"
+# Env-var prefix — the SAME import-time switch as oidc_identity.  EMPTY by
+# default: the names are app-agnostic (OIDC_SSO_ENABLED, ...), and the
+# pre-rename RAG_OIDC_SSO_* names stay readable as a deprecated alias (see
+# _env_str) so an old chart keeps working.  An app that wants its own
+# namespace sets PCAI_OIDC_ENV_PREFIX (SQLHANDLER gives
+# SQLHANDLER_OIDC_SSO_* and SQLHANDLER_OIDC_ISSUER).
+_ENV_PREFIX = os.environ.get("PCAI_OIDC_ENV_PREFIX", "").strip().upper()
+if _ENV_PREFIX:
+    _ENV_PREFIX += "_"
+
+
+def _env_name(suffix: str) -> str:
+    """Canonical env-var name: OIDC_X, or PREFIX_OIDC_X when a prefix is set."""
+    return f"{_ENV_PREFIX}{suffix}"
+
+
+ENABLED_ENV = _env_name("OIDC_SSO_ENABLED")
+CLIENT_ID_ENV = _env_name("OIDC_SSO_CLIENT_ID")
+CLIENT_SECRET_ENV = _env_name("OIDC_SSO_CLIENT_SECRET")  # env-var NAME (not a credential) #secret-scan:allow
+REDIRECT_URI_ENV = _env_name("OIDC_SSO_REDIRECT_URI")
+PROVIDER_URL_ENV = _env_name("OIDC_SSO_PROVIDER_URL")
+AUTHZ_ENDPOINT_ENV = _env_name("OIDC_SSO_AUTHORIZATION_ENDPOINT")
+TOKEN_ENDPOINT_ENV = _env_name("OIDC_SSO_TOKEN_ENDPOINT")  # env-var NAME (not a credential) #secret-scan:allow
+SCOPES_ENV = _env_name("OIDC_SSO_SCOPES")
+COOKIE_NAME_ENV = _env_name("OIDC_SSO_COOKIE_NAME")
+COOKIE_MAX_AGE_ENV = _env_name("OIDC_SSO_COOKIE_MAX_AGE")
+COOKIE_SECURE_ENV = _env_name("OIDC_SSO_COOKIE_SECURE")
+FETCH_TIMEOUT_ENV = _env_name("OIDC_SSO_FETCH_TIMEOUT_SECONDS")
+# The D21 resolver's issuer name (oidc_identity owns the variable; this is
+# the discovery default's read of it, kept in sync by the same prefix).
+ISSUER_ENV = _env_name("OIDC_ISSUER")
 
 DEFAULT_CLIENT_ID = "ua"
 DEFAULT_SCOPES = "openid profile email"
@@ -106,8 +132,36 @@ _DISCOVERY_NEGATIVE_TTL = 60.0
 _DISCOVERY_MAX_BYTES = 1_048_576
 
 
+# Pre-rename env namespace: READ-ONLY aliases, never written or advertised.
+_LEGACY_PREFIX = "RAG_"
+_legacy_warned: set[str] = set()
+_legacy_lock = threading.Lock()
+
+
+def _warn_legacy(name: str) -> None:
+    """One-shot deprecation notice per legacy env name (never per request)."""
+    with _legacy_lock:
+        if name in _legacy_warned:
+            return
+        _legacy_warned.add(name)
+    logger.warning(
+        "OIDC env %s is deprecated — use %s (the fleet-wide name); the RAG_ alias is transitional",
+        name,
+        name[len(_LEGACY_PREFIX) :],
+    )
+
+
 def _env_str(name: str) -> str:
-    return os.environ.get(name, "").strip()
+    value = os.environ.get(name, "").strip()
+    if value:
+        return value
+    if not _ENV_PREFIX:
+        legacy = _LEGACY_PREFIX + name
+        value = os.environ.get(legacy, "").strip()
+        if value:
+            _warn_legacy(legacy)
+            return value
+    return ""
 
 
 def _env_float(name: str, default: float) -> float:
@@ -173,7 +227,7 @@ def sso_enabled() -> bool:
 def warn_if_misconfigured(server_label: str) -> bool:
     """Loud one-shot startup warning: the flag is set but SSO is unusable.
 
-    Returns True when ``RAG_OIDC_SSO_ENABLED`` is set without the rest of
+    Returns True when ``OIDC_SSO_ENABLED`` is set without the rest of
     the configuration (mirrors ``oidc_identity.warn_if_misconfigured``).
     """
     if not _flag_set() or sso_enabled():
@@ -186,7 +240,7 @@ def warn_if_misconfigured(server_label: str) -> bool:
     if not redirect_uri():
         missing.append(REDIRECT_URI_ENV)
     if not oidc_identity.oidc_enabled():
-        missing.append("RAG_OIDC_ISSUER (the D21 resolver verifies the tokens)")
+        missing.append(f"{ISSUER_ENV} (the D21 resolver verifies the tokens)")
     line = "=" * 72
     print(line)
     print(f"WARNING: {ENABLED_ENV} is set but SSO is INERT — missing: {', '.join(missing)}")
@@ -206,7 +260,7 @@ def _provider_url() -> str:
     if explicit:
         return explicit
 
-    issuer = _env_str("RAG_OIDC_ISSUER")
+    issuer = _env_str(ISSUER_ENV)
     return f"{issuer.rstrip('/')}/.well-known/openid-configuration" if issuer else ""
 
 
@@ -433,6 +487,8 @@ def state_matches(cookie_state: str, query_state: str) -> bool:
 def safe_next_path(raw: str) -> str:
     """Only same-site absolute paths may be a post-login redirect target
     (an open redirect would launder the auth code).  Everything else → /."""
+    if not raw or not raw.isprintable():
+        return "/"
     if raw.startswith("/") and not raw.startswith("//") and "\\" not in raw:
         return raw
     return "/"

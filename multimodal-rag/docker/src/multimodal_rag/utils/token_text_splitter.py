@@ -1,7 +1,8 @@
 import importlib
 import os
+import threading
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from .logging_utils import logging
 
@@ -196,14 +197,33 @@ class TokenTextSplitter:
 # -----------------------------------------------------------------------
 
 
+# Loaded Tokenizer OBJECTS, keyed by path.  ``_TOKENIZER_CACHE`` below memoises
+# only the resolved PATH; parsing the (multi-MB) tokenizer.json is the expensive
+# part, and it was redone on every construction.  That matters on the ingest
+# path: DatasetManager._splitter_for builds a TokenTextSplitter per structured
+# file when a per-dataset chunk override is set, so a 500-file code ingest paid
+# 500 full parses.  The object is immutable and thread-safe (the Rust binding
+# releases the GIL), so one shared instance per path is correct.
+_TOKENIZER_OBJ_CACHE: dict[str, Any] = {}
+_TOKENIZER_OBJ_LOCK = threading.Lock()
+
+
 def _load_tokenizer(path: str):
-    """Import ``tokenizers`` and load the tokenizer file."""
+    """Import ``tokenizers`` and load (memoised) the tokenizer file."""
+    key = str(path)
+    with _TOKENIZER_OBJ_LOCK:
+        cached = _TOKENIZER_OBJ_CACHE.get(key)
+    if cached is not None:
+        return cached
     try:
         mod = importlib.import_module("tokenizers")
-        return mod.Tokenizer.from_file(path)
+        tok = mod.Tokenizer.from_file(path)
     except Exception as exc:
         logger.warning("Failed to load tokenizer from %s: %s", path, exc)
         raise
+    with _TOKENIZER_OBJ_LOCK:
+        # First writer wins; a concurrent duplicate parse is harmless.
+        return _TOKENIZER_OBJ_CACHE.setdefault(key, tok)
 
 
 _TOKENIZER_CACHE: dict[str, Path | None] = {}

@@ -19,11 +19,15 @@ version: 0.6.3
 licence: MIT
 """
 
+import asyncio
 import base64
 import hashlib
 import hmac
 import logging
 import re
+import threading
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -31,6 +35,124 @@ import httpx2
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+
+# ── Shared HTTP client (P3-10) ─────────────────────────────────────────────
+# Every call used to build a fresh httpx2.AsyncClient, so each chat turn paid a
+# new TCP(+TLS) handshake on the hot path (memory recall, SQL-lesson recall,
+# staging, distill, store).  One process-wide client keeps one connection pool;
+# the per-call timeout/follow_redirects knobs are re-applied by _SharedClient.
+# Built LAZILY: importing this module stays side-effect free, and a client that
+# cannot be built fails inside the caller's try/except (fail-open, as before).
+_HTTP_CLIENT: httpx2.AsyncClient | None = None
+_HTTP_CLIENT_LOOP: Any = None
+_HTTP_CLIENT_LOCK = threading.Lock()
+_HTTP_CLIENT_DEFAULT_TIMEOUT = 30.0
+
+# Fail-open is right (no memories injected), but a SILENT fail-open is
+# indistinguishable from "nothing remembered": a stuck RAG API looked exactly
+# like an empty memory store.  The user is told ONCE per process (P3-10).
+_MEMORY_RECALL_UNAVAILABLE_SIGNALLED = False
+
+
+def _current_loop() -> Any:
+    """The running event loop, or None when called outside one."""
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+
+
+def _discard_stale_client(client: httpx2.AsyncClient, loop: Any) -> None:
+    """Best-effort close of a client whose pool is bound to another loop.
+
+    It cannot be awaited from THIS loop, so the close is scheduled on its own
+    loop when that loop is still running, and the coroutine is otherwise
+    discarded un-awaited.  Losing the pool is the point: it is unusable here.
+    """
+    try:
+        coroutine = client.aclose()
+    except Exception:
+        logger.debug("stale client close failed", exc_info=True)
+        return
+    try:
+        if loop is not None and not loop.is_closed() and loop.is_running():
+            asyncio.run_coroutine_threadsafe(coroutine, loop)
+            return
+    except Exception:
+        logger.debug("could not schedule the stale client close", exc_info=True)
+    try:
+        coroutine.close()
+    except Exception:
+        logger.debug("could not discard the stale client close", exc_info=True)
+
+
+def _shared_http_client() -> httpx2.AsyncClient:
+    """Return the process-wide AsyncClient, bound to the CURRENT event loop.
+
+    One client keeps one connection pool (P3-10).  A pool binds to the event
+    loop that first serves a request, so the creating loop is recorded: a host
+    that drives these coroutines from a second loop would otherwise fail
+    "attached to a different loop" on every pooled request, and the fail-open
+    path would hide it after the first warning.  A loop mismatch rebuilds the
+    client under the lock and discards the stale pool best-effort.
+    """
+    global _HTTP_CLIENT, _HTTP_CLIENT_LOOP
+    loop = _current_loop()
+    client = _HTTP_CLIENT
+    if client is not None and not client.is_closed and _HTTP_CLIENT_LOOP is loop:
+        return client
+    with _HTTP_CLIENT_LOCK:
+        if _HTTP_CLIENT is not None and not _HTTP_CLIENT.is_closed and _HTTP_CLIENT_LOOP is loop:
+            return _HTTP_CLIENT
+        stale, stale_loop = _HTTP_CLIENT, _HTTP_CLIENT_LOOP
+        _HTTP_CLIENT = httpx2.AsyncClient(timeout=_HTTP_CLIENT_DEFAULT_TIMEOUT)
+        _HTTP_CLIENT_LOOP = loop
+    if stale is not None and not stale.is_closed:
+        _discard_stale_client(stale, stale_loop)
+    return _HTTP_CLIENT
+
+
+async def close_shared_http_client() -> None:
+    """Close the shared client (tests and process shutdown)."""
+    global _HTTP_CLIENT, _HTTP_CLIENT_LOOP
+    client = _HTTP_CLIENT
+    _HTTP_CLIENT = None
+    _HTTP_CLIENT_LOOP = None
+    if client is not None and not client.is_closed:
+        await client.aclose()
+
+
+class _ClientView:
+    """Per-call view of the shared client: re-applies that call's own knobs.
+
+    Keeps every call site's shape and per-call timeout while the process keeps
+    ONE connection pool.  The shared client itself is never closed here.
+    """
+
+    __slots__ = ("_follow_redirects", "_timeout")
+
+    def __init__(self, timeout: float, follow_redirects: bool) -> None:
+        self._timeout = timeout
+        self._follow_redirects = follow_redirects
+
+    def _kwargs(self, kwargs: dict) -> dict:
+        kwargs.setdefault("timeout", self._timeout)
+        if self._follow_redirects:
+            kwargs.setdefault("follow_redirects", True)
+        return kwargs
+
+    async def get(self, url: str, **kwargs: Any) -> Any:
+        return await _shared_http_client().get(url, **self._kwargs(kwargs))
+
+    async def post(self, url: str, **kwargs: Any) -> Any:
+        return await _shared_http_client().post(url, **self._kwargs(kwargs))
+
+
+@asynccontextmanager
+async def _shared_client(timeout: float = 30.0, follow_redirects: bool = False) -> AsyncIterator[_ClientView]:
+    """Yield a per-call view over the process-wide client (never closes it)."""
+    yield _ClientView(timeout, follow_redirects)
+
 
 # ── Module-level flag ──────────────────────────────────────────────────────
 # Take full control of file processing so we can route multimodal files
@@ -136,12 +258,11 @@ def _mime_from_data_url(url: str) -> Optional[str]:
 
 
 class Filter:
-
     class Valves(BaseModel):
         # -- RAG API connection --------------------------------------------
         RAG_API_URL: str = Field(
             default="http://rag-mcp-server-api.mm-rag-mcp.svc.cluster.local",
-            description="Base URL of the Multimodal RAG API server " "(used for the staging endpoint)",
+            description="Base URL of the Multimodal RAG API server (used for the staging endpoint)",
         )
         RAG_API_KEY: str = Field(
             default="",
@@ -195,23 +316,22 @@ class Filter:
         )
         STAGING_PATH: str = Field(
             default="/api/staging",
-            description="Path on the RAG API server used to stage " "uploaded media for the MCP tool",
+            description="Path on the RAG API server used to stage uploaded media for the MCP tool",
         )
         MCP_TOOL_HINT: str = Field(
             default=(
                 "The user attached media. The following MCP tools are "
                 "available — choose the right one based on what the user "
                 "is asking for:\n\n"
-                "1. `describe_media` — Call this when the user wants you "
+                "1. `inspect_media` — Call this when the user wants you "
                 "to DESCRIBE or ANALYSE the uploaded media itself (e.g. "
-                '"what\'s in this image?", "describe this video"). Pass '
-                "the media URL from the list below as `media_url`. No "
-                "dataset needed. Returns a VLM description + markdown.\n\n"
-                "2. `transcribe_audio` — Call this when the user wants a "
-                "TRANSCRIPTION of uploaded audio (e.g. \"what's said in "
-                'this recording?"). Pass the audio URL as `audio_url`. '
-                "No dataset needed. Returns the transcript text.\n\n"
-                "3. `search_dataset` — Call this when the user wants to "
+                '"what\'s in this image?", "describe this video", "what\'s '
+                'said in this recording?"). Pass the media URL from the list '
+                'below as `media_url` (add `media_type="audio"` for an '
+                "audio file whose URL has no audio extension). No dataset "
+                "needed. Returns a VLM description + markdown for images and "
+                "videos, or an ASR transcript for audio.\n\n"
+                "2. `search_dataset` — Call this when the user wants to "
                 'FIND SIMILAR content in a dataset (e.g. "find images '
                 'like this", "search for related documents"). Pass the '
                 "dataset name and the matching media URL from the list "
@@ -239,22 +359,22 @@ class Filter:
                 "find relevant content; only use `get_dataset_files` "
                 "with a specific `file_path` to read an individual file."
             ),
-            description="Header prepended to the staged-media hint " "injected into the LLM context",
+            description="Header prepended to the staged-media hint injected into the LLM context",
         )
         # -- Context injection ---------------------------------------------
         INJECT_AS_SYSTEM: bool = Field(
             default=True,
-            description="Inject context as a system message " "(False = prepend to user message)",
+            description="Inject context as a system message (False = prepend to user message)",
         )
         MAX_CONTEXT_CHARS: int = Field(
             default=4000,
             ge=100,
             le=64000,
-            description="Max characters of injected context " "(hint + text file contents)",
+            description="Max characters of injected context (hint + text file contents)",
         )
         CONTEXT_HEADER: str = Field(
             default="Context accompanying the user's uploaded file(s):",
-            description="Header before injected context " "(hint block, text file contents, file references)",
+            description="Header before injected context (hint block, text file contents, file references)",
         )
         # -- Advanced ------------------------------------------------------
         PRIORITY: int = Field(
@@ -308,7 +428,7 @@ class Filter:
             default=5,
             ge=1,
             le=20,
-            description="Number of memories to recall and inject at conversation " "start.",
+            description="Number of memories to recall and inject at conversation start.",
         )
         MEMORY_RECALL_FIRST_ONLY: bool = Field(
             default=True,
@@ -317,8 +437,7 @@ class Filter:
         )
         MEMORY_INJECT_AS_SYSTEM: bool = Field(
             default=True,
-            description="Inject recalled memories as a system message (True) "
-            "or prepend to the user message (False).",
+            description="Inject recalled memories as a system message (True) or prepend to the user message (False).",
         )
         # -- Distillation LLM (for LLM-curated memory writes) ---------------
         DISTILL_LLM_URL: str = Field(
@@ -367,8 +486,7 @@ class Filter:
             default=3,
             ge=1,
             le=10,
-            description="Number of curated SQL lessons to recall and inject "
-            "at inlet.",
+            description="Number of curated SQL lessons to recall and inject at inlet.",
         )
         SQL_LESSONS_INJECT_AS_SYSTEM: bool = Field(
             default=True,
@@ -413,6 +531,7 @@ class Filter:
         self.valves = self.Valves()
         self.toggle = False
         self.icon = "🧩"
+        self._recall_unavailable = False
 
     # ── helpers ───────────────────────────────────────────────────────────
 
@@ -454,7 +573,7 @@ class Filter:
 
     @staticmethod
     async def _emit_status(
-        emitter: Optional[callable],
+        emitter: Any,
         description: str,
         status: str = "in_progress",
         done: bool = False,
@@ -491,7 +610,7 @@ class Filter:
             return None
         full_url = f"{base}{url}" if url.startswith("/") else url
         try:
-            async with httpx2.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+            async with _shared_client(timeout=60.0, follow_redirects=True) as client:
                 resp = await client.get(full_url)
                 resp.raise_for_status()
                 return resp.content
@@ -561,7 +680,7 @@ class Filter:
         api = self.valves.RAG_API_URL.rstrip("/")
         url = f"{api}{self.valves.STAGING_PATH}"
         try:
-            async with httpx2.AsyncClient(timeout=120.0) as client:
+            async with _shared_client(timeout=120.0) as client:
                 files = {"file": (filename, data, mime or "application/octet-stream")}
                 resp = await client.post(url, files=files, headers=self._rag_api_headers())
                 resp.raise_for_status()
@@ -584,7 +703,7 @@ class Filter:
         api = self.valves.RAG_API_URL.rstrip("/")
         url = f"{api}/api/datasets"
         try:
-            async with httpx2.AsyncClient(timeout=15.0) as client:
+            async with _shared_client(timeout=15.0) as client:
                 resp = await client.get(url, headers=self._rag_api_headers())
                 resp.raise_for_status()
                 return resp.json().get("datasets")
@@ -672,7 +791,7 @@ class Filter:
         user_pw = self._memory_password_for_user(user)
         # Check existence first to avoid creating duplicates / noisy logs.
         try:
-            async with httpx2.AsyncClient(timeout=15.0) as client:
+            async with _shared_client(timeout=15.0) as client:
                 resp = await client.get(
                     f"{api}/api/datasets/{dataset_name}",
                     headers=self._rag_api_headers(self._memory_headers(user)),
@@ -683,7 +802,7 @@ class Filter:
             logger.debug("dataset existence check failed", exc_info=True)
         # Create it.
         try:
-            async with httpx2.AsyncClient(timeout=30.0) as client:
+            async with _shared_client(timeout=30.0) as client:
                 resp = await client.post(
                     f"{api}/api/datasets",
                     json={
@@ -723,12 +842,13 @@ class Filter:
         url = f"{api}/api/datasets/{dataset_name}/search"
         params = {"q": query[:500], "top_k": self.valves.MEMORY_RECALL_TOP_K}
         try:
-            async with httpx2.AsyncClient(timeout=30.0) as client:
+            async with _shared_client(timeout=30.0) as client:
                 resp = await client.get(url, params=params, headers=self._rag_api_headers(self._memory_headers(user)))
                 resp.raise_for_status()
                 results = resp.json().get("results", [])
         except Exception:
             logger.warning("Memory recall failed", exc_info=True)
+            self._recall_unavailable = True
             return ""
         if not results:
             return ""
@@ -741,6 +861,19 @@ class Filter:
         context = "\n\n".join(lines)
         logger.info("Memory recall: %d hit(s) for query '%.40s…'", len(results), query)
         return context
+
+    async def _signal_recall_unavailable(self, emitter: Any = None) -> None:
+        """Tell the user ONCE per process that long-term memory recall is down."""
+        global _MEMORY_RECALL_UNAVAILABLE_SIGNALLED
+        if _MEMORY_RECALL_UNAVAILABLE_SIGNALLED:
+            return
+        _MEMORY_RECALL_UNAVAILABLE_SIGNALLED = True
+        logger.warning("Long-term memory recall unavailable — signalling the user once")
+        await self._emit_status(
+            emitter,
+            "Long-term memory recall unavailable (the RAG API did not answer) — continuing without memories.",
+            status="error",
+        )
 
     def _inject_memory_context(self, messages: list[dict], context: str) -> None:
         """Inject recalled memory context as a system or user-prefix message."""
@@ -775,7 +908,7 @@ class Filter:
         if self.valves.SQL_LESSONS_PASSWORD:
             headers["X-Dataset-Password"] = self.valves.SQL_LESSONS_PASSWORD
         try:
-            async with httpx2.AsyncClient(timeout=30.0) as client:
+            async with _shared_client(timeout=30.0) as client:
                 resp = await client.get(url, params=params, headers=headers)
                 resp.raise_for_status()
                 results = resp.json().get("results", [])
@@ -885,7 +1018,7 @@ class Filter:
             "temperature": 0.1,
         }
         try:
-            async with httpx2.AsyncClient(timeout=60.0) as client:
+            async with _shared_client(timeout=60.0) as client:
                 resp = await client.post(url, json=payload, headers=headers)
                 resp.raise_for_status()
                 raw = resp.json()["choices"][0]["message"]["content"].strip()
@@ -928,7 +1061,7 @@ class Filter:
                 "source": "openwebui:sql-lesson",
             }
             try:
-                async with httpx2.AsyncClient(timeout=60.0) as client:
+                async with _shared_client(timeout=60.0) as client:
                     resp = await client.post(store_url, json=[doc], headers=headers)
                     resp.raise_for_status()
                 stored += 1
@@ -990,7 +1123,7 @@ class Filter:
             "temperature": 0.1,
         }
         try:
-            async with httpx2.AsyncClient(timeout=30.0) as client:
+            async with _shared_client(timeout=30.0) as client:
                 resp = await client.post(url, json=payload, headers=headers)
                 resp.raise_for_status()
                 memory = resp.json()["choices"][0]["message"]["content"].strip()
@@ -1017,8 +1150,10 @@ class Filter:
             "memory_ts": datetime.now(timezone.utc).isoformat(),
         }
         try:
-            async with httpx2.AsyncClient(timeout=60.0) as client:
-                resp = await client.post(store_url, json=[doc], headers=self._rag_api_headers(self._memory_headers(user)))
+            async with _shared_client(timeout=60.0) as client:
+                resp = await client.post(
+                    store_url, json=[doc], headers=self._rag_api_headers(self._memory_headers(user))
+                )
                 resp.raise_for_status()
         except Exception:
             logger.warning("Memory store failed", exc_info=True)
@@ -1093,9 +1228,9 @@ class Filter:
             f"{modalities_block}\n\n"
             f"Staged media (use these EXACT URLs — do NOT modify them "
             f"or construct your own) — pass the relevant URL to the "
-            f"`media_url` / `audio_url` parameter of `describe_media` / "
-            f"`transcribe_audio`, or the matching `image` / `video` / "
-            f"`audio` parameter of `search_dataset`:\n"
+            f"`media_url` parameter of `inspect_media` (with "
+            f'`media_type="audio"` for audio), or the matching `image` / '
+            f"`video` / `audio` parameter of `search_dataset`:\n"
             f"{media_block}"
         )
 
@@ -1143,9 +1278,7 @@ class Filter:
     # media URL the model printed against those and substitutes the exact
     # one — deterministic "copy and paste" independent of model behaviour.
 
-    _MEDIA_URL_RE = re.compile(
-        r"https?://[^\s\"'<>\)\]\}]+/api/datasets/[^/\s]+/files/[^\s\"'<>\)\]\}]+"
-    )
+    _MEDIA_URL_RE = re.compile(r"https?://[^\s\"'<>\)\]\}]+/api/datasets/[^/\s]+/files/[^\s\"'<>\)\]\}]+")
 
     @classmethod
     def _collect_correct_media_urls(cls, messages: list[dict]) -> dict[str, str]:
@@ -1157,9 +1290,7 @@ class Filter:
             content = msg.get("content", "")
             if isinstance(content, list):
                 content = "\n".join(
-                    p.get("text", "")
-                    for p in content
-                    if isinstance(p, dict) and isinstance(p.get("text", ""), str)
+                    p.get("text", "") for p in content if isinstance(p, dict) and isinstance(p.get("text", ""), str)
                 )
             if not isinstance(content, str):
                 continue
@@ -1249,7 +1380,7 @@ class Filter:
         __user__: Optional[dict] = None,
         __model__: Optional[dict] = None,
         __files__: Optional[list] = None,
-        __event_emitter__: Optional[callable] = None,
+        __event_emitter__: Any = None,
         __request__: Optional[Any] = None,
         **kwargs,
     ) -> dict:
@@ -1279,7 +1410,10 @@ class Filter:
             if memory_ds:
                 should_recall = not self.valves.MEMORY_RECALL_FIRST_ONLY or self._is_first_user_message(messages)
                 if should_recall and user_text:
+                    self._recall_unavailable = False
                     memory_ctx = await self._recall_memory(memory_ds, __user__, user_text)
+                    if self._recall_unavailable:
+                        await self._signal_recall_unavailable(__event_emitter__)
                     if memory_ctx:
                         self._inject_memory_context(messages, memory_ctx)
 
@@ -1470,7 +1604,9 @@ class Filter:
             # no base64 reaches the LLM. Non-routable inline media
             # (ROUTE_*=False) is preserved.
             parts_to_remove = [
-                m["part"] for m in inline_media if m.get("part") is not None and self._is_routable(m.get("modality"))
+                m["part"]
+                for m in inline_media
+                if m.get("part") is not None and self._is_routable(str(m.get("modality") or ""))
             ]
             if parts_to_remove and isinstance(content, list):
                 remaining_text = self._extract_user_text(content)
@@ -1537,7 +1673,7 @@ class Filter:
             elif reinject_parts:
                 await self._emit_status(
                     __event_emitter__,
-                    f"{len(reinject_parts)} media file(s) kept in context " "(vision LLM, no MCP staging)",
+                    f"{len(reinject_parts)} media file(s) kept in context (vision LLM, no MCP staging)",
                     status="success",
                     done=True,
                 )
