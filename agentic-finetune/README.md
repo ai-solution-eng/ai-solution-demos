@@ -9,6 +9,8 @@
 
 *PCAI Deployment Owner: who helped to port the demo to PCAI. Can be contacted on deployment issues*
 
+For a non-agentic finetuning on PCAI demo, refer to this [repo]() on Fine-Tune Tool-Calling LLM on PCAI with NVIDIA NeMo Microservices 25.12.1 & Nemo Studio.
+
 ## Abstract
 
 Fine-tuning has become a routine production workflow, but the engineer's day-to-day still involves a manual chain of dataset preparation, YAML config authoring, `kubectl` invocations, log tailing, evaluation, merge/export, and model registration. Most of that work is mechanical coordination, not judgment. This demo replaces that chain with a single conversational interface: an agent in Open-WebUI exposes **19 MCP tools** that wrap LlamaFactory, MinIO, and MLIS, and drive Kubernetes Jobs on PCAI.
