@@ -39,6 +39,7 @@ It contains the following demos:
 | [Molecular Aligned Multi-Modal Architecture and Language (Biomed-MAMMAL)](vertical-demos/biomed-mammal) | A **BentoML** inference service for a **biomedical foundation model** which achieves state-of-the-art results over a variety of tasks across the entire **drug discovery** pipeline and diverse **biomedical domains**. | - |
 | [Blood Vessel Geometry Analysis and Reconstruction](vertical-demos/blood-vessel-geometry-analysis-and-reconstruction)              | A streamlit application relying on **NVIDIA Vista 3D model** (deployed using **MLIS**) to analyze, reconstruct and render vessels in 3D. | [link](https://storage.googleapis.com/ai-solution-engineering-videos/public/Enhancing%20Healthcare%20with%20AI_%20Blood%20Vessel%20Analysis%20and%203D%20Reconstruction(1).mp4) |
 | [Defence Ops](vertical-demos/defence-ops)                          | A web application leveraging a VLM (deployed using **MLIS**)to analyze videos, with preloaded defence-related ones provided for example.             | [link](https://storage.googleapis.com/ai-solution-engineering-videos/public/DefenceOps.mp4) |
+| [Donna - Private Legal AI Assistant](vertical-demos/donna-legal-ai-assistant)                          | On-cluster, cited RAG + Qwen3-VL multimodal retrieval for **legal** documents on PCAI — **a private alternative to SaaS legal AI**.             | - |
 | [Genome Sequencing](vertical-demos/genome-sequencing)                | **Notebooks** leveraging **NVIDIA Parabricks** for genome sequencing.           | - |
 | [Hospital Visit Summary](vertical-demos/hospital-visit-summary)                      | A **streamlit application** that can display patient information regarding their previous visits from a database, and summarize it. Requires deploying an LLM using **MLIS**.| [link](https://storage.googleapis.com/ai-solution-engineering-videos/public/PatientVisitSummariesApp.mp4) |
 | [Lawfirm Co](vertical-demos/lawfirm-co)                        | An application using RAG and video analytics in the context of legal documents analysis. Requires deploying a VLM and embedding model using **MLIS**.          | - |
@@ -75,20 +76,11 @@ It contains the following demos:
 | -------------------------------------|----------------------------|-----------------|
 | [AI Support Assistant](archived-demos/ai-support-assistant)                          | A mock support application relying on **Open WebUI** built-in RAG capabilities and **Airflow**. Relies on **Ollama** for model deployment.             | - |
 | [Coding Assistant](archived-demos/coding-assistant)                          | A setup using **MLIS** for model deployment, **Open WebUI** to define a custom pipeline using that model, and the **VScode extension Continue.dev** using that pipeline to act as code assistant.            | [link](https://storage.googleapis.com/ai-solution-engineering-videos/public/AI-coding-assistant.mp4) |
+| [Finetune Tool Calling LLM](archived-demos/finetune-tool-calling-llm)                | **Notebooks**, using **Nemo microservices** to fine-tune an LLM to improve its tool-calling capabilities.           | [link](https://storage.googleapis.com/ai-solution-engineering-videos/public/Finetune_llm_tool_call_short.mp4) |
 | [Live Stream Frame Analytics](archived-demos/live-stream-frame-analytics)                      | A **Gradio application** for analyzing multiple, real-time video streams using a Vision Language Model (VLM) deployed on **MLIS**.| - |
 | [Media Database SQL RAG](archived-demos/media-database-sql-rag)                        | Helm chart to deploy **Vanna AI**, a tool that relies on an LLM to convert natural language questions into SQL queries, enabling chatting with SQL data. **MLIS** can be used to deploy the LLM.          | - |
 | [Voice Agent MagpieTTS](archived-demos/voice-agent-magpietts)                        | An older demo based on a custom **Gradio application** that connects to a chat model, parakeet-ctc-1.1b-asr for STT and magpie-tts-multilingual for TTS, all deployed on **MLIS**, to provide a conversational assitant.| [link](https://storage.googleapis.com/ai-solution-engineering-videos/public/Voice-Audio-Agent-demo.mp4) |
 | [Voice Agent Open WebUI](archived-demos/voice-agent-openwebui)                        | An **Open WebUI** setup using a chat model, Whisper for STT and Chatterbox for TTS, deployed on **MLIS**, to allow voice-to-voice chatting with the chat model, in many different languages. Includes instructions for chatting with SQL data as well.| [link](https://storage.googleapis.com/ai-solution-engineering-videos/public/multilingual_voice_demo_combined.mp4) |
-
-## Upcoming changes
-
-The following demos will be updated:
-- **Finetune Tool Calling LLM**
-
-New demos are being considered:
-- **Model Monitoring**
-- **New agentic demo**
-
 
 ## Contributions
 
