@@ -9,7 +9,7 @@
 
 *PCAI Deployment Owner: who helped to port the demo to PCAI. Can be contacted on deployment issues*
 
-For a non-agentic finetuning on PCAI demo, refer to this [repo]() on Fine-Tune Tool-Calling LLM on PCAI with NVIDIA NeMo Microservices 25.12.1 & Nemo Studio.
+For a non-agentic finetuning on PCAI demo, refer to this [repo](https://github.com/ai-solution-eng/ai-solution-demos/tree/main/archived-demos/finetune-tool-calling-llm) on Fine-Tune Tool-Calling LLM on PCAI with NVIDIA NeMo Microservices 25.12.1 & Nemo Studio.
 
 ## Abstract
 
