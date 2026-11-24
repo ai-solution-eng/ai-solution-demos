@@ -7,11 +7,24 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 import httpx
 
+try:
+    import gemmi
+except ImportError:  # optional: only needed for mmCIF -> PDB conversion
+    gemmi = None
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY", "")
 NVIDIA_BASE = "https://health.api.nvidia.com/v1/biology"
+
+# Folding NIM used for the validation stage.
+# OpenFold3 (/openfold/openfold3/predict) currently returns HTTP 500 for every
+# well-formed payload, so Boltz-2 is the default. Both are protein-complex
+# folding models; Boltz-2 does not require a pre-computed MSA.
+FOLD_NIM = os.environ.get("FOLD_NIM", "boltz2")
+BOLTZ2_PATH = "/mit/boltz2/predict"
+OPENFOLD3_PATH = "/openfold/openfold3/predict"
 
 app = FastAPI(title="Protein Binder Design")
 
@@ -63,6 +76,29 @@ async def _nvidia_post(path: str, payload: dict, timeout: int = 600):
         logger.error("NVIDIA API error %s: %s", resp.status_code, detail)
         raise HTTPException(resp.status_code, f"NVIDIA API error: {detail}")
     return resp.json()
+
+
+def _cif_to_pdb(cif_text: str) -> str:
+    """Convert an mmCIF structure to PDB text so the browser viewer keeps working."""
+    if not cif_text:
+        return ""
+    if gemmi is None:
+        logger.warning("gemmi not installed - returning mmCIF unconverted")
+        return cif_text
+    try:
+        block = gemmi.cif.read_string(cif_text).sole_block()
+        structure = gemmi.make_structure_from_block(block)
+        return structure.make_pdb_string()
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.error("mmCIF->PDB conversion failed: %s", exc)
+        return ""
+
+
+def _first(value, default=None):
+    """NIM score fields are lists (one entry per sample)."""
+    if isinstance(value, list):
+        return value[0] if value else default
+    return value if value is not None else default
 
 @app.get("/")
 async def root():
@@ -172,13 +208,77 @@ async def proteinmpnn_predict(request: Request):
 
 @app.post("/api/openfold3/predict")
 async def openfold3_predict(request: Request):
+    """Raw OpenFold3 passthrough (kept for debugging - currently HTTP 500 upstream)."""
     body = await request.json()
-    result = await _nvidia_post("/openfold/openfold3/predict", body)
+    result = await _nvidia_post(OPENFOLD3_PATH, body)
+    return result
+
+@app.post("/api/boltz2/predict")
+async def boltz2_predict(request: Request):
+    """Raw Boltz-2 passthrough."""
+    body = await request.json()
+    result = await _nvidia_post(BOLTZ2_PATH, body)
     return result
 
 @app.post("/api/validate")
 async def validate_design(request: Request):
-    """Co-fold binder + target with OpenFold3 and return structured scores."""
+    """Co-fold binder + target and return a normalised result.
+
+    Accepts {"binder_sequence": str, "target_sequence": str} and returns
+    {"structure": <PDB text>, "format": "pdb", "plddt": float, "iptm": float,
+     "ptm": float, "model": str}.
+    """
     body = await request.json()
-    result = await openfold3_predict(request)
-    return result
+    binder = (body.get("binder_sequence") or "").strip()
+    target = (body.get("target_sequence") or "").strip()
+    if not binder:
+        raise HTTPException(400, "binder_sequence is required")
+
+    if FOLD_NIM == "openfold3":
+        # Legacy path: OpenFold3 wants pre-computed MSAs per chain.
+        molecules = [{
+            "type": "protein", "sequence": binder,
+            "msa": {"unpaired": {"a3m": {"alignment": f">query\n{binder}\n", "format": "a3m"}}},
+        }]
+        if target:
+            molecules.append({
+                "type": "protein", "sequence": target,
+                "msa": {"unpaired": {"a3m": {"alignment": f">query\n{target}\n", "format": "a3m"}}},
+            })
+        raw = await _nvidia_post(OPENFOLD3_PATH, {
+            "inputs": [{"input_id": "design_0", "molecules": molecules, "output_format": "pdb"}],
+        })
+        sws = (raw.get("outputs") or [{}])[0].get("structures_with_scores") or [{}]
+        sws = sws[0] if sws else {}
+        return {
+            "structure": sws.get("structure", ""),
+            "format": "pdb",
+            "plddt": _first(sws.get("complex_plddt_score")),
+            "iptm": _first(sws.get("iptm_score")),
+            "ptm": _first(sws.get("ptm_score")),
+            "model": "openfold3",
+        }
+
+    # Default: Boltz-2. No MSA required - it runs its own.
+    polymers = [{"id": "A", "molecule_type": "protein", "sequence": binder}]
+    if target:
+        polymers.append({"id": "B", "molecule_type": "protein", "sequence": target})
+
+    raw = await _nvidia_post(BOLTZ2_PATH, {"polymers": polymers})
+
+    structures = raw.get("structures") or []
+    cif = structures[0].get("structure", "") if structures else ""
+    plddt = _first(raw.get("complex_plddt_scores"))
+    iptm = _first(raw.get("iptm_scores"))
+    ptm = _first(raw.get("ptm_scores"))
+
+    return {
+        "structure": _cif_to_pdb(cif),
+        "format": "pdb",
+        # complex_plddt comes back on a 0-1 scale; present it 0-100 like pLDDT
+        "plddt": (plddt * 100.0) if isinstance(plddt, (int, float)) else plddt,
+        "iptm": iptm,
+        "ptm": ptm,
+        "model": "boltz2",
+        "metrics": raw.get("metrics"),
+    }

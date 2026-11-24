@@ -253,7 +253,7 @@ footer {
   </div>
   <div class="step" data-step="3">
     <span class="num">3</span>
-    <div><div class="label">Validation</div><div class="sub">OpenFold3</div></div>
+    <div><div class="label">Validation</div><div class="sub">Boltz-2</div></div>
   </div>
 </div>
 
@@ -405,7 +405,7 @@ footer {
     </div>
 
     <button class="btn" onclick="validateSequences()" id="validate-btn" style="display:none">
-      <span id="fold-btn">🔬 Validate Selected (OpenFold3)</span>
+      <span id="fold-btn">🔬 Validate Selected (Boltz-2)</span>
     </button>
 
     <div style="display:flex;justify-content:space-between;margin-top:20px">
@@ -419,7 +419,7 @@ footer {
 <div class="step-panel" id="panel-3">
   <div class="card">
     <h2>Step 3: Structure Validation</h2>
-    <p class="subtitle">Co-fold the designed binder with the target using OpenFold3.</p>
+    <p class="subtitle">Co-fold the designed binder with the target using Boltz-2.</p>
 
     <div id="validation-status" class="result-box visible">
       <h3>Ready</h3>
@@ -470,7 +470,7 @@ footer {
 
 <footer>
   Powered by <a href="https://build.nvidia.com/nvidia/protein-binder-design-for-drug-discovery" target="_blank">NVIDIA BioNeMo NIM</a>
-  &middot; RFdiffusion + ProteinMPNN + OpenFold3
+  &middot; RFdiffusion + ProteinMPNN + Boltz-2
   &middot; Deployed on <a href="https://www.hpe.com/us/en/hpe-private-cloud-ai.html" target="_blank">HPE Private Cloud AI</a>
 </footer>
 
@@ -991,7 +991,7 @@ async function validateSequences() {
   document.querySelector('#fold-btn').closest('.btn').disabled = true;
 
   const status = document.getElementById('validation-status');
-  status.querySelector('p').textContent = `Validating ${S.selectedSeqs.size} design(s) with OpenFold3...`;
+  status.querySelector('p').textContent = `Validating ${S.selectedSeqs.size} design(s) with Boltz-2...`;
 
   try {
     const selected = S.sequences.filter((_, i) => S.selectedSeqs.has(i));
@@ -1004,53 +1004,29 @@ async function validateSequences() {
       const seq = selected[i];
       status.querySelector('p').textContent = `Validating design ${i + 1}/${selected.length}...`;
 
+      // The backend folds with Boltz-2 and returns a normalised result:
+      // { structure (PDB text), format, plddt (0-100), iptm, ptm, model }
       const payload = {
-        inputs: [{
-          input_id: `design_${i}`,
-          molecules: [
-            {
-              type: 'protein',
-              sequence: seq.sequence,
-              msa: {
-                main: {
-                  a3m: {
-                    alignment: `>query\n${seq.sequence}`,
-                    format: 'a3m',
-                  },
-                },
-              },
-            },
-            {
-              type: 'protein',
-              sequence: targetSeq,
-              msa: {
-                main: {
-                  a3m: {
-                    alignment: `>query\n${targetSeq}`,
-                    format: 'a3m',
-                  },
-                },
-              },
-            },
-          ],
-          output_format: 'pdb',
-        }],
+        binder_sequence: seq.sequence,
+        target_sequence: targetSeq,
       };
 
-      const resp = await fetch('/api/openfold3/predict', {
+      const resp = await fetch('/api/validate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
       const data = await resp.json();
 
-      if (!resp.ok) throw new Error(data.detail || 'OpenFold3 failed');
+      if (!resp.ok) throw new Error(data.detail || 'Boltz-2 folding failed');
 
-      // Extract structure and scores from OpenFold3 response
-      const sws = data.outputs?.[0]?.structures_with_scores?.[0];
-      const structure = sws?.structure || '';
-      const plddt = extractPlddtScore(data) || extractPlddt(structure);
-      const iptm = extractIptm(data);
+      const structure = data.structure || '';
+      const plddt = (data.plddt !== undefined && data.plddt !== null)
+        ? Number(data.plddt).toFixed(1)
+        : (extractPlddtScore(data) || extractPlddt(structure));
+      const iptm = (data.iptm !== undefined && data.iptm !== null)
+        ? Number(data.iptm).toFixed(3)
+        : extractIptm(data);
 
       results.push({ origIdx: i, seq, structure, plddt, iptm });
     }
@@ -1061,7 +1037,7 @@ async function validateSequences() {
     status.querySelector('p').textContent = `Validation error: ${e.message}`;
     status.style.borderColor = 'var(--error)';
   } finally {
-    btn.innerHTML = '🔬 Validate Selected (OpenFold3)';
+    btn.innerHTML = '🔬 Validate Selected (Boltz-2)';
     document.querySelector('#fold-btn').closest('.btn').disabled = false;
   }
 }

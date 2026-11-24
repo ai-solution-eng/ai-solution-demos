@@ -3,9 +3,9 @@
 # ============================================================
 images:
   frontend:
-    repository: "fcaliva/protein-binder-design"
+    repository: "ghcr.io/ai-solution-eng/protein-binder-design"
     pullPolicy: "IfNotPresent"
-    tag: "v0.5.4"
+    tag: "v0.6.0"
 
 # NVIDIA API Key (set via K8s secret in production)
 nvidia:

@@ -14,7 +14,15 @@ Interactive web application for **de novo protein binder design** using NVIDIA B
 |---|---|---|
 | **1. Backbone Generation** | [RFdiffusion](https://build.nvidia.com/ipd/rfdiffusion) | Diffuses novel protein backbones that bind to a target |
 | **2. Sequence Design** | [ProteinMPNN](https://build.nvidia.com/ipd/proteinmpnn) | Predicts amino acid sequences for each backbone |
-| **3. Validation** | [OpenFold3](https://build.nvidia.com/openfold/openfold3) | Co-folds binder + target to validate structure |
+| **3. Validation** | [Boltz-2](https://build.nvidia.com/mit/boltz2) | Co-folds binder + target to validate structure (no MSA required) |
+
+> **Note on the validation NIM.** This stage originally used OpenFold3. The hosted
+> OpenFold3 endpoint (`/v1/biology/openfold/openfold3/predict`) now returns
+> `HTTP 500` for every well-formed payload — verified across single/two-chain
+> inputs, query-only and multi-hit MSAs, and the documented `msa.unpaired.a3m`
+> schema. Boltz-2 (`/v1/biology/mit/boltz2/predict`) is used instead: it is an
+> AlphaFold3-class folding model, needs no pre-computed MSA, and returns pLDDT,
+> pTM and ipTM. Set `FOLD_NIM=openfold3` to switch back if NVIDIA restores it.
 
 ### Prerequisites
 
@@ -142,7 +150,7 @@ protein-binder-design/
 Browser (index.html + 3Dmol.js)
     │  POST /api/rfdiffusion/generate
     │  POST /api/proteinmpnn/predict
-    │  POST /api/openfold3/predict
+    │  POST /api/validate          (Boltz-2, normalised result)
     ▼
 FastAPI Proxy (server.py)
     │  Authorization: Bearer $NVIDIA_API_KEY
@@ -150,7 +158,7 @@ FastAPI Proxy (server.py)
 health.api.nvidia.com/v1/biology/
     ├── /ipd/rfdiffusion/generate    → Backbone PDB
     ├── /ipd/proteinmpnn/predict     → Sequences (FASTA)
-    └── /openfold/openfold3/predict  → Predicted structure (PDB/mmCIF)
+    └── /mit/boltz2/predict          → Predicted complex (mmCIF, converted to PDB)
 ```
 
 ## Config Reference
@@ -158,6 +166,8 @@ health.api.nvidia.com/v1/biology/
 | Environment Variable | Required | Default | Description |
 |---|---|---|---|
 | `NVIDIA_API_KEY` | Yes | — | NVIDIA AI Enterprise API key |
+| `FOLD_NIM` | No | `boltz2` | Folding NIM for validation: `boltz2` or `openfold3` |
+| `HTTPS_PROXY` | On locked-down clusters | — | The pod needs egress to `health.api.nvidia.com` and `files.rcsb.org`. Set `proxy.enabled=true` in values. |
 | `SSL_CERT_DIR` | PCAI only | `/etc/ssl/certs` | Custom CA cert directory |
 
 ## Development Notes

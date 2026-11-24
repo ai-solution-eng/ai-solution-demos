@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 WORKDIR /app
-RUN pip install --no-cache-dir fastapi uvicorn httpx
+RUN pip install --no-cache-dir fastapi uvicorn httpx gemmi
 COPY server.py .
 COPY static/ ./static/
 EXPOSE 8080
