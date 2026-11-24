@@ -6,68 +6,36 @@
   // AGENTS.md is symlinked at the repo root → documentation/AGENTS.md, so
   // opencode auto-loads it (no "instructions" field needed).
 
-  // ── Multimodal RAG MCP server ───────────────────────────────────────────
-  // TWO connections to the SAME server, exposing DIFFERENT tool subsets:
-  //   • rag-memory    → personal long-term memory (add_memory / search_memory)
-  //   • rag-knowledge → general project/knowledge datasets (search_dataset, …)
+  // ── Multimodal RAG MCP server (2026-10 unified config) ──────────────────
+  // ONE connection, ALL tools. Auth is per-IDENTITY, enforced server-side:
+  //   • The bearer is a Keycloak OIDC access token (D21) — it resolves to the
+  //     SAME per-user identity as your browser SSO — or a minted per-user
+  //     registry key (D15/D17), sent as the bearer or X-API-Key.
+  //   • The memory dataset + password resolve server-side from the caller's
+  //     ★ binding + saved selection (D16 access store): open the /access page
+  //     signed in as your identity, select the dataset (password once), ★ it.
+  //     NO secret rides any header here.
+  //   • Legacy key-unconfigured (single-user) deployments: this exact config
+  //     still works unauthenticated; to pin the memory dataset explicitly,
+  //     re-add X-Memory-Dataset / X-Dataset-Password headers (env-resolved) —
+  //     see MCP.md § 3.2 for the legacy two-connection pattern.
   //
-  // Per-user isolation comes from the memory dataset PASSWORD (resolved from
-  // the X-Dataset-Password header / RAG_MEMORY_PASSWORD env var). The memory
-  // dataset name comes from RAG_MEMORY_DATASET. The model itself never sees
-  // these — see documentation/AGENTS.md for when the model should recall / write memories.
+  // REQUIRED env var:
+  //   MM_RAG_BEARER_TOKEN  Keycloak UA access token — rotate per session
+  //                        (~15-day validity on G2); never bake the value in.
+  //   (The session-memory-logger plugin reads the same var, or
+  //   RAG_MEMORY_BEARER_TOKEN as a plugin-specific override.)
   //
-  // REQUIRED env vars (export before launching opencode):
-  //   RAG_MEMORY_DATASET   e.g. "andrew-memory"  (a password-protected dataset
-  //                                               you created via the HTML frontend)
-  //   RAG_MEMORY_PASSWORD  that dataset's password
-  //   RAG_INGRESS_TOKEN    platform bearer token — ONLY if you reach the server
-  //                        through the oauth2-proxy ingress (see below)
-  //
-  // URL: two options —
-  //   1) Via the cluster ingress (production): set RAG_INGRESS_TOKEN and use
-  //      https://rag-mcp-server.<YOUR-DOMAIN>/mcp  (the Authorization header below).
-  //   2) Via `kubectl port-forward deployment/rag-mcp-server 8001:9090` (local
-  //      testing): comment out the Authorization header and switch the url to
-  //      http://localhost:8001/mcp.
+  // URL: https://rag-mcp-server.<YOUR-DOMAIN>/mcp (cluster ingress), or
+  //   kubectl port-forward deployment/rag-mcp-server 8001:9090 →
+  //   http://localhost:8001/mcp (local testing; token may still be required).
   "mcp": {
-    "rag-memory": {
+    "rag": {
       "type": "remote",
       "url": "https://rag-mcp-server.YOUR-DOMAIN/mcp",
       "headers": {
-        // Keep while going through the oauth2-proxy ingress; drop for port-forward.
-        "Authorization": "Bearer {env:RAG_INGRESS_TOKEN}",
-        // These two are read ONLY by add_memory / search_memory server-side,
-        // so a memory password can never silently unlock another dataset.
-        "X-Memory-Dataset": "{env:RAG_MEMORY_DATASET}",
-        "X-Dataset-Password": "{env:RAG_MEMORY_PASSWORD}"
-      }
-    },
-    "rag-knowledge": {
-      "type": "remote",
-      "url": "https://rag-mcp-server.YOUR-DOMAIN/mcp",
-      "headers": {
-        "Authorization": "Bearer {env:RAG_INGRESS_TOKEN}"
+        "Authorization": "Bearer {env:MM_RAG_BEARER_TOKEN}"
       }
     }
-  },
-
-  // Scope each connection to its intended tool subset. opencode prefixes MCP
-  // tools with the server name + "_" (verify the exact names with
-  // `opencode mcp list` after connecting, then adjust these patterns if needed).
-  "tools": {
-    "rag-memory_search_dataset": false,
-    "rag-memory_list_datasets": false,
-    "rag-memory_get_dataset_files": false,
-    "rag-memory_get_dataset_info": false,
-    "rag-memory_unlock_dataset": false,
-    "rag-memory_describe_media": false,
-    "rag-memory_transcribe_audio": false,
-"rag-memory_search_datasets": false,
-"rag-memory_dataset_add_documents": false,
-"rag-memory_dataset_delete_documents": false,
-"rag-memory_dataset_replace_document": false,
-
-    "rag-knowledge_add_memory": false,
-    "rag-knowledge_search_memory": false
   }
 }

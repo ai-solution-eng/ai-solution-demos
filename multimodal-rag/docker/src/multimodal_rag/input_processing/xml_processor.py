@@ -220,5 +220,10 @@ class YAMLProcessor:
             chunk_overlap=self.chunk_overlap,
             flatten=True,
             separator=self.separator,
+            # Forward the token splitter: without it the inner processor
+            # silently chunks YAML by CHARACTERS even though YAMLProcessor
+            # was handed a token splitter by its caller.  XMLProcessor and
+            # HTMLProcessor already forward it to their inner TextProcessor.
+            text_splitter=self.text_splitter,
         )
         return jp.process_data(data, source)

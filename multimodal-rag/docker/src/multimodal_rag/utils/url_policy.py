@@ -146,31 +146,111 @@ def _check_url_policy(url: str) -> None:
         raise ValueError(f"URL host '{host}' resolves to a private/internal address (INGEST_BLOCK_PRIVATE_HOSTS=true)")
 
 
+_own_host_allowlist_warned = False
+
+
+def _warn_own_host_not_allowlisted(own_host: str) -> None:
+    """One-time advisory: INGEST_ALLOW_HOSTS excludes the deployment own
+    media host, so self-referential media URLs are refused.
+
+    Wave-2 (cross-review): P2-5 correctly made the allowlist authoritative, but
+    every chart renders MEDIA_BASE_URL, so a deployment that sets
+    ``security.ingestAllowHosts`` WITHOUT also listing its own endpoint host
+    silently loses ``inspect_media`` / search-preview fetches of the media this
+    server itself issued (they used to be exempt).  Naming both values turns a
+    silent 400 into a diagnosis.  Once per process.
+    """
+    global _own_host_allowlist_warned
+    if _own_host_allowlist_warned:
+        return
+    _own_host_allowlist_warned = True
+    logger.warning(
+        "INGEST_ALLOW_HOSTS=%s does not list this deployment's own media host %r "
+        "(from MEDIA_BASE_URL): self-referential media URLs will now be REFUSED, so "
+        "inspect_media and search previews of the media this server issued stop "
+        "working. Add %r to INGEST_ALLOW_HOSTS (helm: security.ingestAllowHosts) "
+        "to restore them.",
+        ",".join(_INGEST_ALLOW_HOSTS),
+        own_host,
+        own_host,
+    )
+
+
 def _check_media_url_policy(url: str) -> None:
-    """Policy for *media* fetches of user-supplied http(s) refs.
+    """Policy for *media* fetches of user-supplied refs (http(s) AND local).
 
     Covers both query-time media URLs (search with image/video/audio,
-    ``describe_media``, ``transcribe_audio``) and media refs embedded in
-    user-supplied documents (``POST /documents``, MCP ``add_memory``), which
-    the server fetches at embed time and again at query time.
+    ``inspect_media``) and media refs embedded in user-supplied documents
+    (``POST /documents``, MCP ``add_memory``), which the server fetches at
+    embed time and again at query time.
 
-    Same rules as :func:`_check_url_policy` with one difference: loopback is
-    allowed by default, because clients legitimately pass the server's own
-    media URLs (``http://localhost:8000/api/datasets/...?token=...``) back
-    to these tools.  ``INGEST_ALLOW_HOSTS`` remains authoritative when set;
-    set ``INGEST_BLOCK_PRIVATE_HOSTS=false`` to disable (not recommended).
+    For http(s): same rules as :func:`_check_url_policy` with one difference —
+    loopback is allowed by default, because clients legitimately pass the
+    server's own media URLs (``http://localhost:8000/api/datasets/...?token=...``)
+    back to these tools.  ``INGEST_ALLOW_HOSTS`` remains authoritative when
+    set; set ``INGEST_BLOCK_PRIVATE_HOSTS=false`` to disable (not recommended).
+
+    For everything else (audit P0-2 — this used to be a silent ``return``,
+    so ``file:///etc/passwd`` sailed through every entry gate that funnels
+    through this policy and was then opened by the embedder):
+
+    * ``data:`` — inert (never read from disk; size-bounded by the request
+      body cap);
+    * ``s3://`` — inert here by design; the dedicated rejection lives in
+      ``media_paths._validate_media_ref`` (S3 objects are ingested via
+      ``/batch-urls``, never fetched from this layer);
+    * ``file://`` / bare paths — REUSE the canonical allowlist helper
+      ``media_paths._media_path_allowed`` (realpath-resolved, prefix
+      allowlist, fail-closed) and raise :class:`MediaRefError` on refusal —
+      the same contract the fetch layer (``model_adapters``) and
+      ``rag_system`` raise.  ``MediaRefError`` is a ``ValueError``, so every
+      existing ``except ValueError`` entry gate keeps working.
     """
     if not url.startswith(("http://", "https://")):
+        if url.startswith(("data:", "s3://")):
+            return
+        from multimodal_rag.utils.media_paths import MediaRefError, _media_path_allowed
+
+        path = url.removeprefix("file://")
+        if not _media_path_allowed(path):
+            # Message parity with rag_system's local-media refusals.
+            raise MediaRefError(
+                f"Local media path '{path}' is outside the allowed prefixes (MEDIA_ALLOW_PATH_PREFIXES)"
+            )
         return
     from urllib.parse import urlparse
 
     host = urlparse(url).hostname or ""
+    # The server's OWN media host (MEDIA_BASE_URL) is trusted: search results
+    # mint self-referential media URLs on it by design (HMAC-token protected),
+    # so refusing to fetch them back breaks inspect_media and client previews
+    # for exactly the URLs this server issued.  Read per call (env convention);
+    # everything else keeps the strict private/SSRF rules.
+    own_media_host = (os.environ.get("MEDIA_BASE_URL", "") or "").strip()
+    if own_media_host:
+        own_media_host = (urlparse(own_media_host).hostname or "").strip().lower()
+    else:
+        own_media_host = ""
+    own_media_host = (own_media_host or "").strip().lower()
+    # P2-5 (audit 2026-11-10): the explicit allowlist is checked FIRST.  It is
+    # the operator's authoritative egress policy (see the docstring), so the
+    # own-media-host exemption below must never pre-empt it — otherwise a
+    # strict INGEST_ALLOW_HOSTS silently admits every URL on the
+    # MEDIA_BASE_URL hostname (and skips the private-range block with it).
+    #
+    # Wave-2 (cross-review): that ordering is a real operational trap for a
+    # deployment whose allowlist omits its own endpoint host, so say so once,
+    # loudly, with both values named.
     if _INGEST_ALLOW_HOSTS:
+        if own_media_host and not _host_matches_allowlist(own_media_host):
+            _warn_own_host_not_allowlisted(own_media_host)
         if not _host_matches_allowlist(host):
             raise ValueError(
                 f"URL host '{host}' is not allowed by INGEST_ALLOW_HOSTS"
                 + (f"={','.join(_INGEST_ALLOW_HOSTS)}" if _INGEST_ALLOW_HOSTS else "")
             )
+        return
+    if own_media_host and host == own_media_host:
         return
     if _INGEST_BLOCK_PRIVATE and _host_is_private(host, allow_loopback=True):
         raise ValueError(

@@ -1,6 +1,6 @@
 # Defence-Ops Architecture Diagram
 
-This document provides a high-level overview of the **Defence-Ops** microservices architecture, illustrating the connections between services, external providers, and the user request flow.
+This document gives a high-level overview of the **Defence-Ops** architecture: the services in the pod, the platform services they use, and how a question travels.
 
 ## System Architecture
  
@@ -22,42 +22,47 @@ flowchart TD
 
     %% 2. HPE Private Cloud AI
     subgraph pcai ["<b>HPE Private Cloud AI</b> / <i>Turnkey AI Platform</i>"]
-        subgraph gateway ["&nbsp; VirtualService &nbsp;"]
-            istio["&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; <b>Gateway</b> &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;<br/><i>Routes traffic to services</i>"]
+        subgraph gateway ["&nbsp; Ingress gateway &nbsp;"]
+            istio["&nbsp; &nbsp; &nbsp; <b>SSO + routing</b> &nbsp; &nbsp; &nbsp;<br/><i>oauth2-proxy, VirtualService</i>"]
         end
         class istio container;
-        subgraph ns ["Namespace"]
+        subgraph ns ["One pod"]
 
-            app_ui_svc["<b>app-ui</b><br/><i>Config Provider</i>"]
-            llm_svc["<b>llm-service</b><br/><i>VLM Orchestration</i>"]
-            kafka_svc["<b>kafka-service</b><br/><i>Event Streaming</i>"]
-            video_svc["<b>video-service</b><br/><i>MJPEG Streaming</i>"]
+            app_ui_svc["<b>app-ui</b><br/><i>Dashboard · System Config</i>"]
+            llm_svc["<b>llm-service</b><br/><i>Prompts · VLM orchestration</i>"]
+            kafka_svc["<b>kafka-service</b><br/><i>Live alerts · sample alerts</i>"]
+            video_svc["<b>video-service</b><br/><i>Feeds · clips · frames</i>"]
             class app_ui_svc,llm_svc,kafka_svc,video_svc container;
             
         end
-        subgraph inf_cluster ["Inference Services [MLIS]"]
-            mlis["<b>MLIS</b><br/><i>Local VLM / NVIDIA Triton</i>"]
+        subgraph inf_cluster ["Model serving"]
+            litellm["<b>LiteLLM</b><br/><i>Model gateway, per-app key</i>"]
+            mlis["<b>MLIS / vLLM</b><br/><i>vision-language models</i>"]
+            ollama["<b>Other servers</b><br/><i>e.g. Ollama</i>"]
         end
-        class mlis container;
+        class litellm,mlis,ollama container;
     end
 
     %% 3. External Dependencies (Bottom)
-    subgraph external ["Data Fabric (Tactical/Cloud)"]
-        kafka_cluster["<b>Tactical Kafka</b><br/>[Message Broker]<br/><i>Mission telemetry source</i>"]
+    subgraph external ["Kafka broker (e.g. HPE Data Fabric)"]
+        kafka_cluster["<b>Kafka API</b><br/>[e.g. Data Access Gateway]<br/><i>alerts topic</i>"]
     end
     class kafka_cluster outsider;
 
     %% --- Layout & Relationships ---
     spa -- "Secure Access<br/>[HTTPS]" --> istio
-    istio -- "Routes UI/Config" --> app_ui_svc
-    istio -- "Routes /llm" --> llm_svc
-    istio -- "Routes /kafka" --> kafka_svc
-    istio -- "Routes /video" --> video_svc
+    istio -- "UI · System Config" --> app_ui_svc
+    istio -- "/llm" --> llm_svc
+    istio -- "/kafka" --> kafka_svc
+    istio -- "/video" --> video_svc
     
     %% Aligning lower components side-by-side
-    llm_svc -- "VLM Inference" --> mlis
-    video_svc -- "Sync Assets" --> app_ui_svc
-    kafka_svc -- "Pub/Sub<br/>[SASL_SSL]" --> kafka_cluster
+    llm_svc -- "Chat + imagery" --> litellm
+    llm_svc -. or directly .-> mlis
+    litellm --> mlis
+    litellm --> ollama
+    llm_svc -- "Clip or frames<br/>[localhost]" --> video_svc
+    kafka_svc -- "Produce · consume<br/>[SASL, stream user]" --> kafka_cluster
     
     %% --- Custom Standout Styling ---
     style pcai fill:none,stroke:#01a982,stroke-width:4px,color:#01a982
@@ -69,29 +74,31 @@ flowchart TD
 ## Service Responsibilities
 
 ### 🖥️ app-ui
-- **Frontend**: A Next.js-powered dashboard providing a "Global Tactical Operations Room" experience.
-- **Admin Configuration**: Manages demo settings (LLM endpoints, Kafka credentials) via `/api/v1/admin/demo-config`.
-- **Persistence**: Saves and loads system configuration from a shared JSON file on a Persistent Volume.
+- **Frontend**: A Next.js dashboard for a "Global Defence Ops Centre": four feeds, the live alert ticker and the tactical assistant.
+- **Admin Configuration**: Manages the demo settings (model, Kafka broker and topic) via `/api/v1/admin/demo-config`. Only PCAI administrators can change them; the app verifies their Keycloak sign-in token.
+- **Persistence**: Saves the settings to a JSON file on a Persistent Volume. It holds no secrets.
 
 ### 🤖 llm-service
-- **Tactical Chat**: Handles user queries and merges them with Kafka tactical context or image/video frames.
-- **Model Discovery**: Automatically discovers available `InferenceServices` in the cluster or validates external OpenAI-compatible providers.
-- **Inference Integration**: Orchestrates calls to modern LLMs (e.g., Qwen, DeepSeek, Llama) for tactical analysis.
+- **Tactical Chat**: Combines the question, the feeds in context and the latest alerts into one request to the selected model.
+- **Prompts**: Puts fixed operating rules ahead of the operator's assistant instructions: use only the imagery and alerts supplied, separate observed from assessed with a confidence level, concise military register, British English and UTC times, no targeting details. It also tells the model which images, or which part of the clip, show which feed.
+- **Models**: Lists the models the app's key may use, with what each accepts (vision, video, thinking), as set in LiteLLM or, for a model served directly, in the chart's `llm.capabilities` values.
+- **Visual Context**: Sends video-capable models one short Motion-JPEG clip of the feeds, other vision models still frames, and falls back to frames if a model refuses video.
+- **Thinking**: Switches on the model's own reasoning when asked and supported, and returns it separately from the answer.
 
 ### 📡 kafka-service
-- **SSE Streaming**: Provides a Server-Sent Events (SSE) endpoint at `/api/v1/kafka/stream` for real-time dashboard updates.
-- **Alert Generation**: Simulations or actual production of tactical alerts to the Kafka cluster.
-- **Telemetry**: Consumes raw mission data and exposes it to the UI.
+- **Live alerts**: Streams the topic to the dashboard as Server-Sent Events at `/api/v1/kafka/stream`.
+- **Sample alerts**: `/api/v1/kafka/generate` writes 3–5 alerts about the feeds in the grid (each sample video has its own set; uploads are matched by file name), or general alerts when no feed is recognised.
+- **Credentials**: Connects as a user limited to the alerts topic; its credentials are a Kubernetes Secret, from the Helm values or created beforehand.
 
 ### 🎥 video-service
-- **Video Processing**: Serves four independent MJPEG streams representing tactical feeds.
-- **VLM Readiness**: Extract sequence frames from video feeds for Vision Language Model analysis in the `llm-service`.
+- **Feeds**: Lists the sample videos and uploads, and serves them to the dashboard for playback.
+- **Model input**: Builds the 2 fps clips and the still frames that `llm-service` sends to the model; rejects path tricks and oversized uploads.
 
 ## Request Flow Example: Tactical Analysis
 
-1.  **User** asks a question in the chat about "Tactical 1" feed.
-2.  **app-ui** requests the latest frames for "Tactical 1" from **video-service**.
-3.  **app-ui** sends the prompt + frames + recent alerts (from **kafka-service**) to **llm-service**.
-4.  **llm-service** consults its configuration (fetched from **app-ui** via the internal API).
-5.  **llm-service** calls the configured **Inference Endpoint** (e.g., a KServe deployment).
-6.  The result is returned to the user via the dashboard.
+1.  **User** asks a question about the "Convoy" feed, or presses Shield or Eye on it.
+2.  **app-ui** sends the question, the assistant instructions, the feed names and the latest alerts (from **kafka-service**) to **llm-service**.
+3.  **llm-service** reads the selected model from the shared configuration and checks what it accepts.
+4.  **llm-service** asks **video-service** for a short clip (video models) or still frames per feed (other vision models).
+5.  **llm-service** calls the model through **LiteLLM**, or the model's own endpoint, with the app's own key: the operating rules and instructions, the tasking, a note of which imagery shows which feed, and the alerts.
+6.  The answer, with the model's reasoning if thinking was on, appears in the dashboard.

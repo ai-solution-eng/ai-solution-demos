@@ -38,6 +38,6 @@ ENV GRADIO_SERVER_PORT="7860"
 ENV GRADIO_ANALYTICS_ENABLED="False"
 ENV HF_HUB_DISABLE_TELEMETRY="1"
 
-# Entry point with Gradio hot reload
-CMD ["gradio", "app.py"]
+# Run the app directly. "gradio app.py" is the auto-reload mode for development.
+CMD ["python", "app.py"]
 

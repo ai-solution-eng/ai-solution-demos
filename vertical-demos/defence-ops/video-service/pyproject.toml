@@ -1,0 +1,37 @@
+[project]
+name = "defence-ops-video-service"
+version = "1.2.0"
+description = "Streams, uploads and extracts frames from the Ops Centre video feeds."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.162.0",
+    "numpy>=2.5.4",
+    "opencv-python-headless>=4.14.0.94,<5",
+    "pydantic>=2.14.2",
+    "python-multipart>=0.0.33",
+    "structlog>=26.1.0",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[dependency-groups]
+dev = ["httpx>=0.28.1", "mypy>=2.4.1", "pytest>=9.2.0", "ruff>=0.17.3"]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = [".", ".."]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+mypy_path = ".."
+
+[tool.pytest.ini_options]
+pythonpath = [".", ".."]
+testpaths = ["tests"]

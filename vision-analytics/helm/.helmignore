@@ -1,0 +1,15 @@
+# Patterns to ignore when building packages.
+# Keep earlier chart packages and the sample EzAppConfig out of the chart.
+*.tgz
+vision-analytics-ezapp.yaml
+# Common VCS, editor and OS files
+.DS_Store
+.git/
+.gitignore
+*.swp
+*.bak
+*.tmp
+*.orig
+*~
+.idea/
+.vscode/

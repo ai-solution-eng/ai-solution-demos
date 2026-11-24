@@ -1,161 +1,93 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { api } from "@/lib/api";
-import { ShieldCheck, Server, Key, AlertCircle, RefreshCw, CheckCircle2, MessageSquare, Cpu, X, Radio, User, Lock } from "lucide-react";
+import { AlertCircle, Brain, CheckCircle2, Cpu, Eye, Film, Lock, Radio, RefreshCw, Server, X } from "lucide-react";
+import { api, type DemoConfig, type LlmModel } from "@/lib/api";
+import { useEscapeKey } from "@/lib/useEscapeKey";
 
 interface SettingsViewProps {
   onClose: () => void;
 }
 
+const EMPTY: DemoConfig = { llm_model: "", kafka_broker: "", kafka_topic: "" };
+
+function Capability({ label, value, icon }: { label: string; value: boolean | null; icon: React.ReactNode }) {
+  const state = value === true ? "yes" : value === false ? "no" : "unknown";
+  const title =
+    value === null
+      ? `The model endpoint does not declare ${label.toLowerCase()} support for this model. Set llm.capabilities in the app's Helm values.`
+      : undefined;
+  return (
+    <span className={`capability ${state}`} title={title}>
+      {icon} {label}: {state === "yes" ? "Yes" : state === "no" ? "No" : "Unknown"}
+    </span>
+  );
+}
+
 export default function SettingsView({ onClose }: SettingsViewProps) {
-  const [demoConfig, setDemoConfig] = useState({
-    llm_endpoint: "",
-    llm_api_key: "",
-    llm_model: "",
-    llm_provider: "openai",
-    kafka_broker: "",
-    kafka_topic: "",
-    kafka_username: "",
-    kafka_password: "",
-  });
-  const [isSavingDemoConfig, setIsSavingDemoConfig] = useState(false);
-  const [isDiscovering, setIsDiscovering] = useState(false);
-  const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
-  const [llmEndpointError, setLlmEndpointError] = useState(false);
-  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
-  
-  // Endpoint Discovery
-  const [discoveredEndpoints, setDiscoveredEndpoints] = useState<{url: string, name: string, type: string}[]>([]);
-  const [isLoadingEndpoints, setIsLoadingEndpoints] = useState(false);
+  const [config, setConfig] = useState<DemoConfig>(EMPTY);
+  const [canEdit, setCanEdit] = useState(false);
+  const [readOnlyReason, setReadOnlyReason] = useState<string | null>(null);
+  const [models, setModels] = useState<LlmModel[]>([]);
+  const [modelsError, setModelsError] = useState<string | null>(null);
+  const [isLoadingModels, setIsLoadingModels] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  useEscapeKey(onClose);
 
+  // State is set in promise callbacks, so the mount effect can call this too.
+  const fetchModels = useCallback(
+    (refresh: boolean) =>
+      api
+        .getModels(refresh)
+        .then(({ models: list }) => {
+          setModels(list);
+          setModelsError(null);
+        })
+        .catch((err: unknown) => {
+          setModels([]);
+          setModelsError(err instanceof Error ? err.message : "Could not load models from the model endpoint.");
+        })
+        .finally(() => setIsLoadingModels(false)),
+    [],
+  );
 
-  const normalizeLlmEndpoint = (url: string) => {
-    if (!url) return url;
-    let clean = url.trim();
-    if (clean && !clean.startsWith('http')) {
-      clean = 'http://' + clean;
-    }
-    clean = clean.replace(/\/+$/, "");
-    return clean;
+  const refreshModels = () => {
+    setIsLoadingModels(true);
+    fetchModels(true);
   };
 
   useEffect(() => {
-    async function loadConfig() {
-      try {
-        const demoData = await api.getDemoConfig();
-        if (demoData?.status === 'success' && demoData.data) {
-          setDemoConfig(prev => ({...prev, ...demoData.data}));
-        }
+    api
+      .getDemoConfig()
+      .then(({ data, meta }) => {
+        setConfig(data);
+        setCanEdit(meta.can_edit);
+        setReadOnlyReason(meta.reason);
+      })
+      .catch((err: unknown) => toast.error(err instanceof Error ? err.message : "Could not load the settings."));
+    fetchModels(false);
+  }, [fetchModels]);
 
-        try {
-          const modelsData = await api.getModels();
-          if (modelsData && modelsData.models) {
-            // availableModels state removed as it is not used in the UI
-          }
-        } catch (_mErr) {
-          console.error("Failed to fetch models", _mErr);
-        }
+  const selected = models.find((m) => m.id === config.llm_model) ?? null;
+  const isReady = selected !== null;
 
-        // Fetch discovered endpoints
-        await fetchEndpoints();
-
-      } catch (_err) {
-        console.error("Failed to load demo config", _err);
-      }
-    }
-    loadConfig();
-  }, []);
-
-  const fetchEndpoints = async () => {
-    setIsLoadingEndpoints(true);
-    try {
-      const resp = await api.getDiscoveredEndpoints();
-      if (resp.status === "success" && resp.endpoints) {
-        setDiscoveredEndpoints(resp.endpoints);
-      }
-    } catch (_err) {
-      console.error("Failed to fetch discovered endpoints", _err);
-    } finally {
-      setIsLoadingEndpoints(false);
-    }
-  };
-
-
-  const handleDiscoverModels = async () => {
-    if (!demoConfig.llm_endpoint) {
-      toast.error("Please provide an LLM endpoint first");
-      return;
-    }
-    
-    setIsDiscovering(true);
-    setLlmEndpointError(false);
-    setDiscoveryError(null);
-    
-    const normalizedEndpoint = normalizeLlmEndpoint(demoConfig.llm_endpoint);
-    if (normalizedEndpoint !== demoConfig.llm_endpoint) {
-      setDemoConfig(prev => ({ ...prev, llm_endpoint: normalizedEndpoint }));
-    }
-
-    try {
-      const data = await api.discoverModels(normalizedEndpoint, demoConfig.llm_api_key);
-      if (data.status === "success") {
-        const models = data.models || [];
-        setDiscoveredModels(models);
-        setLlmEndpointError(false);
-        setDiscoveryError(null);
-        
-        if (models.length === 1) {
-          setDemoConfig(prev => ({...prev, llm_model: models[0]}));
-          toast.success(`Connected! Automatically selected model: ${models[0]}`);
-        } else if (models.length > 1) {
-          // showModelModal state removed as it is not used in the UI
-          toast.success(`Discovered ${models.length} models. Please select one.`);
-        } else {
-          toast.warning("Successfully reached endpoint, but no models were found.");
-        }
-      } else {
-        setLlmEndpointError(true);
-        setDiscoveryError(data.message || "Unknown error");
-        toast.error(`Discovery failed: ${data.message || "Unknown error"}`);
-      }
-    } catch (err) {
-      setLlmEndpointError(true);
-      const msg = err instanceof Error ? err.message : "Discovery failed";
-      setDiscoveryError(msg);
-      toast.error(`Error: ${msg}`);
-    } finally {
-      setIsDiscovering(false);
-    }
-  };
-
-  const handleSaveDemoConfig = async (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsSavingDemoConfig(true);
-    const finalConfig = { ...demoConfig };
-    if (finalConfig.llm_endpoint) {
-      finalConfig.llm_endpoint = normalizeLlmEndpoint(finalConfig.llm_endpoint);
-    }
+    setIsSaving(true);
     try {
-      const data = await api.saveDemoConfig(finalConfig);
-      if (data.status === "success") {
-        setDemoConfig(finalConfig);
-        toast.success("Configuration saved!");
-        onClose();
-      } else {
-        toast.error("Save failed.");
-      }
-    } catch (_err) {
-      toast.error("Save error.");
+      toast.success(await api.saveDemoConfig(config));
+      onClose();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Settings not saved.");
     } finally {
-      setIsSavingDemoConfig(false);
+      setIsSaving(false);
     }
   };
 
   return (
     <div className="settings-overlay animate-fade-in">
-      <div className="settings-panel">
+      <form className="settings-panel" onSubmit={handleSave} role="dialog" aria-modal="true" aria-label="System Config">
         <header className="settings-header">
           <div className="settings-title-group">
             <Cpu size={24} className="settings-title-icon" />
@@ -164,14 +96,20 @@ export default function SettingsView({ onClose }: SettingsViewProps) {
               <p className="settings-subtitle">Neural Engine & Data Streams</p>
             </div>
           </div>
-          <button onClick={onClose} className="close-btn">
+          <button type="button" onClick={onClose} className="close-btn" aria-label="Close">
             <X size={20} />
           </button>
         </header>
 
         <div className="settings-content">
           <div className="settings-layout">
-            {/* Intelligence Hub Section */}
+            {!canEdit && readOnlyReason && (
+              <div className="readonly-box">
+                <Lock size={14} />
+                <span>{readOnlyReason}</span>
+              </div>
+            )}
+
             <section className="settings-section">
               <div className="section-header">
                 <Cpu size={18} />
@@ -180,162 +118,53 @@ export default function SettingsView({ onClose }: SettingsViewProps) {
 
               <div className="field-group">
                 <div className="field-label">
-                  <label>Provider Type</label>
-                  <p className="field-hint">Select the compatibility mode for the LLM endpoint</p>
+                  <label htmlFor="llm-model">Model</label>
+                  <p className="field-hint">
+                    Models this app&apos;s key may use on the model endpoint. Pick one that accepts images.
+                  </p>
                 </div>
                 <div className="field-value">
-                  <select 
-                    value={demoConfig.llm_provider || "openai"}
-                    onChange={e => setDemoConfig(prev => ({...prev, llm_provider: e.target.value}))}
-                    className="w-full"
+                  <select
+                    id="llm-model"
+                    value={config.llm_model}
+                    disabled={!canEdit || isLoadingModels}
+                    onChange={(e) => setConfig((prev) => ({ ...prev, llm_model: e.target.value }))}
                   >
-                    <option value="openai">OpenAI Compatible (Vision via video_url)</option>
-                    <option value="ollama">Ollama Compatible (Vision via frames)</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="field-group">
-                <div className="field-label">
-                  <label>Discovered KServe Endpoints</label>
-                  <p className="field-hint">Automatic scanning of available in-cluster inference services</p>
-                </div>
-                <div className="field-value">
-                  <div className="flex-col gap-2">
-                    {isLoadingEndpoints ? (
-                      <div className="discovery-loading">
-                        <RefreshCw className="spin" size={14} />
-                        <span>Scanning in-cluster services...</span>
-                      </div>
-                    ) : discoveredEndpoints.length > 0 ? (
-                      <select 
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          if (val) {
-                            setDemoConfig(prev => ({...prev, llm_endpoint: val}));
-                          }
-                        }}
-                        className="w-full"
-                      >
-                        <option value="">Select a discovered endpoint...</option>
-                        {discoveredEndpoints.map(ep => (
-                          <option key={ep.url} value={ep.url}>{ep.name} ({ep.type})</option>
-                        ))}
-                      </select>
-                    ) : (
-                      <div className="discovery-error">No KServe endpoints discovered in-cluster.</div>
+                    <option value="">{isLoadingModels ? "Loading models..." : "Select a model..."}</option>
+                    {config.llm_model && !selected && !isLoadingModels && (
+                      <option value={config.llm_model}>{config.llm_model} (not available to this key)</option>
                     )}
-                    <button onClick={fetchEndpoints} className="icon-btn text-xs py-1">
-                      <RefreshCw size={12} className={isLoadingEndpoints ? "spin" : ""} />
-                      Manual Refresh
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <div className="field-group">
-                <div className="field-label">
-                  <label>LLM Endpoint</label>
-                  <p className="field-hint">Specify the connection string for your inference service</p>
-                </div>
-                <div className="field-value">
-                  <div className="input-with-icon">
-                    <Server size={14} />
-                    <input 
-                      type="text" 
-                      placeholder="https://your-llm-provider.com/v1"
-                      value={demoConfig.llm_endpoint}
-                      onChange={e => setDemoConfig(prev => ({...prev, llm_endpoint: e.target.value}))}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="field-group">
-                <div className="field-label">
-                  <label>API Authentication Token</label>
-                  <p className="field-hint">(Optional) Bearer token for accessing the endpoint</p>
-                </div>
-                <div className="field-value">
-                  <div className="input-with-icon">
-                    <Key size={14} />
-                    <input 
-                      type="password" 
-                      placeholder="sk-..."
-                      value={demoConfig.llm_api_key}
-                      onChange={e => setDemoConfig(prev => ({...prev, llm_api_key: e.target.value}))}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="field-group no-label">
-                <div className="field-value">
-                  <div className="verification-row">
-                    <button 
-                      onClick={handleDiscoverModels} 
-                      disabled={isDiscovering || !demoConfig.llm_endpoint} 
-                      className={`action-btn ${llmEndpointError ? 'danger' : 'outline'}`}
-                      style={{ width: '100%' }}
-                    >
-                      {isDiscovering ? (
-                        <><RefreshCw className="spin" size={16} /> Verifying Connection...</>
-                      ) : (
-                        <><ShieldCheck size={16} /> Verify & Discover Models</>
-                      )}
-                    </button>
-                  </div>
-                  {discoveryError && (
-                    <div className="error-box" style={{ marginTop: '12px' }}>
+                    {models.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.id}
+                      </option>
+                    ))}
+                  </select>
+                  {selected && (
+                    <div className="capabilities">
+                      <Capability label="Vision" value={selected.vision} icon={<Eye size={12} />} />
+                      <Capability label="Video" value={selected.video} icon={<Film size={12} />} />
+                      <Capability label="Thinking" value={selected.reasoning} icon={<Brain size={12} />} />
+                    </div>
+                  )}
+                  {modelsError && (
+                    <div className="error-box">
                       <AlertCircle size={14} />
-                      <span>{discoveryError}</span>
+                      <span>{modelsError}</span>
                     </div>
                   )}
+                  <button type="button" onClick={refreshModels} className="icon-btn">
+                    <RefreshCw size={12} className={isLoadingModels ? "spin" : ""} />
+                    Refresh models
+                  </button>
+                  <p className="helper-text">
+                    Video-capable models get a short clip of the feeds, other vision models get still frames.
+                    Thinking is offered only where the model supports it.
+                  </p>
                 </div>
               </div>
             </section>
 
-            {/* Model Selection Section */}
-            <section className="settings-section">
-              <div className="section-header">
-                <MessageSquare size={18} />
-                <h3>Model Selection</h3>
-              </div>
-
-              <div className="field-group">
-                <div className="field-label">
-                  <label>Active Neural Model</label>
-                  <p className="field-hint">Select the specific model to use for chat and analysis</p>
-                </div>
-                <div className="field-value">
-                  {discoveredModels.length > 0 ? (
-                    <select 
-                      value={demoConfig.llm_model}
-                      onChange={e => setDemoConfig(prev => ({...prev, llm_model: e.target.value}))}
-                      className="w-full"
-                    >
-                      <option value="">Select a model...</option>
-                      {discoveredModels.map(m => (
-                        <option key={m} value={m}>{m}</option>
-                      ))}
-                    </select>
-                  ) : (
-                    <div className="input-with-icon">
-                      <Cpu size={14} />
-                      <input 
-                        type="text" 
-                        placeholder="e.g. gpt-4, llama-3.1-8b..."
-                        value={demoConfig.llm_model}
-                        onChange={e => setDemoConfig(prev => ({...prev, llm_model: e.target.value}))}
-                      />
-                    </div>
-                  )}
-                  <p className="helper-text">You must verify the endpoint to populate available models.</p>
-                </div>
-              </div>
-            </section>
-
-            {/* Data Stream Section */}
             <section className="settings-section">
               <div className="section-header">
                 <Radio size={18} />
@@ -344,17 +173,19 @@ export default function SettingsView({ onClose }: SettingsViewProps) {
 
               <div className="field-group">
                 <div className="field-label">
-                  <label>Broker Endpoint</label>
-                  <p className="field-hint">The Kafka bootstrap server URL</p>
+                  <label htmlFor="kafka-broker">Broker Endpoint</label>
+                  <p className="field-hint">The Kafka bootstrap servers, as host:port</p>
                 </div>
                 <div className="field-value">
                   <div className="input-with-icon">
                     <Server size={14} />
-                    <input 
-                      type="text" 
-                      placeholder="datafabric.cloud.hpe.com:9092"
-                      value={demoConfig.kafka_broker}
-                      onChange={e => setDemoConfig(prev => ({...prev, kafka_broker: e.target.value}))}
+                    <input
+                      id="kafka-broker"
+                      type="text"
+                      placeholder="kafka.example.com:9092"
+                      value={config.kafka_broker}
+                      disabled={!canEdit}
+                      onChange={(e) => setConfig((prev) => ({ ...prev, kafka_broker: e.target.value }))}
                     />
                   </div>
                 </div>
@@ -362,94 +193,69 @@ export default function SettingsView({ onClose }: SettingsViewProps) {
 
               <div className="field-group">
                 <div className="field-label">
-                  <label>Tactical Topic</label>
+                  <label htmlFor="kafka-topic">Tactical Topic</label>
                   <p className="field-hint">The topic name for live alerts</p>
                 </div>
                 <div className="field-value">
                   <div className="input-with-icon">
                     <Radio size={14} />
-                    <input 
-                      type="text" 
+                    <input
+                      id="kafka-topic"
+                      type="text"
                       placeholder="tactical-alerts"
-                      value={demoConfig.kafka_topic}
-                      onChange={e => setDemoConfig(prev => ({...prev, kafka_topic: e.target.value}))}
+                      value={config.kafka_topic}
+                      disabled={!canEdit}
+                      onChange={(e) => setConfig((prev) => ({ ...prev, kafka_topic: e.target.value }))}
                     />
                   </div>
-                </div>
-              </div>
-
-              <div className="field-group">
-                <div className="field-label">
-                  <label>SASL Username</label>
-                  <p className="field-hint">API Key or Username for authentication</p>
-                </div>
-                <div className="field-value">
-                  <div className="input-with-icon">
-                    <User size={14} />
-                    <input 
-                      type="text" 
-                      placeholder="Username"
-                      value={demoConfig.kafka_username}
-                      onChange={e => setDemoConfig(prev => ({...prev, kafka_username: e.target.value}))}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="field-group">
-                <div className="field-label">
-                  <label>SASL Password</label>
-                  <p className="field-hint">API Secret or Password</p>
-                </div>
-                <div className="field-value">
-                  <div className="input-with-icon">
-                    <Lock size={14} />
-                    <input 
-                      type="password" 
-                      placeholder="Password"
-                      value={demoConfig.kafka_password}
-                      onChange={e => setDemoConfig(prev => ({...prev, kafka_password: e.target.value}))}
-                    />
-                  </div>
-                  <p className="helper-text">Connection will always use SASL_PLAINTEXT / PLAIN mechanism.</p>
+                  <p className="helper-text">
+                    Credentials come from the app&apos;s Helm values (kafka.username and kafka.password, or an
+                    existing Secret) and are never shown here.
+                  </p>
                 </div>
               </div>
             </section>
 
-            {/* Persistence & Actions */}
             <div className="persistence-container">
-               <div className="persistence-info">
-                  <div className={`status-pill ${demoConfig.llm_endpoint && !llmEndpointError && discoveredModels.length > 0 ? "ready" : "pending"}`}>
-                    {demoConfig.llm_endpoint && !llmEndpointError && discoveredModels.length > 0 ? (
-                      <><CheckCircle2 size={14} /> SYSTEM READY</>
-                    ) : (
-                      <><AlertCircle size={14} /> CONFIG PENDING</>
-                    )}
-                  </div>
-                  <span className="pvc-note">System configuration is persisted automatically to the PVC for multi-session continuity.</span>
-               </div>
-               <div className="persistence-actions">
-                  <button onClick={onClose} className="action-btn outline">Cancel</button>
-                  <button onClick={handleSaveDemoConfig} disabled={isSavingDemoConfig} className="action-btn primary lg">
-                    {isSavingDemoConfig ? (
-                      <><RefreshCw className="spin" size={18} /> Optimizing...</>
+              <div className="persistence-info">
+                <div className={`status-pill ${isReady ? "ready" : "pending"}`}>
+                  {isReady ? (
+                    <>
+                      <CheckCircle2 size={14} /> SYSTEM READY
+                    </>
+                  ) : (
+                    <>
+                      <AlertCircle size={14} /> CONFIG PENDING
+                    </>
+                  )}
+                </div>
+                <span className="pvc-note">Settings are saved to the app&apos;s volume and shared by all users.</span>
+              </div>
+              <div className="persistence-actions">
+                <button type="button" onClick={onClose} className="action-btn outline">
+                  {canEdit ? "Cancel" : "Close"}
+                </button>
+                {canEdit && (
+                  <button type="submit" disabled={isSaving} className="action-btn primary lg">
+                    {isSaving ? (
+                      <>
+                        <RefreshCw className="spin" size={18} /> Saving...
+                      </>
                     ) : (
                       "Save Configuration"
                     )}
                   </button>
-               </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      </form>
 
       <style jsx>{`
         .settings-overlay {
           position: fixed;
-          top: 0;
-          left: 0;
-          right: 0;
-          bottom: 0;
+          inset: 0;
           background: rgba(2, 6, 23, 0.7);
           backdrop-filter: blur(8px);
           display: flex;
@@ -464,13 +270,11 @@ export default function SettingsView({ onClose }: SettingsViewProps) {
           border-radius: 24px;
           width: 100%;
           max-width: 1100px;
-          height: auto;
           max-height: 85vh;
           display: flex;
           flex-direction: column;
           box-shadow: 0 40px 100px -20px rgba(0, 0, 0, 0.7);
           overflow: hidden;
-          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         }
         .settings-header {
           padding: 32px 40px;
@@ -485,7 +289,7 @@ export default function SettingsView({ onClose }: SettingsViewProps) {
           align-items: center;
           gap: 20px;
         }
-        .settings-title-icon {
+        .settings-title-group :global(.settings-title-icon) {
           color: #10b981;
           background: rgba(16, 185, 129, 0.1);
           padding: 10px;
@@ -518,7 +322,6 @@ export default function SettingsView({ onClose }: SettingsViewProps) {
           background: #ef4444;
           border-color: #ef4444;
           color: white;
-          transform: rotate(90deg);
         }
         .settings-content {
           padding: 40px;
@@ -552,18 +355,11 @@ export default function SettingsView({ onClose }: SettingsViewProps) {
           text-transform: uppercase;
           letter-spacing: 1px;
         }
-        
         .field-group {
           display: grid;
           grid-template-columns: 320px 1fr;
           gap: 32px;
           align-items: start;
-        }
-        .field-group.no-label {
-          grid-template-columns: 1fr;
-        }
-        .field-group.no-label .field-value {
-          margin-left: 320px + 32px;
         }
         .field-label label {
           display: block;
@@ -584,22 +380,23 @@ export default function SettingsView({ onClose }: SettingsViewProps) {
           flex-direction: column;
           gap: 8px;
         }
-
         .input-with-icon {
           position: relative;
           display: flex;
           align-items: center;
         }
-        .input-with-icon svg {
+        .input-with-icon :global(svg) {
           position: absolute;
           left: 14px;
           color: #64748b;
+          pointer-events: none;
         }
         .input-with-icon input {
           width: 100%;
-          padding-left: 42px !important;
+          padding-left: 42px;
         }
-        input, select {
+        input,
+        select {
           background: #020617;
           border: 1px solid #334155;
           color: #f1f5f9;
@@ -610,12 +407,43 @@ export default function SettingsView({ onClose }: SettingsViewProps) {
           transition: all 0.2s;
           width: 100%;
         }
-        input:focus, select:focus {
+        input:focus,
+        select:focus {
           border-color: #10b981;
           box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.1);
           background: #0f172a;
         }
-        
+        input:disabled,
+        select:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+        .capabilities {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+        .capability {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          font-size: 12px;
+          font-weight: 700;
+          padding: 4px 10px;
+          border-radius: 100px;
+          border: 1px solid #334155;
+          color: #94a3b8;
+        }
+        .capability.yes {
+          color: #10b981;
+          border-color: rgba(16, 185, 129, 0.3);
+          background: rgba(16, 185, 129, 0.08);
+        }
+        .capability.no {
+          color: #f59e0b;
+          border-color: rgba(245, 158, 11, 0.3);
+          background: rgba(245, 158, 11, 0.08);
+        }
         .action-btn {
           padding: 12px 20px;
           border-radius: 12px;
@@ -636,12 +464,10 @@ export default function SettingsView({ onClose }: SettingsViewProps) {
         }
         .action-btn.primary:hover {
           background: #059669;
-          transform: translateY(-1px);
-          box-shadow: 0 6px 16px rgba(16, 185, 129, 0.3);
         }
         .action-btn.primary.lg {
-           padding: 16px 32px;
-           font-size: 16px;
+          padding: 16px 32px;
+          font-size: 16px;
         }
         .action-btn.outline {
           background: transparent;
@@ -652,15 +478,6 @@ export default function SettingsView({ onClose }: SettingsViewProps) {
           background: rgba(255, 255, 255, 0.05);
           border-color: #475569;
         }
-        .action-btn.danger {
-          background: rgba(239, 68, 68, 0.1);
-          color: #ef4444;
-          border: 1px solid rgba(239, 68, 68, 0.2);
-        }
-        .action-btn.danger:hover {
-          background: rgba(239, 68, 68, 0.2);
-        }
-
         .icon-btn {
           background: #1e293b;
           border: 1px solid #334155;
@@ -668,7 +485,6 @@ export default function SettingsView({ onClose }: SettingsViewProps) {
           padding: 6px 12px;
           border-radius: 8px;
           cursor: pointer;
-          transition: all 0.2s;
           display: inline-flex;
           align-items: center;
           gap: 6px;
@@ -678,7 +494,6 @@ export default function SettingsView({ onClose }: SettingsViewProps) {
           background: #334155;
           color: white;
         }
-
         .persistence-container {
           margin-top: 20px;
           padding-top: 32px;
@@ -715,90 +530,82 @@ export default function SettingsView({ onClose }: SettingsViewProps) {
           border: 1px solid rgba(245, 158, 11, 0.2);
         }
         .pvc-note {
-           font-size: 11px;
-           color: #64748b;
-           font-style: italic;
+          font-size: 11px;
+          color: #64748b;
+          font-style: italic;
         }
         .persistence-actions {
           display: flex;
           align-items: center;
           gap: 16px;
         }
-
-        .discovery-loading {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          color: #10b981;
-          font-size: 14px;
-          padding: 12px 16px;
-          background: rgba(16, 185, 129, 0.05);
-          border: 1px solid rgba(16, 185, 129, 0.2);
-          border-radius: 12px;
-        }
-        .discovery-error {
-          color: #94a3b8;
-          font-size: 13px;
-          padding: 12px 16px;
-          background: rgba(255, 255, 255, 0.03);
-          border: 1px solid #1e293b;
-          border-radius: 12px;
-          font-style: italic;
-        }
-        .error-box {
+        .error-box,
+        .readonly-box {
           display: flex;
           align-items: center;
           gap: 10px;
-          color: #ef4444;
           font-size: 13px;
-          background: rgba(239, 68, 68, 0.1);
           padding: 12px 16px;
           border-radius: 12px;
+        }
+        .error-box {
+          color: #ef4444;
+          background: rgba(239, 68, 68, 0.1);
           border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+        .readonly-box {
+          color: #f59e0b;
+          background: rgba(245, 158, 11, 0.08);
+          border: 1px solid rgba(245, 158, 11, 0.2);
         }
         .helper-text {
           font-size: 12px;
           color: #64748b;
           margin-top: 6px;
         }
-        .flex-col {
-           display: flex;
-           flex-direction: column;
-        }
-        .gap-2 {
-           gap: 12px;
-        }
-        .w-full {
-           width: 100%;
-        }
-        .spin {
+        .spin,
+        .icon-btn :global(.spin),
+        .action-btn :global(.spin) {
           animation: spin 1s linear infinite;
         }
         @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
+          from {
+            transform: rotate(0deg);
+          }
+          to {
+            transform: rotate(360deg);
+          }
         }
         .animate-fade-in {
           animation: fadeIn 0.4s cubic-bezier(0.4, 0, 0.2, 1);
         }
         @keyframes fadeIn {
-          from { opacity: 0; transform: scale(0.95) translateY(20px); }
-          to { opacity: 1; transform: scale(1) translateY(0); }
+          from {
+            opacity: 0;
+            transform: scale(0.95) translateY(20px);
+          }
+          to {
+            opacity: 1;
+            transform: scale(1) translateY(0);
+          }
         }
-
         @media (max-width: 900px) {
+          .settings-overlay {
+            padding: 0;
+          }
           .field-group {
             grid-template-columns: 1fr;
             gap: 12px;
-          }
-          .field-group.no-label .field-value {
-            margin-left: 0;
           }
           .settings-panel {
             max-width: 100%;
             height: 100vh;
             max-height: 100vh;
             border-radius: 0;
+          }
+          .settings-header,
+          .settings-content {
+            padding: 20px 16px;
           }
           .persistence-container {
             flex-direction: column;

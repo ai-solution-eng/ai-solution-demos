@@ -179,6 +179,185 @@ def _strip_pdf_artifacts(text: str) -> str:
 _HORIZONTAL_PROXIMITY_PX = 60
 _VERTICAL_PROXIMITY_PX = 120
 
+# ---------------------------------------------------------------------------
+# Vector-figure capture
+# ---------------------------------------------------------------------------
+# Scientific PDFs frequently draw figures as vector paths (TikZ, matplotlib
+# and draw.io exports) instead of embedding raster images — the Mamba-2
+# paper's Figure 6 ("Sequential / Parallel Mamba Block", page 23) is pure
+# vector.  Such figures produce no ``get_images()`` XObjects, so the raster
+# extraction path never sees them: their tiny text labels leak into chunks
+# as garbled spans and PyMuPDF's table detector misreads the figure's boxes
+# as ruled tables (observed: ``|Y<br>SS<br>A X<br>Co|`` markdown in the
+# Figure 6 chunk).  This section detects dense vector-drawing clusters,
+# renders each cluster's page region to an image, and injects it as an
+# ordinary image region — the figure then flows through the standard
+# proximity-attachment path and gains the same joint (text + image)
+# embedding, text-only twin and VLM caption as any embedded raster figure.
+#
+# All thresholds are env-overridable, following the PDF_MIN_IMG_SIDE
+# convention; ``PDF_VECTOR_FIGURES=0`` disables the feature entirely.
+
+
+def _vector_figures_enabled() -> bool:
+    """Feature gate, read at call time so tests/operators can toggle it via env."""
+    return os.environ.get("PDF_VECTOR_FIGURES", "1").lower() not in ("0", "false", "no")
+
+
+# A figure is a *cluster* of strokes and fills; stray rules and bullets
+# never reach this many paths.
+_PDF_VECTOR_FIG_MIN_PATHS = int(
+    os.environ.get("PDF_VECTOR_FIG_MIN_PATHS", "6")
+)  # Real figures occupy a visible share of the page; decorative underlines
+# and header rules do not.  Single-column figures in two-column papers run
+# ~8-10% of the page, so the floor stays below that and the caption /
+# stroke-density gates do the real discrimination.
+_PDF_VECTOR_FIG_MIN_AREA_FRAC = float(os.environ.get("PDF_VECTOR_FIG_MIN_AREA_FRAC", "0.06"))
+# Rendering resolution for the captured figure region.
+_PDF_VECTOR_FIG_DPI = int(os.environ.get("PDF_VECTOR_FIG_DPI", "150"))
+# Drawing rects within this many points of each other join into one cluster.
+_PDF_VECTOR_FIG_CLUSTER_GAP = float(os.environ.get("PDF_VECTOR_FIG_CLUSTER_GAP", "18"))
+# Strokes thinner than this on one axis are hairlines (axis ticks, ruled
+# lines) and do not count toward the "figure-like" density gate.
+_PDF_VECTOR_FIG_HAIRLINE_PT = 2.5
+# Capture requires EITHER a nearby "Figure N"-style caption OR a dense
+# cluster of non-hairline strokes (this count AND this fraction).  The
+# caption path catches line-heavy vector plots (axis ticks dominate their
+# path counts); the density path catches caption-less diagrams.
+_PDF_VECTOR_FIG_MIN_NONLINE = int(os.environ.get("PDF_VECTOR_FIG_MIN_NONLINE", "15"))
+_PDF_VECTOR_FIG_MIN_NONLINE_FRAC = float(os.environ.get("PDF_VECTOR_FIG_MIN_NONLINE_FRAC", "0.4"))
+_PDF_VECTOR_FIG_CAPTION_RE = re.compile(r"^\s*(?:figure|fig\.?|scheme|diagram|plot|chart)\s*\.?\s*\d+", re.IGNORECASE)
+# A caption block counts when its centre falls within this many points of
+# the cluster bbox (inside, below or above — styles vary across papers).
+_PDF_VECTOR_FIG_CAPTION_GAP = 80.0
+# When a single raster covers most of a cluster, the paths merely annotate
+# an existing image; the raster extraction already carries the content.
+_PDF_VECTOR_FIG_RASTER_COVER = 0.60
+# Tables detected inside a captured figure are misreads of the figure's
+# boxes (their flattened markdown pollutes the chunk); a detected table is
+# dropped when at least this fraction of its bbox lies inside the figure.
+_PDF_VECTOR_FIG_TABLE_INSIDE = 0.70
+# ``_PDF_VECTOR_FIG_MAX_PATHS`` — defensive cap; path-heavy pages (dense
+# hatching, security patterns) make the O(n²) clustering expensive for no
+# retrieval benefit.
+_PDF_VECTOR_FIG_MAX_PATHS = 800
+
+try:  # Vector-figure helpers need Rect for geometry; keep module importable without PyMuPDF.
+    import pymupdf as _pymupdf  # type: ignore[import-untyped]
+except Exception:  # pragma: no cover - exercised only in PyMuPDF-less environments
+    _pymupdf = None  # type: ignore[assignment]
+
+
+def _rect(x0: float, y0: float, x1: float, y1: float) -> Any:
+    """Construct a pymupdf Rect (or a plain 4-tuple when PyMuPDF is absent)."""
+    if _pymupdf is not None:
+        return _pymupdf.Rect(x0, y0, x1, y1)
+    return (x0, y0, x1, y1)
+
+
+def _is_hairline_rect(rect: Any) -> bool:
+    """True for ruled-line strokes (axis ticks, table rules, underlines)."""
+    return rect.width < _PDF_VECTOR_FIG_HAIRLINE_PT or rect.height < _PDF_VECTOR_FIG_HAIRLINE_PT
+
+
+def _cluster_vector_figure_bboxes(paths: list[dict[str, Any]], page: Any) -> list[tuple[Any, int, int]]:
+    """Group a page's vector-drawing rects into candidate figure clusters.
+
+    Returns ``(bbox, path_count, non_hairline_count)`` tuples for clusters
+    that pass the cheap size gates (path count, page-area fraction).
+    Whole-page borders/backgrounds are excluded before clustering so they
+    cannot bridge otherwise-separate clusters.
+    """
+    page_rect = page.rect
+    page_area = page_rect.width * page_rect.height
+    rects: list[Any] = []
+    nonline: list[bool] = []
+    for p in paths:
+        rect = _rect(*p["rect"])
+        # Zero-width / zero-height rects are straight hairline strokes —
+        # legitimate figure content (connector lines, axis rules) that must
+        # still merge clusters — so only *invalid* rects are dropped here.
+        if not rect.is_valid:
+            continue
+        # A border/background covering ~the whole page is layout, not figure.
+        if rect.width * rect.height >= 0.8 * page_area:
+            continue
+        rects.append(rect)
+        nonline.append(not _is_hairline_rect(rect))
+    if len(rects) < _PDF_VECTOR_FIG_MIN_PATHS:
+        return []
+
+    # Union-find over gap-expanded rect intersection.
+    n = len(rects)
+    parent = list(range(n))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    gap = _PDF_VECTOR_FIG_CLUSTER_GAP
+
+    def _near(ra: Any, rb: Any) -> bool:
+        """True when two rects are within *gap* on both axes.
+
+        Manual interval arithmetic instead of ``Rect.intersects``:
+        PyMuPDF treats zero-area rects (straight hairline strokes) as
+        empty, and an empty rect never "intersects" anything — which
+        would silently stop connector lines from bridging clusters.
+        """
+        dx = max(rb.x0 - ra.x1, ra.x0 - rb.x1, 0.0)
+        dy = max(rb.y0 - ra.y1, ra.y0 - rb.y1, 0.0)
+        return dx <= gap and dy <= gap
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            if _near(rects[i], rects[j]):
+                a, b = find(i), find(j)
+                if a != b:
+                    parent[a] = b
+
+    groups: dict[int, list[int]] = {}
+    for i in range(n):
+        groups.setdefault(find(i), []).append(i)
+
+    clusters = []
+    for idxs in groups.values():
+        bbox = _rect(rects[idxs[0]].x0, rects[idxs[0]].y0, rects[idxs[0]].x1, rects[idxs[0]].y1)
+        non_hairline = 0
+        for k in idxs:
+            bbox |= rects[k]
+            if nonline[k]:
+                non_hairline += 1
+        if len(idxs) < _PDF_VECTOR_FIG_MIN_PATHS:
+            continue
+        if bbox.width * bbox.height < _PDF_VECTOR_FIG_MIN_AREA_FRAC * page_area:
+            continue
+        clusters.append((bbox, len(idxs), non_hairline))
+    return clusters
+
+
+def _vector_cluster_has_caption(page_blocks: list[dict[str, Any]], bbox: Any) -> bool:
+    """True when a "Figure N"-style caption block sits near *bbox*."""
+    expanded = _rect(bbox[0], bbox[1], bbox[2], bbox[3])
+    expanded.x0 -= _PDF_VECTOR_FIG_CAPTION_GAP
+    expanded.y0 -= _PDF_VECTOR_FIG_CAPTION_GAP
+    expanded.x1 += _PDF_VECTOR_FIG_CAPTION_GAP
+    expanded.y1 += _PDF_VECTOR_FIG_CAPTION_GAP
+    for b in page_blocks:
+        if b.get("type") != 0:
+            continue
+        tb = _rect(*b["bbox"])
+        cx, cy = (tb.x0 + tb.x1) / 2, (tb.y0 + tb.y1) / 2
+        if not (expanded.x0 <= cx <= expanded.x1 and expanded.y0 <= cy <= expanded.y1):
+            continue
+        text = " ".join(span.get("text", "") for line in b.get("lines", []) for span in line.get("spans", [])).strip()
+        if _PDF_VECTOR_FIG_CAPTION_RE.match(text):
+            return True
+    return False
+
+
 # Tolerance (in PDF points) for matching image-block bboxes to image-region
 # bboxes.  PyMuPDF may produce slightly different float coordinates for the
 # same image depending on the extraction method used.
@@ -521,6 +700,25 @@ class PDFProcessor:
         if min(width, height) < PDFProcessor._MIN_IMG_SIDE:
             return False
         return not width * height < PDFProcessor._MIN_IMG_PIXELS
+
+    @staticmethod
+    def _png_has_content(png_bytes: bytes) -> bool:
+        """True when a rendered PNG carries visible (non-uniform) pixels.
+
+        Guards the vector-figure renderer against blank crops: a cluster
+        whose strokes all fall outside the clip, or whose render is
+        uniform-colour, has nothing for the embedding model to see.
+        """
+        try:
+            import io as _io
+
+            from PIL import Image as _PIL
+
+            pil: Any = _PIL.open(_io.BytesIO(png_bytes))
+            extrema = pil.convert("RGB").getextrema()
+        except Exception:
+            return False
+        return any(lo != hi for lo, hi in extrema)
 
     @staticmethod
     def _img_to_data_url(img_bytes: bytes, ext: str) -> str:
@@ -874,6 +1072,103 @@ class PDFProcessor:
                     page_num,
                     e,
                 )
+
+        # -- Vector figures → rendered clips --------------------------------
+        # Figures drawn as vector paths (TikZ, draw.io, matplotlib exports)
+        # produce no image XObjects; without this pass their region only
+        # yields garbled label text and misread "tables".  Render each
+        # candidate cluster's page region and inject it as an ordinary
+        # image region so it flows through the standard proximity-attach /
+        # joint-embedding / text-only-twin path.  Clusters whose area is
+        # mostly covered by an already-extracted raster are skipped — the
+        # raster carries the same content.
+        vector_figure_bboxes: list[Any] = []
+        if _vector_figures_enabled():
+            page_blocks_for_fig = page.get_text("dict")["blocks"]
+            try:
+                drawings = page.get_drawings()
+            except Exception:
+                logger.debug("get_drawings failed on page %s", page_num, exc_info=True)
+                drawings = []
+            if drawings and len(drawings) <= _PDF_VECTOR_FIG_MAX_PATHS:
+                for fig_bbox, n_paths, n_nonline in _cluster_vector_figure_bboxes(drawings, page):
+                    nonline_frac = n_nonline / n_paths if n_paths else 0.0
+                    captioned = _vector_cluster_has_caption(page_blocks_for_fig, fig_bbox)
+                    if not captioned and not (
+                        n_nonline >= _PDF_VECTOR_FIG_MIN_NONLINE and nonline_frac >= _PDF_VECTOR_FIG_MIN_NONLINE_FRAC
+                    ):
+                        continue
+                    # Skip when a single raster already covers most of the cluster.
+                    fig_area = max(0.0, fig_bbox.x1 - fig_bbox.x0) * max(0.0, fig_bbox.y1 - fig_bbox.y0)
+                    covered = False
+                    for ref in page.get_images(full=True):
+                        try:
+                            rb = page.get_image_bbox(ref)
+                        except Exception:
+                            continue
+                        ix0, iy0 = max(fig_bbox.x0, rb.x0), max(fig_bbox.y0, rb.y0)
+                        ix1, iy1 = min(fig_bbox.x1, rb.x1), min(fig_bbox.y1, rb.y1)
+                        if (
+                            ix1 > ix0
+                            and iy1 > iy0
+                            and (ix1 - ix0) * (iy1 - iy0) >= _PDF_VECTOR_FIG_RASTER_COVER * fig_area
+                        ):
+                            covered = True
+                            break
+                    if covered:
+                        continue
+                    try:
+                        pix = page.get_pixmap(dpi=_PDF_VECTOR_FIG_DPI, clip=fig_bbox)
+                        png = pix.tobytes("png")
+                    except Exception:
+                        logger.debug("vector-figure render failed on page %s", page_num, exc_info=True)
+                        continue
+                    if not self._is_meaningful_image(pix.width, pix.height):
+                        continue
+                    if not self._png_has_content(png):
+                        continue
+                    logger.debug(
+                        "vector figure captured on page %s: paths=%d nonline=%d captioned=%s bbox=(%.0f,%.0f,%.0f,%.0f)",
+                        page_num,
+                        n_paths,
+                        n_nonline,
+                        captioned,
+                        fig_bbox.x0,
+                        fig_bbox.y0,
+                        fig_bbox.x1,
+                        fig_bbox.y1,
+                    )
+                    image_regions.append(
+                        {
+                            "bbox": (fig_bbox.x0, fig_bbox.y0, fig_bbox.x1, fig_bbox.y1),
+                            "data_url": self._img_to_data_url(png, "png"),
+                        }
+                    )
+                    vector_figure_bboxes.append((fig_bbox.x0, fig_bbox.y0, fig_bbox.x1, fig_bbox.y1))
+
+            # Tables detected *inside* a vector figure are misreads of the
+            # figure's boxes (their flattened markdown polluted the chunk —
+            # the Mamba-2 Figure 6 chunk carried ``|Y<br>SS<br>A X<br>Co|``).
+            if vector_figure_bboxes:
+                kept: list[tuple[tuple[float, float, float, float], str]] = []
+                for tbbox, md in table_regions:
+                    tx0, ty0, tx1, ty1 = tbbox
+                    t_area = max(0.0, tx1 - tx0) * max(0.0, ty1 - ty0)
+                    overlap = 0.0
+                    for fx0, fy0, fx1, fy1 in vector_figure_bboxes:
+                        ix0, iy0 = max(tx0, fx0), max(ty0, fy0)
+                        ix1, iy1 = min(tx1, fx1), min(ty1, fy1)
+                        if ix1 > ix0 and iy1 > iy0:
+                            overlap = max(overlap, (ix1 - ix0) * (iy1 - iy0))
+                    if t_area > 0 and overlap / t_area >= _PDF_VECTOR_FIG_TABLE_INSIDE:
+                        logger.debug(
+                            "dropping table misread inside vector figure on page %s: %s",
+                            page_num,
+                            md[:60],
+                        )
+                        continue
+                    kept.append((tbbox, md))
+                table_regions[:] = kept
 
         blocks = []
         matched_urls: set[str] = set()

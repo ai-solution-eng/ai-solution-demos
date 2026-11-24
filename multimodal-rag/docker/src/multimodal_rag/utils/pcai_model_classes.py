@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import base64
 import inspect
@@ -11,16 +13,16 @@ import weakref
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import cached_property, partial
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import httpx2
-from openai import AsyncOpenAI, OpenAI
 
 try:
     from agents import Agent, set_tracing_disabled
     from agents.mcp import MCPServerStreamableHttp
     from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
     from agents.models.openai_responses import OpenAIResponsesModel
+
 except ImportError:
     Agent = None  # type: ignore[assignment, misc]
     set_tracing_disabled = None  # type: ignore[assignment]
@@ -30,10 +32,43 @@ except ImportError:
 
 from .general_tools import sync_wrapper_safe
 from .logging_utils import logging
-from .model_adapters import MultiModalEmbeddings, MultiModalReranker
 from .token_text_splitter import TokenTextSplitter
 
+if TYPE_CHECKING:  # names used in annotations only (from __future__ annotations)
+    from openai import AsyncOpenAI, OpenAI
+
+    from .model_adapters import MultiModalReranker
+
 logger = logging.getLogger(__name__)
+
+
+def _openai_client_class(name: str) -> Callable:
+    """Resolve an OpenAI SDK client class on first use.
+
+    openai costs ~0.5s to import and pulls in its whole generated types tree.
+    Deferring it keeps a DecisionModel-only caller (which never speaks the SDK)
+    from paying that, without changing the dataclass defaults callers see.
+    """
+    import openai
+
+    return getattr(openai, name)
+
+
+def _multi_modal_reranker() -> Callable:
+    """The reranker adapter, imported on first use (same reason as above)."""
+    from .model_adapters import MultiModalReranker
+
+    return MultiModalReranker
+
+
+def _no_openai_client(*_args: Any, **_kwargs: Any) -> Any:
+    """Stand-in client for models that have none (DecisionModel)."""
+    raise ValueError(
+        "A decision model has no OpenAI client: it serves POST /v1/systemone and "
+        "never /v1/chat/completions. Use system_one(...), system_one_async(...), or "
+        "the helpers decide(...) / choice(...) / yes_no(...) / score(...)."
+    )
+
 
 _MLIS_PAGE = "https://mlis.pcai-se-ai-application.hst.rdlabs.hpecorp.net/ui/deployments"
 _NOT_DEPLOYED = ""
@@ -135,12 +170,98 @@ def _client_verify(remote: bool) -> str | bool:
     return _remote_verify() if remote else True
 
 
-# Sync clients are thread-safe and can be shared globally.
-_SHARED_HTTP_CLIENT = httpx2.Client()
-_SHARED_REMOTE_HTTP_CLIENT = httpx2.Client(
-    verify=_client_verify(remote=True),
-    limits=_pool_limits_from_env(),
-)
+def _new_http_client(**kwargs: Any) -> httpx2.Client:
+    """Build a shared httpx client without letting the proxy environment kill the process.
+
+    httpx reads ``HTTP_PROXY`` / ``HTTPS_PROXY`` / ``ALL_PROXY`` / ``NO_PROXY``
+    at CONSTRUCTION time (``trust_env`` defaults to True).  A ``NO_PROXY`` entry
+    in bracketed IPv6 form -- ``[::1]``, a very common corporate/desktop default
+    -- makes httpx2's URL parser raise ``InvalidURL: Invalid port: ':1]'``.  At
+    module scope that aborted the import of the whole package (2026-11-10 audit:
+    reproduced, 65 pytest collection errors, app would not start).
+
+    Retry once with the environment ignored rather than dying: losing proxy
+    support for model calls is a degraded network path, an unimportable package
+    is an outage.
+    """
+    try:
+        return httpx2.Client(**kwargs)
+    except Exception as exc:  # retried once below, then raised
+        logger.warning(
+            "httpx client construction failed with the process proxy environment (%s: %s) - "
+            "retrying with trust_env=False; check HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY",
+            type(exc).__name__,
+            exc,
+        )
+        kwargs["trust_env"] = False
+        return httpx2.Client(**kwargs)
+
+
+# Sync clients are thread-safe and can be shared globally.  Both are built on
+# first use (never at import): construction reads the proxy environment and,
+# for the remote client, configures TLS -- neither belongs in module import.
+_SHARED_HTTP_CLIENT: httpx2.Client  # built on first use; see below
+_shared_client_lock = threading.Lock()
+# The remote client is built on first use by the module __getattr__ below, so
+# importing this module never configures TLS nor prints the "verification
+# disabled" notice -- that now fires when a remote model is actually used.
+_SHARED_REMOTE_HTTP_CLIENT: httpx2.Client  # built on first use; see below
+_shared_remote_client_lock = threading.Lock()
+
+
+def _shared_http_client() -> httpx2.Client:
+    """The process-wide client for in-cluster (non-remote) model endpoints.
+
+    Built lazily for the same reason as the remote client: an import-time
+    ``httpx2.Client()`` turns a malformed proxy variable into an unimportable
+    package (see :func:``_new_http_client``).
+    """
+    client = globals().get("_SHARED_HTTP_CLIENT")
+    if client is not None:
+        return client
+    with _shared_client_lock:
+        client = globals().get("_SHARED_HTTP_CLIENT")
+        if client is None:
+            client = _new_http_client()
+            globals()["_SHARED_HTTP_CLIENT"] = client
+    return client
+
+
+def _shared_remote_http_client() -> httpx2.Client:
+    """The process-wide client for remote endpoints, built on first use.
+
+    Built lazily because constructing it calls _client_verify(remote=True),
+    which emits the one-time "TLS verification disabled" notice. At import that
+    notice fired for every process that merely imported the module -- including
+    ones that only ever talk to in-cluster endpoints.
+    """
+    client = globals().get("_SHARED_REMOTE_HTTP_CLIENT")
+    if client is not None:
+        return client
+    with _shared_remote_client_lock:
+        client = globals().get("_SHARED_REMOTE_HTTP_CLIENT")
+        if client is None:
+            client = _new_http_client(
+                verify=_client_verify(remote=True),
+                limits=_pool_limits_from_env(),
+            )
+            globals()["_SHARED_REMOTE_HTTP_CLIENT"] = client
+    return client
+
+
+def __getattr__(name: str) -> Any:
+    """Keep the shared-client globals readable as module attributes (PEP 562).
+
+    Both are lazy now, so a bare attribute read must still resolve to the
+    constructed client (legacy access path).  New code should call
+    _shared_http_client() / _shared_remote_http_client().
+    """
+    if name == "_SHARED_REMOTE_HTTP_CLIENT":
+        return _shared_remote_http_client()
+    if name == "_SHARED_HTTP_CLIENT":
+        return _shared_http_client()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 # Async clients must be bound to a single event loop.
 # We cache one per running loop (keyed by the loop object itself, not
@@ -170,6 +291,62 @@ _MAX_DISCOVERED_MODEL_NAMES = max(64, int(os.environ.get("DISCOVERED_MODEL_CACHE
 _DISCOVERY_FAILURE_TTL_S = 60.0
 _discovery_failures: dict[str, float] = {}
 
+# Same negative-cache idea for DecisionModel model-card reads: the card is
+# fetched lazily on first capability access, and a down endpoint must not be
+# re-probed on every question_types/supports call.
+_MODEL_CARD_FAILURE_TTL_S = 60.0
+_model_card_failures: dict[str, float] = {}
+
+
+def _http_status_error_detail(exc: httpx2.HTTPStatusError) -> str:
+    """A one-line reason from a non-2xx discovery answer: status + the API's
+    own ``detail``/``error`` text. The PCAI LLM gateway says exactly why a
+    key was refused ("invalid, revoked, or expired key"), which is the whole
+    diagnosis for a 401 -- raise_for_status() alone would hide it."""
+    response = exc.response
+    message = f"HTTP {response.status_code} {response.reason_phrase}".strip()
+    detail = ""
+    try:
+        body = response.json()
+    except ValueError:
+        body = None
+    if isinstance(body, dict):
+        raw = body.get("detail") or body.get("error") or body.get("message")
+        if isinstance(raw, str):
+            detail = raw
+    if not detail:
+        detail = (response.text or "").strip()[:200]
+    return f"{message}: {detail}" if detail else message
+
+
+def _fetch_model_ids(
+    base_url: str, api_key: str = "", remote: bool = True, timeout: float = 10.0
+) -> tuple[list[str], str]:
+    """One ``GET {base_url}/models`` probe: (model ids, error reason).
+
+    ``base_url`` is the OpenAI base URL (root + ``"/v1"``). Never raises: a
+    down endpoint or a non-200 answer comes back as an empty list plus a
+    human-readable reason; a reachable endpoint that lists no models returns
+    ``([], "")`` (an empty answer is not a failure). Auto-discovery (which
+    wants the first id, and caches it) and the webapp's model dropdown (which
+    wants the whole list, uncached) share this one probe so both always see
+    exactly the same models.
+    """
+    url = f"{base_url}/models"
+    client = _shared_remote_http_client() if remote else _shared_http_client()
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    try:
+        resp = client.get(url, headers=headers, timeout=timeout)
+        resp.raise_for_status()
+        data = resp.json()
+        models = data.get("data", []) if isinstance(data, dict) else []
+        ids = [str(m["id"]) for m in models if isinstance(m, dict) and m.get("id")]
+        return ids, ""
+    except httpx2.HTTPStatusError as e:
+        return [], _http_status_error_detail(e)
+    except Exception as e:
+        return [], f"{type(e).__name__}: {e}"
+
 
 def discover_model_name(base_url: str, api_key: str = "", remote: bool = True) -> str:
     """Best-effort lookup of the served model id via ``GET {base_url}/models``.
@@ -189,40 +366,47 @@ def discover_model_name(base_url: str, api_key: str = "", remote: bool = True) -
         last_failure = _discovery_failures.get(url)
     if last_failure is not None and (time.monotonic() - last_failure) < _DISCOVERY_FAILURE_TTL_S:
         return ""
-    client = _SHARED_REMOTE_HTTP_CLIENT if remote else _SHARED_HTTP_CLIENT
-    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-    try:
-        resp = client.get(url, headers=headers, timeout=10.0)
-        resp.raise_for_status()
-        data = resp.json()
-        models = data.get("data", []) if isinstance(data, dict) else []
-        ids = [str(m["id"]) for m in models if isinstance(m, dict) and m.get("id")]
-        if ids:
-            logger.info(
-                "Auto-discovered model name '%s' from %s (available: %s)",
-                ids[0],
-                url,
-                ids,
-            )
-            with _discovered_model_lock:
-                _discovered_model_names[url] = ids[0]
-                _discovery_failures.pop(url, None)
-                if len(_discovered_model_names) > _MAX_DISCOVERED_MODEL_NAMES:
-                    _discovered_model_names.pop(next(iter(_discovered_model_names)))
-            return ids[0]
-        logger.warning("No models listed at %s; leaving model_name empty.", url)
-        with _discovered_model_lock:
-            _discovery_failures[url] = time.monotonic()
-    except Exception as e:
+    ids, error = _fetch_model_ids(base_url, api_key, remote=remote)
+    if error:
         logger.warning(
             "Could not auto-discover model name from %s: %s. "
             "Set model_name explicitly if the endpoint lacks /v1/models.",
             url,
-            e,
+            error,
         )
         with _discovered_model_lock:
             _discovery_failures[url] = time.monotonic()
-    return ""
+        return ""
+    if not ids:
+        logger.warning("No models listed at %s; leaving model_name empty.", url)
+        with _discovered_model_lock:
+            _discovery_failures[url] = time.monotonic()
+        return ""
+    logger.info(
+        "Auto-discovered model name '%s' from %s (available: %s)",
+        ids[0],
+        url,
+        ids,
+    )
+    with _discovered_model_lock:
+        _discovered_model_names[url] = ids[0]
+        _discovery_failures.pop(url, None)
+        if len(_discovered_model_names) > _MAX_DISCOVERED_MODEL_NAMES:
+            _discovered_model_names.pop(next(iter(_discovered_model_names)))
+    return ids[0]
+
+
+def discover_model_ids(
+    base_url: str, api_key: str = "", remote: bool = True, timeout: float = 10.0
+) -> tuple[list[str], str]:
+    """Every model id advertised by ``GET {base_url}/models``: (ids, error).
+
+    The uncached full-list counterpart of :func:`discover_model_name` -- for
+    callers that present a CHOICE (the webapp's chat-page model dropdown)
+    rather than resolving the one served model. Same client, TLS posture and
+    auth header as auto-discovery, so the list matches what a run would see.
+    """
+    return _fetch_model_ids(base_url, api_key, remote=remote, timeout=timeout)
 
 
 def _get_async_client(remote: bool = False) -> httpx2.AsyncClient:
@@ -258,11 +442,14 @@ def _get_async_client(remote: bool = False) -> httpx2.AsyncClient:
 __all__ = [
     "BaseModel",
     "ChatModel",
+    "DecisionModel",
     "EmbeddingModel",
     "RerankerModel",
+    "SpeechFlowModel",
     "ToolDefinition",
     "VoiceModel",
     "discover_model_name",
+    "prefetch_model_cards",
     "strip_tool_markers",
 ]
 
@@ -390,6 +577,47 @@ class _NamedBytesIO(io.BytesIO):
 
 @dataclass
 class BaseModel:
+    """Shared plumbing for every PCAI model wrapper in the catalog.
+
+    A BaseModel is a dataclass describing ONE deployed endpoint plus the lazy
+    machinery to talk to it: an OpenAI-compatible sync/async client, the
+    resolved base URL, and (in subclasses) a higher-level adapter.
+
+    Fields
+    ------
+    model_name:
+        The served model id, e.g. "Qwen/Qwen3.8-27B-FP8". May be left empty:
+        when currently_deployed is True it is discovered at construction time
+        from GET {base_url}/models.
+    url_remote:
+        The externally reachable serving URL (the PCAI ingress hostname).
+    description:
+        Free text used for tool descriptions; a generated one is used if empty.
+    model_instantiation_class / model_instantiation_kwargs:
+        Optional callable (plus kwargs) that builds the high-level adapter
+        returned by .model. When None, .model raises and callers use .client
+        or .async_client directly.
+    model_usage:
+        "local" (in-cluster URL, plain HTTP) or "remote" (ingress URL, TLS).
+        Switch with .local() / .remote(); both drop the memoized clients.
+    api_key:
+        Bearer token for the endpoint. Empty means a key-less endpoint.
+    currently_deployed:
+        False marks a catalog placeholder: construction skips model-name
+        discovery and .client / .async_client refuse to build.
+    allowable_modalities:
+        Which of text/audio/image/video this model accepts.
+
+    Attributes
+    ----------
+    base_url:
+        {url_local or url_remote}/v1, chosen by model_usage.
+    client / async_client:
+        OpenAI / AsyncOpenAI bound to base_url, sharing one pooled HTTP client.
+    model:
+        The high-level adapter built by build_model(); subclass-specific.
+    """
+
     # Model args. ``model_name`` is optional: when left empty (and the model
     # is deployed) it is auto-discovered at construction time from the
     # OpenAI-compatible ``GET {base_url}/models`` endpoint -- the same trick
@@ -403,8 +631,8 @@ class BaseModel:
     model_instantiation_kwargs: dict[str, Any] = field(default_factory=dict)
 
     # OpenAI clients
-    model_client_class: Callable = OpenAI
-    model_async_client_class: Callable = AsyncOpenAI
+    model_client_class: Callable = field(default_factory=lambda: _openai_client_class("OpenAI"))
+    model_async_client_class: Callable = field(default_factory=lambda: _openai_client_class("AsyncOpenAI"))
 
     model_usage: Literal["local", "remote"] = "local"
     api_key: str = ""
@@ -428,14 +656,34 @@ class BaseModel:
     allowable_modalities: tuple[input_modalities, ...] = ("text",)
 
     @classmethod
-    def from_config(cls, config: dict[str, Any], api_key: str = "") -> "BaseModel":
-        """Construct from a DB config dict + resolved api_key.
+    def from_config(cls, config: dict[str, Any], api_key: str = "") -> BaseModel:
+        """Build a model from a stored config dict and a resolved API key.
 
-        Only fields that exist on the dataclass are mapped.  Callable
-        fields (``preprocessor``, ``model_instantiation_class``) are
-        skipped when the JSON value is a string — they can't be
-        deserialized.  Lists are converted to tuples/sets where the
-        dataclass expects them.
+        The counterpart of dumping a catalog entry to JSON: unknown keys are
+        ignored, so a config written for a newer or older catalog still loads.
+
+        Parameters
+        ----------
+        config:
+            Field values keyed by dataclass field name (the shape stored in
+            the app DB). Only keys that exist on cls are used. Callable fields
+            (preprocessor, model_instantiation_class, model_client_class,
+            model_async_client_class) are skipped when the value is a string,
+            because a callable cannot be deserialized from JSON. allowable_modalities
+            lists become tuples and tts_supported_voices lists become sets.
+        api_key:
+            The bearer token for the endpoint, resolved by the caller (env
+            var, secret, or DB). Overrides any api_key present in config.
+
+        Returns
+        -------
+        BaseModel
+            An instance of cls, so ChatModel.from_config gives a ChatModel.
+
+        Raises
+        ------
+        TypeError
+            config carries a value of the wrong type for the dataclass field.
         """
         from dataclasses import fields as dc_fields
 
@@ -469,6 +717,10 @@ class BaseModel:
         # Disabled models are skipped so the catalog can hold placeholders.
         if not self.model_name and self.currently_deployed:
             self.model_name = self._discover_model_name()
+        if self.model_usage == "remote":
+            # One-time notice that remote TLS is unverified. Emitted here, not
+            # at import, so it only fires for processes that actually go remote.
+            _remote_verify()
 
     def _discover_model_name(self) -> str:
         """Look up the served model id via ``GET {base_url}/models``.
@@ -555,7 +807,7 @@ class BaseModel:
 
     @cached_property
     def http_client(self):
-        return _SHARED_REMOTE_HTTP_CLIENT if self.model_usage == "remote" else _SHARED_HTTP_CLIENT
+        return _shared_remote_http_client() if self.model_usage == "remote" else _shared_http_client()
 
     @cached_property
     def http_async_client(self):
@@ -566,6 +818,27 @@ class BaseModel:
         return self.build_model()
 
     def build_model(self, **kwargs):
+        """Instantiate the high-level adapter for this endpoint.
+
+        Parameters
+        ----------
+        **kwargs:
+            Extra keyword arguments forwarded to model_instantiation_class on
+            top of model / api_key / base_url / http_client /
+            http_async_client and the configured model_instantiation_kwargs.
+
+        Returns
+        -------
+        Any
+            Whatever model_instantiation_class returns (for example a
+            MultiModalEmbeddings for an EmbeddingModel).
+
+        Raises
+        ------
+        ValueError
+            model_instantiation_class is None: this catalog entry has no
+            adapter, so use .client or .async_client instead.
+        """
         if self.model_instantiation_class is None:
             raise ValueError(
                 "model_instantiation_class is not set. The langchain-based defaults "
@@ -584,10 +857,23 @@ class BaseModel:
         )
 
     def remote(self) -> None:
+        """Switch this model to its externally reachable ingress URL.
+
+        Sets model_usage to "remote" and drops every cached client/property, so
+        the next access rebuilds against url_remote (TLS-verified unless
+        REMOTE_CA_BUNDLE points at a platform CA bundle).
+        """
         self.model_usage = "remote"
+        _remote_verify()  # one-time notice: remote TLS is unverified
         self._clear_cached_class_elements()
 
     def local(self) -> None:
+        """Switch this model to its in-cluster URL (plain HTTP).
+
+        Sets model_usage to "local" and drops every cached client/property, so
+        the next access rebuilds against the rewritten .svc.cluster.local
+        address. Only meaningful when running inside the cluster.
+        """
         self.model_usage = "local"
         self._clear_cached_class_elements()
 
@@ -625,6 +911,26 @@ class BaseModel:
 
 @dataclass(repr=False)
 class ChatModel(BaseModel):
+    """A chat/completion model (LLM or VLM) on a PCAI serving endpoint.
+
+    Adds a normalising chat call on top of BaseModel: whatever you pass as
+    messages is rewritten into valid OpenAI chat messages, including the
+    {text, image, video} dict form that would otherwise be sent to the model as
+    a tool call instead of being read as an image.
+
+    Attributes
+    ----------
+    transport:
+        Which Agents SDK transport to use: "chat-completions" (default; the
+        only reliable tool-calling path on SGLang/vLLM) or "responses"
+        (/v1/responses, for the real OpenAI API).
+
+    Examples
+    --------
+        out = model.llm_chat_function_call("Summarise this log line.")
+        print(out.choices[0].message.content)
+    """
+
     _cached_functions = (
         "llm_chat_function",
         "llm_async_chat_function",
@@ -712,7 +1018,39 @@ class ChatModel(BaseModel):
         return partial(self.client.chat.completions.create, model=self.model_name)
 
     def llm_chat_function_call(self, messages: messages_dtype, **chat_kwargs):
+        """Run one blocking Chat Completions call.
 
+        Parameters
+        ----------
+        messages:
+            A plain string (wrapped as a single user message), one message
+            dict, or a list of message dicts. Multimodal content is accepted
+            either in OpenAI content-parts form or as a {text, image,
+            image_url, video} dict, which is converted to content parts.
+        **chat_kwargs:
+            Any extra Chat Completions parameter (temperature, max_tokens,
+            tools, response_format, ...), passed straight to the SDK.
+
+        Returns
+        -------
+        openai.types.chat.ChatCompletion
+            The raw SDK response: choices[0].message.content holds the text and
+            usage carries the token counts.
+
+        Raises
+        ------
+        AssertionError
+            The catalog entry is marked currently_deployed = False.
+
+        Examples
+        --------
+        A text prompt, then a vision prompt::
+
+            r = model.llm_chat_function_call("Name this colour: #ff0000")
+            r = model.llm_chat_function_call(
+                {"text": "What is in this image?", "image": "data:image/png;base64,..."}
+            )
+        """
         return self.llm_chat_function(messages=self._fix_chat_inputs(messages), **chat_kwargs)
 
     @cached_property
@@ -720,6 +1058,17 @@ class ChatModel(BaseModel):
         return partial(self.async_client.chat.completions.create, model=self.model_name)
 
     def llm_async_chat_function_call(self, messages: str | dict[str, Any] | list[dict[str, Any]], **chat_kwargs):
+        """Awaitable form of llm_chat_function_call.
+
+        Takes and returns the same things, but must be awaited from async code:
+
+            r = await model.llm_async_chat_function_call("Summarise this.")
+
+        Returns
+        -------
+        openai.types.chat.ChatCompletion
+            The raw SDK response.
+        """
         return self.llm_async_chat_function(messages=self._fix_chat_inputs(messages), **chat_kwargs)
 
     @cached_property
@@ -727,6 +1076,31 @@ class ChatModel(BaseModel):
         return partial(self.client.responses.create, model=self.model_name)
 
     def llm_response_function_call(self, input: str | dict[str, Any] | list[dict[str, Any]], **chat_kwargs):
+        """Run one blocking Responses API call (/v1/responses).
+
+        Unlike the chat helpers this does NOT normalise multimodal dicts; the
+        Responses API takes input items directly.
+
+        Parameters
+        ----------
+        input:
+            A prompt string, a response input item dict, or a list of them.
+        **chat_kwargs:
+            Extra Responses parameters (instructions, max_output_tokens,
+            temperature, tools, ...).
+
+        Returns
+        -------
+        openai.types.responses.Response
+            The raw response; output_text holds the concatenated text.
+
+        Raises
+        ------
+        openai.BadRequestError
+            The endpoint does not implement /v1/responses. SGLang and vLLM
+            reject tool-result round-trips here, which is why transport
+            defaults to "chat-completions".
+        """
         return self.llm_response_function(input=input, **chat_kwargs)
 
     @cached_property
@@ -734,14 +1108,70 @@ class ChatModel(BaseModel):
         return partial(self.async_client.responses.create, model=self.model_name)
 
     def llm_async_response_function_call(self, input: str | dict[str, Any] | list[dict[str, Any]], **chat_kwargs):
+        """Awaitable form of llm_response_function_call.
+
+        Parameters
+        ----------
+        input:
+            A prompt string, a response input item dict, or a list of them.
+            Unlike the chat helpers, multimodal dicts are not normalised here.
+        **chat_kwargs:
+            Extra Responses parameters (instructions, max_output_tokens,
+            temperature, tools, ...).
+
+        Returns
+        -------
+        openai.types.responses.Response
+            The raw response; output_text holds the concatenated text.
+        """
         return self.llm_async_response_function(input=input, **chat_kwargs)
 
     def agent(self, tool_json: dict[str, dict[str, Any]] | None = None):
+        """Build an Agents SDK Agent bound to this model (blocking wrapper).
+
+        Parameters
+        ----------
+        tool_json:
+            Optional mapping of MCP server name -> connection config. Each
+            entry is attached as a streamable-HTTP MCP server and becomes the
+            agent tools. Omit for a plain model agent.
+
+        Returns
+        -------
+        agents.Agent
+            The SDK agent, ready for Runner.run(...).
+
+        Raises
+        ------
+        ImportError
+            The openai-agents package is not installed.
+        """
         if Agent is None:
             raise ImportError("The `agents` SDK is not installed. Install with: pip install openai-agents")
         return sync_wrapper_safe(self.aagent, {"tool_json": tool_json})
 
     async def aagent(self, tool_json: dict[str, dict[str, Any]] | None = None) -> Agent:
+        """Awaitable form of agent(); use it when already inside an event loop.
+
+        Tracing is disabled process-wide on first call, because the SDK
+        otherwise phones home to api.openai.com, which fails behind the PCAI
+        firewall.
+
+        Parameters
+        ----------
+        tool_json:
+            Optional MCP server configs, as for agent().
+
+        Returns
+        -------
+        agents.Agent
+            The SDK agent.
+
+        Raises
+        ------
+        ImportError
+            The openai-agents package is not installed.
+        """
         if Agent is None:
             raise ImportError("The `agents` SDK is not installed. Install with: pip install openai-agents")
         # Tracing off: the SDK phones home to api.openai.com by default,
@@ -838,7 +1268,27 @@ class ChatModel(BaseModel):
 
 @dataclass(repr=False)
 class VoiceModel(BaseModel):
-    model_instantiation_class: Callable = OpenAI
+    """A speech model: ASR (transcription), TTS (synthesis) or JOINT.
+
+    Fields
+    ------
+    model_type:
+        "ASR" exposes the asr_* helpers only, "TTS" the tts_* helpers only,
+        "JOINT" exposes both.
+    tts_voice:
+        Default voice name used by tts_function_call and the synthesize tool.
+    tts_supported_voices:
+        Voices known for this model. Seeded from config; otherwise fetched
+        once from GET {base_url}/audio/voices and memoized only on success, so
+        an unreachable endpoint is retried on the next access.
+    tts_skip_verify:
+        Skip the voices lookup entirely (offline or air-gapped use).
+
+    Note that .model raises on purpose: speech calls do not go through an
+    adapter. Use .client, or the *_function_call helpers below.
+    """
+
+    model_instantiation_class: Callable = field(default_factory=lambda: _openai_client_class("OpenAI"))
 
     model_type: Literal["ASR", "TTS", "JOINT"] = "ASR"
 
@@ -938,6 +1388,27 @@ class VoiceModel(BaseModel):
         return partial(self.client.audio.speech.create, model=self.model_name, voice=self.tts_voice)
 
     def tts_function_call(self, input: str, **chat_kwargs):
+        """Synthesise speech from text (blocking).
+
+        Parameters
+        ----------
+        input:
+            The text to speak.
+        **chat_kwargs:
+            Extra Audio.speech.create parameters: voice (overrides tts_voice),
+            response_format ("mp3", "wav", ...), speed.
+
+        Returns
+        -------
+        openai._legacy_response.HttpxBinaryResponseContent
+            The audio payload; .content holds the raw bytes and
+            .write_to_file(path) saves them.
+
+        Raises
+        ------
+        AssertionError
+            model_type is "ASR": this model cannot synthesise.
+        """
         return self.tts_function(input=input, **chat_kwargs)
 
     @cached_property
@@ -950,6 +1421,26 @@ class VoiceModel(BaseModel):
         )
 
     def tts_async_function_call(self, input: str, **chat_kwargs):
+        """Awaitable form of tts_function_call.
+
+        Parameters
+        ----------
+        input:
+            The text to speak.
+        **chat_kwargs:
+            Extra Audio.speech.create parameters: voice (overrides tts_voice),
+            response_format ("mp3", "wav", ...), speed.
+
+        Returns
+        -------
+        openai._legacy_response.HttpxBinaryResponseContent
+            The audio payload; await it, then read .content for the bytes.
+
+        Raises
+        ------
+        AssertionError
+            model_type is "ASR": this model cannot synthesise.
+        """
         return self.tts_async_function(input=input, **chat_kwargs)
 
     @cached_property
@@ -958,6 +1449,27 @@ class VoiceModel(BaseModel):
         return partial(self.client.audio.transcriptions.create, model=self.model_name)
 
     def asr_function_call(self, file, **chat_kwargs):
+        """Transcribe audio to text (blocking).
+
+        Parameters
+        ----------
+        file:
+            The audio to transcribe: a file path, a file-like object, or a
+            (filename, bytes) tuple, as accepted by the OpenAI SDK.
+        **chat_kwargs:
+            Extra Audio.transcriptions.create parameters: language, prompt,
+            response_format, temperature.
+
+        Returns
+        -------
+        openai.types.audio.Transcription
+            The transcription; .text holds the transcript.
+
+        Raises
+        ------
+        AssertionError
+            model_type is "TTS": this model cannot transcribe.
+        """
         return self.asr_function(file=file, **chat_kwargs)
 
     @cached_property
@@ -966,6 +1478,27 @@ class VoiceModel(BaseModel):
         return partial(self.async_client.audio.transcriptions.create, model=self.model_name)
 
     def asr_async_function_call(self, file, **chat_kwargs):
+        """Awaitable form of asr_function_call.
+
+        Parameters
+        ----------
+        file:
+            The audio to transcribe: a file path, a file-like object, or a
+            (filename, bytes) tuple, as accepted by the OpenAI SDK.
+        **chat_kwargs:
+            Extra Audio.transcriptions.create parameters: language, prompt,
+            response_format, temperature.
+
+        Returns
+        -------
+        openai.types.audio.Transcription
+            The transcription; .text holds the transcript.
+
+        Raises
+        ------
+        AssertionError
+            model_type is "TTS": this model cannot transcribe.
+        """
         return self.asr_async_function(file=file, **chat_kwargs)
 
     def to_mcp_tools(self) -> list[ToolDefinition]:
@@ -1097,9 +1630,9 @@ class SpeechFlowModel(BaseModel):
     # Resolved sub-models.  Populated by
     # orchestration.adapters.build_model_from_source at build time, not
     # from the stored config (init=False).
-    asr_model: "VoiceModel | None" = field(default=None, init=False, repr=False)
-    llm_model: "ChatModel | None" = field(default=None, init=False, repr=False)
-    tts_model: "VoiceModel | None" = field(default=None, init=False, repr=False)
+    asr_model: VoiceModel | None = field(default=None, init=False, repr=False)
+    llm_model: ChatModel | None = field(default=None, init=False, repr=False)
+    tts_model: VoiceModel | None = field(default=None, init=False, repr=False)
 
     _cached_properties: tuple[str, ...] = ()
     _cached_functions: tuple[str, ...] = ()
@@ -1335,6 +1868,39 @@ def _audio_extension(content_type: str) -> str:
 
 @dataclass(repr=False)
 class EmbeddingModel(BaseModel):
+    """An embedding model: text and/or multimodal inputs to dense vectors.
+
+    Adds chunking knobs and the dataset fingerprint guard on top of BaseModel.
+
+    Fields
+    ------
+    embedding_dim:
+        Vector width, so callers can size an index without a probe call.
+    chunk_size / chunk_overlap:
+        Token (or character) budget for text chunking.
+    code_chunk_size / code_chunk_overlap:
+        Separate budget for code and structured data.
+    tokenizer_name / tokenizer_type:
+        Set tokenizer_type = "HuggingFace" to chunk by real token counts;
+        otherwise chunking falls back to characters.
+    alias:
+        Other model ids that must count as THE SAME embedder for the dataset
+        fingerprint guard (for example an FP8 redeploy of the same base
+        model), so datasets indexed under the alias keep working without a
+        rebuild. One name, a list, or a comma-separated string.
+    preprocessor:
+        Optional callable applied to inputs before they are embedded.
+
+    Attributes
+    ----------
+    model:
+        A MultiModalEmbeddings adapter (unless model_instantiation_class
+        overrides it), exposing embed_documents / aembed_documents.
+    text_splitter / code_text_splitter:
+        TokenTextSplitter instances, or None when tokenizer_type is not
+        "HuggingFace" (callers then chunk by characters).
+    """
+
     # Model args w/ defaults
     model_instantiation_class: Callable | None = None
 
@@ -1428,6 +1994,8 @@ class EmbeddingModel(BaseModel):
 
     @cached_property
     def model(self):
+        from .model_adapters import MultiModalEmbeddings
+
         if self.model_instantiation_class is None or self.model_instantiation_class is MultiModalEmbeddings:
             return MultiModalEmbeddings(self)
         return super().model
@@ -1471,8 +2039,27 @@ class EmbeddingModel(BaseModel):
 
 @dataclass(repr=False)
 class RerankerModel(BaseModel):
+    """A reranker: scores query/document pairs so a retriever can reorder them.
+
+    allowable_modalities defaults to text, audio, image and video, so the same
+    class serves text-only rerankers and multimodal ones.
+
+    Fields
+    ------
+    mm_processor_kwargs:
+        Extra processor arguments forwarded to the underlying model.
+    preprocessor:
+        Optional callable applied to inputs before they are scored.
+
+    Attributes
+    ----------
+    model:
+        A MultiModalReranker adapter exposing rerank / arerank. For each query
+        it returns the documents ordered by descending relevance, with scores.
+    """
+
     # Model args w/ defaults
-    model_instantiation_class: Callable = MultiModalReranker
+    model_instantiation_class: Callable = field(default_factory=_multi_modal_reranker)
 
     mm_processor_kwargs: dict[str, Any] = field(default_factory=dict)
 
@@ -1526,3 +2113,758 @@ class RerankerModel(BaseModel):
                 handler=_rerank,
             )
         ]
+
+
+@dataclass(repr=False)
+class DecisionModel(BaseModel):
+    """A *decision* model served by the vLLM-SR native runtime (System One API).
+
+    This is the analog of ChatModel for the ``decision3`` model family
+    (vllm-sr/d3-turbo, d3, d3-flash, d3-mini, d3-nano, d3-lite, d3-edge).
+    The two classes differ at the protocol level, not just in naming:
+
+    ============  =========================================================
+    ChatModel     POST /v1/chat/completions -- autoregressive text out.
+    DecisionModel POST /v1/systemone       -- calibrated probabilities out.
+    ============  =========================================================
+
+    A decision model never generates text: it reads a *state* (text/JSON, plus
+    optional images and videos) once and answers a set of typed *questions*,
+    returning a probability per candidate answer.  usage.output_tokens is
+    always 0.  There is NO /v1/chat/completions and NO /v1/responses on the
+    endpoint, which is why this class does not use the OpenAI SDK the way
+    ChatModel does -- it speaks the decision wire format over the shared
+    httpx2 clients.
+
+    Question types (what a given checkpoint supports is advertised by
+    GET /v1/models -> question_types):
+
+    * choice -- pick one of N labelled options (criteria: name -> description)
+    * noul   -- yes/no (criteria: optional true/false descriptions)
+    * score  -- ordered rubric (criteria: list of level names, 2..10)
+    * box    -- one bounding box in an image, or at a given second of a video
+    * track  -- a box per moment across one video (rate: 1 or 2 per second)
+
+    box/track are available on d3-turbo only within the family.
+
+    Example
+    -------
+    >>> m = DecisionModel(
+    ...     model_name="vllm-sr/d3-turbo",
+    ...     url_remote="https://vllmsr-d3-turbo-router.<ns>.serving.<domain>",
+    ...     api_key=KEY,
+    ... )
+    >>> m.choice(
+    ...     "Ticket: the invoice total is wrong after the plan change.",
+    ...     "Which team handles this?",
+    ...     {"billing": "Billing", "tech": "Technical support"},
+    ... )
+    {'type': 'choice', 'choice': 'billing',
+     'probabilities': {'billing': 0.9998, 'tech': 0.0002},
+     'confidence': 0.9997}
+    """
+
+    model_instantiation_class: Callable | None = None
+
+    # A decision model never speaks the OpenAI SDK (the client/async_client
+    # properties below raise), so it overrides the inherited OpenAI defaults
+    # with a stand-in. That keeps openai out of the import path entirely for a
+    # decision-only caller.
+    model_client_class: Callable = field(default_factory=lambda: _no_openai_client)
+    model_async_client_class: Callable = field(default_factory=lambda: _no_openai_client)
+
+    # Advertised by GET /v1/models (best-effort; empty when unreachable).
+    # Can also be PASSED IN, which skips that call entirely -- bake the card
+    # into a catalog entry and no request is ever made for it:
+    #     DecisionModel(..., model_card={"question_types": [...], "limits": {...}})
+    # A non-empty card is authoritative: nothing is fetched for it.
+    # NOTE: reading this field never fetches -- call load_model_card() (or any
+    # capability accessor) to populate it on demand.
+    # Kept as a plain dict rather than one field per attribute: a plain field
+    # that is ALSO named in _cached_properties gets popped by
+    # _clear_cached_class_elements and raises AttributeError on next access
+    # (the trap VoiceModel documents for tts_supported_voices).
+    model_card: dict[str, Any] = field(default_factory=dict)
+
+    _cached_properties = (
+        "client",
+        "async_client",
+        "base_url",
+        "http_client",
+        "http_async_client",
+        "model",
+        "system_one_function",
+        "system_one_async_function",
+    )
+    _cached_functions = (
+        "system_one_function",
+        "system_one_async_function",
+    )
+
+    allowable_modalities = ("text", "image", "video")
+
+    # -- construction -----------------------------------------------------
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        # The model card is deliberately NOT fetched here. Every catalog entry
+        # is constructed at import time, so a fetch here costs one blocking
+        # DNS+HTTP round-trip per entry -- seconds on a machine outside the
+        # cluster, where the in-cluster *.svc.cluster.local name never
+        # resolves. It is read on first use of a capability accessor instead
+        # (see _ensure_model_card), which keeps construction offline.
+
+    def _ensure_model_card(self) -> dict[str, Any]:
+        """Fetch this model card on first capability read, with negative caching.
+
+        Best-effort: a failed fetch leaves the card empty and is not retried for
+        _MODEL_CARD_FAILURE_TTL_S, so a down endpoint costs one attempt per
+        minute rather than one per question_types access.
+        """
+        if self.model_card or not self.currently_deployed:
+            return self.model_card
+        url = f"{self.base_url}/models"
+        last_failure = _model_card_failures.get(url)
+        if last_failure is not None and (time.monotonic() - last_failure) < _MODEL_CARD_FAILURE_TTL_S:
+            return self.model_card
+        card = self._fetch_model_card()
+        if card:
+            self.model_card = card
+            _model_card_failures.pop(url, None)
+        else:
+            _model_card_failures[url] = time.monotonic()
+        return self.model_card
+
+    def load_model_card(self) -> dict[str, Any]:
+        """Return this model's card, reading it from the endpoint on first use.
+
+        model_card is a plain dataclass field, so READING IT NEVER FETCHES: it
+        stays {} until something asks for a capability. The capability
+        accessors (question_types, max_input_tokens, validated_input_tokens,
+        supports) call this internally; call it directly when you want the whole
+        card. Calling it again is free -- the card is memoized, and a failure is
+        negative-cached for _MODEL_CARD_FAILURE_TTL_S.
+
+        Returns
+        -------
+        dict[str, Any]
+            The card exactly as the endpoint served it (family, surfaces,
+            question_types, limits, ...), or {} when it could not be read.
+        """
+        return self._ensure_model_card()
+
+    def _fetch_model_card(self) -> dict[str, Any]:
+        """Best-effort read of this model entry from GET {base_url}/models.
+
+        Returns {} on any failure -- same contract as discover_model_name, so an
+        unreachable endpoint degrades to "unknown capabilities" instead of
+        failing the caller.
+        """
+        url = f"{self.base_url}/models"
+        headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+        try:
+            resp = self.http_client.get(url, headers=headers, timeout=10.0)
+            resp.raise_for_status()
+            body = resp.json()
+            data = body.get("data", []) if isinstance(body, dict) else []
+            for entry in data:
+                if isinstance(entry, dict) and entry.get("id") == self.model_name:
+                    return entry
+            if data and isinstance(data[0], dict):
+                return data[0]
+        except Exception as exc:
+            logger.warning("Could not read the model card from %s: %s", url, exc)
+        return {}
+
+    # -- capabilities (read from the model card) --------------------------
+
+    @property
+    def question_types(self) -> tuple[str, ...]:
+        """Question types this checkpoint accepts, e.g. (choice, noul, score, box, track)."""
+        return tuple(self._ensure_model_card().get("question_types") or ())
+
+    @property
+    def max_input_tokens(self) -> int:
+        """Architectural ceiling per question (e.g. 262144); 0 when unknown."""
+        return int((self._ensure_model_card().get("limits") or {}).get("max_input_tokens") or 0)
+
+    @property
+    def validated_input_tokens(self) -> int:
+        """Length the checkpoint was validated at (e.g. 32768); 0 when unknown."""
+        return int((self._ensure_model_card().get("limits") or {}).get("validated_input_tokens") or 0)
+
+    def supports(self, question_type: str) -> bool:
+        """True when the served checkpoint advertises question_type.
+
+        Unknown capabilities (unreachable /v1/models) return True rather than
+        blocking the call: the server is the authority and answers 400 with a
+        precise reason if the type is genuinely unsupported.
+        """
+        types = self.question_types
+        return True if not types else question_type in types
+
+    # -- transport --------------------------------------------------------
+
+    @cached_property
+    def client(self):
+        raise ValueError(
+            "A decision model has no OpenAI client: it serves POST /v1/systemone "
+            "and never /v1/chat/completions. Use system_one(...), system_one_async(...), "
+            "or the helpers decide(...) / choice(...) / yes_no(...) / score(...)."
+        )
+
+    @cached_property
+    def async_client(self):
+        raise ValueError(
+            "A decision model has no OpenAI client: it serves POST /v1/systemone "
+            "and never /v1/chat/completions. Use system_one_async(...)."
+        )
+
+    @cached_property
+    def model(self):
+        raise ValueError(
+            "Use system_one(...) / system_one_async(...); a decision model is not instantiated as a chat client."
+        )
+
+    @property
+    def decisions_url(self) -> str:
+        """{base_url}/systemone -- base_url already ends in /v1."""
+        return f"{self.base_url}/systemone"
+
+    def _headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+
+    # -- request building -------------------------------------------------
+
+    @staticmethod
+    def _check_questions(questions: dict[str, Any]) -> None:
+        """Validate a questions payload before it is sent.
+
+        The server remains the authority; this mirrors its documented limits so
+        a typo fails locally with a clear message instead of a 400 round-trip.
+
+        Parameters
+        ----------
+        questions:
+            Mapping of {question_id: spec}. Each spec is a dict with a "type"
+            (choice, noul, score, box or track) and non-empty "instructions".
+            A choice question also needs "criteria" as {option: description}
+            with 2..255 options; a score question needs "criteria" as a list of
+            2..10 levels; a track question accepts an optional "rate" of 1 or 2.
+            noul and box questions need no criteria.
+
+        Returns
+        -------
+        None
+            Returns nothing; raises on invalid input.
+
+        Raises
+        ------
+        TypeError
+            A value has the wrong type: questions is not a dict, a question id
+            is not a str, a spec is not a dict, or criteria is not the shape the
+            question type requires. Treat this as a programming error
+            (ruff TRY004).
+        ValueError
+            A value has the right type but an unusable value: empty questions,
+            more than 64 questions, an empty id, an unknown type, missing
+            instructions, or an out-of-range criteria/rate.
+
+        Examples
+        --------
+        A well-formed choice question passes silently::
+
+            DecisionModel._check_questions(
+                {"answer": {"type": "choice", "instructions": "Which one?",
+                            "criteria": {"a": "the first", "b": "the second"}}}
+            )
+
+        A noul question needs no criteria at all::
+
+            DecisionModel._check_questions(
+                {"answer": {"type": "noul", "instructions": "Is this text?"}}
+            )
+        """
+        if not isinstance(questions, dict):
+            raise TypeError(f"questions must be a dict of {{id: question}}; got {type(questions).__name__}.")
+        if not questions:
+            raise ValueError("questions must be a non-empty dict of {id: question}.")
+        if len(questions) > 64:
+            raise ValueError(f"At most 64 questions per request; got {len(questions)}.")
+        for qid, spec in questions.items():
+            if not isinstance(qid, str):
+                raise TypeError(f"Question ids must be strings; got {type(qid).__name__}.")
+            if not qid:
+                raise ValueError("Each question id must be a non-empty string.")
+            if not isinstance(spec, dict):
+                raise TypeError(f"Question {qid!r} must be a dict; got {type(spec).__name__}.")
+            qtype = spec.get("type")
+            if qtype not in ("choice", "noul", "score", "box", "track"):
+                raise ValueError(
+                    f"Question {qid!r} has type {qtype!r}; expected one of choice, noul, score, box, track."
+                )
+            if not spec.get("instructions"):
+                raise ValueError(f"Question {qid!r} needs non-empty 'instructions'.")
+            criteria = spec.get("criteria")
+            if qtype == "choice":
+                if not isinstance(criteria, dict):
+                    raise TypeError(
+                        f"Question {qid!r} (choice) 'criteria' must be a dict of options; "
+                        f"got {type(criteria).__name__}."
+                    )
+                if len(criteria) < 2:
+                    raise ValueError(f"Question {qid!r} (choice) needs 'criteria' with >= 2 options.")
+                if len(criteria) > 255:
+                    raise ValueError(f"Question {qid!r} (choice) has {len(criteria)} options; max 255.")
+            if qtype == "score":
+                if not isinstance(criteria, (list, tuple)):
+                    raise TypeError(
+                        f"Question {qid!r} (score) 'criteria' must be a list of 2..10 levels; "
+                        f"got {type(criteria).__name__}."
+                    )
+                if not 2 <= len(criteria) <= 10:
+                    raise ValueError(f"Question {qid!r} (score) needs 'criteria' as a list of 2..10 levels.")
+            if qtype == "track" and spec.get("rate") not in (None, 1, 2):
+                raise ValueError(f"Question {qid!r} (track) 'rate' must be 1 or 2.")
+
+    def _payload(
+        self,
+        state: Any,
+        questions: dict[str, Any],
+        *,
+        images: list[str] | None = None,
+        videos: list[str] | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        self._check_questions(questions)
+        payload: dict[str, Any] = {
+            "model": self.model_name,
+            "state": state,
+            "questions": questions,
+        }
+        if images:
+            payload["images"] = list(images)
+        if videos:
+            payload["videos"] = list(videos)
+        if options:
+            payload["options"] = dict(options)
+        return payload
+
+    # -- the call ---------------------------------------------------------
+
+    def system_one(
+        self,
+        state: Any,
+        questions: dict[str, Any],
+        *,
+        images: list[str] | None = None,
+        videos: list[str] | None = None,
+        options: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Answer every question about one state in a single request (blocking).
+
+        The System One API answers typed questions about a state instead of
+        generating text: choice (pick one option), noul (probability of yes),
+        score (expected level on a rubric), box (bounding box) and track.
+
+        Parameters
+        ----------
+        state:
+            What to judge: usually a string (a document, a log line, a prompt);
+            the server also accepts structured state.
+        questions:
+            Mapping of {question_id: spec}. Each spec carries "type" plus
+            "instructions", and "criteria" for choice (a dict of options) or
+            score (an ordered list of levels). Validated client-side first:
+            TypeError for a wrong type, ValueError for a bad value.
+        images, videos:
+            Optional base64 data: URLs, or http(s) URLs the server can reach.
+        options:
+            Server options: long_context (bool) and deadline_ms (int).
+        **kwargs:
+            Forwarded to the underlying async call.
+
+        Returns
+        -------
+        dict[str, Any]
+            The raw response envelope::
+
+                {"model": ..., "answers": {qid: answer, ...},
+                 "usage": {"input_tokens": n, "output_tokens": 0}}
+
+            The answer shape depends on the question type. Use decide(),
+            choice(), yes_no() or score() to get the answer alone.
+
+        Raises
+        ------
+        TypeError
+            A question is structurally wrong (see _check_questions).
+        ValueError
+            A question value is out of range (see _check_questions).
+        httpx2.HTTPStatusError
+            The endpoint rejected the request.
+
+        Examples
+        --------
+        Two questions, one round-trip::
+
+            out = model.system_one(
+                "the invoice total is 42.00 USD",
+                {"currency": {"type": "choice", "instructions": "Which currency?",
+                              "criteria": {"usd": "US dollars", "eur": "Euros"}},
+                 "paid": {"type": "noul", "instructions": "Is it paid?"}},
+            )
+            print(out["answers"])
+        """
+        return sync_wrapper_safe(
+            partial(self.system_one_async, **kwargs),
+            {
+                "state": state,
+                "questions": questions,
+                "images": images,
+                "videos": videos,
+                "options": options,
+            },
+        )
+
+    async def system_one_async(
+        self,
+        state: Any,
+        questions: dict[str, Any],
+        *,
+        images: list[str] | None = None,
+        videos: list[str] | None = None,
+        options: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Awaitable form of system_one; takes and returns the same things.
+
+        Prefer this inside an event loop: system_one() is a thin wrapper that
+        runs this method on a worker thread.
+
+        Returns
+        -------
+        dict[str, Any]
+            The raw response envelope, as described on system_one.
+        """
+        payload = self._payload(state, questions, images=images, videos=videos, options=options)
+        resp = await self.http_async_client.post(
+            self.decisions_url,
+            json=payload,
+            headers=self._headers(),
+            timeout=_MODEL_REQUEST_TIMEOUT,
+            **kwargs,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    # -- convenience wrappers --------------------------------------------
+
+    def decide(
+        self,
+        state: Any,
+        *,
+        instructions: str,
+        criteria: dict[str, Any] | list[str] | None = None,
+        type: str = "choice",
+        images: list[str] | None = None,
+        videos: list[str] | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Ask exactly one question and return its answer, not the envelope.
+
+        Parameters
+        ----------
+        state:
+            What to judge (see system_one).
+        instructions:
+            The question, in plain language.
+        criteria:
+            choice: {option: description} with 2..255 options.
+            score: an ordered list of 2..10 levels, low to high.
+            noul, box, track: omit it.
+        type:
+            The wire question type: "choice" (default), "noul", "score",
+            "box" or "track".
+        images, videos:
+            Optional data: URLs, or http(s) URLs the server can reach.
+        **kwargs:
+            at and rate are lifted into the question spec (used by track);
+            everything else is forwarded to system_one.
+
+        Returns
+        -------
+        dict[str, Any]
+            The answer for that one question, for example {"choice": "usd",
+            "confidence": 0.93} for a choice, {"noul": 0.87} for yes/no, or
+            {"score": 2.4} for a score. Empty when the server answered
+            nothing.
+
+        Examples
+        --------
+            ans = model.decide(
+                "The user wants a refund.",
+                instructions="Which team should handle this?",
+                criteria={"billing": "money questions", "support": "how-to"},
+            )
+            print(ans["choice"])
+        """
+        spec: dict[str, Any] = {"type": type, "instructions": instructions}
+        if criteria is not None:
+            spec["criteria"] = criteria
+        for extra in ("at", "rate"):
+            if extra in kwargs:
+                spec[extra] = kwargs.pop(extra)
+        out = self.system_one(
+            state,
+            {"answer": spec},
+            images=images,
+            videos=videos,
+            **kwargs,
+        )
+        return (out.get("answers") or {}).get("answer", {})
+
+    def choice(
+        self,
+        state: Any,
+        instructions: str,
+        criteria: dict[str, Any],
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Pick one of the given options (decide with type="choice").
+
+        Parameters
+        ----------
+        state:
+            What to judge.
+        instructions:
+            The question, in plain language.
+        criteria:
+            {option: description}; at least 2 and at most 255 options.
+        **kwargs:
+            Forwarded to decide (images, videos, at/rate, ...).
+
+        Returns
+        -------
+        dict[str, Any]
+            The answer, typically {"choice": <option>, "confidence": <float>}.
+
+        Examples
+        --------
+        # Input
+        initial_message = "Hello Friend"
+
+        state = json.dumps({            # the compact summary, NOT the raw text
+            "request": {"estimated_prompt_tokens": 5000, "message_count": 1,
+            "user_message": initial_message, "has_image": False, "current_model": "None",
+            "switch_cost": "None", "tool_count": 28, "max_tokens": 2**15, "stream": True},
+        }, sort_keys=True)
+
+        instructions = open("PCAI_LLM/documentation/routing_text_v2.md").read()
+        instructions = instructions.replace("{{model_list}}",
+        "Qwen3.8-27B, GLM-5.3-Flash, Deepseek-V4.1-Flash-1017")
+
+        criteria = {                    # {option: description}, >= 2 options
+            "Qwen3.8-27B": (
+                "pick only for simpler tasks: a greeting, lookups, reformat, classification. "
+                "Okay for smaller coding projects too. 256k token limit. "
+                "{gpu_util: 0.0%, low_demand: true}"
+            ),
+            "GLM-5.3-Flash": (
+                "pick when the deliverable IS judgement: reviewing a diff, verifying a claim, "
+                "fact-checking, careful summarisation, second opinions, contract and consistency "
+                "checks. {gpu_util: 6.3%, low_demand: true}"
+            ),
+            "Deepseek-V4.1-Flash-1017": (
+                "the default for agent work. Coding, refactors, multi-file changes, debugging, "
+                "multi-step plans, tool-driven loops, long context, anything expensive to get "
+                "wrong. Strong coding default. {gpu_util: 16.3%, low_demand: true}"
+            ),
+        }
+
+        m.choice(state, instructions, criteria)
+
+        # Output
+        {'type': 'choice',
+        'choice': 'Qwen3.8-27B',
+        'probabilities': {'Qwen3.8-27B': 0.9933191919330562,
+        'GLM-5.3-Flash': 0.0011650887531313096,
+        'Deepseek-V4.1-Flash-1017': 0.00551571931381253},
+        'confidence': 0.9899787878995843}
+        """
+        return self.decide(state, instructions=instructions, criteria=criteria, type="choice", **kwargs)
+
+    def yes_no(self, state: Any, instructions: str, **kwargs: Any) -> float:
+        """Probability that the answer is yes (decide with type="noul").
+
+        Parameters
+        ----------
+        state:
+            What to judge.
+        instructions:
+            A yes/no question, phrased so that "yes" is the affirmative case.
+        **kwargs:
+            Forwarded to decide.
+
+        Returns
+        -------
+        float
+            P(yes) in 0..1. A missing answer also yields 0.0, so treat a zero
+            as "no, or no answer" unless you inspect the raw envelope too.
+        """
+        ans = self.decide(state, instructions=instructions, type="noul", **kwargs)
+        return float(ans.get("noul", 0.0))
+
+    def score(
+        self,
+        state: Any,
+        instructions: str,
+        levels: list[str],
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Expected level on an ordered rubric (decide with type="score").
+
+        Parameters
+        ----------
+        state:
+            What to judge.
+        instructions:
+            What to rate, and what the scale means.
+        levels:
+            The rubric, ordered low to high, 2..10 entries.
+        **kwargs:
+            Forwarded to decide.
+
+        Returns
+        -------
+        dict[str, Any]
+            The answer, typically {"score": <expected level index>, ...}.
+        """
+        return self.decide(state, instructions=instructions, criteria=levels, type="score", **kwargs)
+
+    # -- agent integration ------------------------------------------------
+
+    def to_mcp_tools(self) -> list[ToolDefinition]:
+        """Expose this model as a single decide tool for agent workflows."""
+
+        async def _decide(arguments: dict[str, Any]) -> dict[str, Any]:
+            questions = arguments.get("questions")
+            if questions:
+                out = await self.system_one_async(
+                    arguments["state"],
+                    questions,
+                    images=arguments.get("images"),
+                    videos=arguments.get("videos"),
+                )
+                return out.get("answers", {})
+            spec: dict[str, Any] = {
+                "type": arguments.get("type", "choice"),
+                "instructions": arguments["instructions"],
+            }
+            if arguments.get("criteria") is not None:
+                spec["criteria"] = arguments["criteria"]
+            for extra in ("at", "rate"):
+                if extra in arguments:
+                    spec[extra] = arguments[extra]
+            out = await self.system_one_async(
+                arguments["state"],
+                {"answer": spec},
+                images=arguments.get("images"),
+                videos=arguments.get("videos"),
+            )
+            return (out.get("answers") or {}).get("answer", {})
+
+        types = self.question_types or ("choice", "noul", "score")
+        return [
+            ToolDefinition(
+                name="decide",
+                description=self.description
+                or (
+                    "Answer typed questions about a state with calibrated "
+                    f"probabilities using {self.model_name} "
+                    f"(types: {', '.join(types)}). Returns a probability per "
+                    "candidate answer; never generates text."
+                ),
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "state": {
+                            "type": "string",
+                            "description": "What the questions are about (text or JSON).",
+                        },
+                        "questions": {
+                            "type": "object",
+                            "description": (
+                                "Map of question id -> {type, instructions, criteria}. "
+                                "Use this instead of the single-question fields "
+                                "to ask several at once."
+                            ),
+                        },
+                        "type": {
+                            "type": "string",
+                            "enum": ["choice", "noul", "score", "box", "track"],
+                            "description": "Question type for a single-question call.",
+                        },
+                        "instructions": {
+                            "type": "string",
+                            "description": "The question, in plain language.",
+                        },
+                        "criteria": {
+                            "description": ("choice: {option: description}; score: ordered list of levels."),
+                        },
+                        "images": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "base64 data URLs (or reachable http(s) URLs).",
+                        },
+                        "videos": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "base64 data URLs (or reachable http(s) URLs).",
+                        },
+                    },
+                    "required": ["state"],
+                },
+                handler=_decide,
+            )
+        ]
+
+
+def prefetch_model_cards(models: Any, *, max_workers: int = 8) -> dict[str, dict[str, Any]]:
+    """Read several decision-model cards concurrently, blocking until done.
+
+    The alternative to relying on the per-model lazy fetch: call this once at
+    application startup and every card is warm afterwards. Off-cluster each
+    fetch is a DNS timeout, so N models cost N timeouts sequentially but one
+    timeout in parallel.
+
+    Parameters
+    ----------
+    models:
+        DecisionModel instances (or any iterable of them). Anything that is not
+        a DecisionModel is ignored, so a mixed list is fine.
+    max_workers:
+        Upper bound on concurrent fetches.
+
+    Returns
+    -------
+    dict[str, dict[str, Any]]
+        model_name -> model card. Entries whose endpoint could not be read map
+        to an empty dict (the same best-effort contract as the lazy path).
+
+    Examples
+    --------
+        from pcai_utils.pcai_models import vllmsr_d3_turbo_27b
+        from pcai_utils.pcai_model_classes import prefetch_model_cards
+
+        prefetch_model_cards([vllmsr_d3_turbo_27b])   # one round-trip, once
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    targets = [m for m in models if isinstance(m, DecisionModel)]
+    if not targets:
+        return {}
+    with ThreadPoolExecutor(max_workers=min(max_workers, len(targets))) as pool:
+        cards = list(pool.map(lambda m: m._ensure_model_card(), targets))
+    return {m.model_name: card for m, card in zip(targets, cards)}

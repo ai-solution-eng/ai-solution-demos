@@ -1,7 +1,7 @@
 """Logging configuration for PCAI demo services."""
 import logging
 import sys
-from typing import Any, List
+from typing import Any
 
 import structlog
 
@@ -15,7 +15,7 @@ def setup_logging(service_name: str, level: str = "INFO") -> None:
     """
     
     # Processors for structlog
-    processors: List[Any] = [
+    processors: list[Any] = [
         structlog.stdlib.add_log_level,
         structlog.stdlib.add_logger_name,
         structlog.processors.TimeStamper(fmt="iso"),

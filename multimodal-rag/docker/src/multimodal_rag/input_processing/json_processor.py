@@ -342,6 +342,11 @@ class JSONProcessor:
         text_processor = TextProcessor(
             chunk_size=self.chunk_size,
             chunk_overlap=self.chunk_overlap,
+            # Forward the token splitter: this sub-split handles an entry
+            # that alone exceeds the budget, and dropping the splitter here
+            # made exactly those oversized entries character-chunked (e.g.
+            # 111 char-sized fragments where 23 token-sized ones belong).
+            text_splitter=self.text_splitter,
         )
         chunks = text_processor.process_text(text, source)
         for ch in chunks:

@@ -10,11 +10,11 @@ __pycache__/
 .Python
 build/
 develop-eggs/
-dist/
+# dist/
 downloads/
 eggs/
 .eggs/
-lib64/
+/lib64/
 parts/
 sdist/
 var/
@@ -113,6 +113,8 @@ celerybeat.pid
 
 # Environments
 .env
+.env.*
+!.env.example
 .venv
 env/
 venv/
@@ -160,3 +162,11 @@ Thumbs.db
 
 # Local config
 config.json
+
+# Tilt settings for your cluster (copy tilt_config.example.json)
+tilt_config.json
+
+# Packaged charts: only the latest release's package is committed, as charts/<chart>-<version>.tgz
+dist/
+*.tgz
+!/charts/*.tgz

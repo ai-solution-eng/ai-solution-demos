@@ -1,0 +1,12 @@
+# Keep local settings, tests and build tooling out of the image.
+.git
+config.json
+config/
+.env
+*.env
+tests/
+requirements-dev.txt
+.pytest_cache/
+__pycache__/
+*.pyc
+build.sh

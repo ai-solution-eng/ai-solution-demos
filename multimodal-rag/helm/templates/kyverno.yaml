@@ -16,7 +16,6 @@ spec:
           namespaces:
           - {{ .Release.Namespace }}
           kinds:
-          - Pod
           - Deployment
           - Service
     mutate:

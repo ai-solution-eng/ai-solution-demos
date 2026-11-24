@@ -15,11 +15,17 @@ __pcai_models_missing = False
 
 _CATALOG_NAMES = frozenset(
     {
-        "cohere_transcribe_3_2b",
-        "deepseek_v4_flash_280B",
-        "gemma4_31B",
+        "qwen38_27B",
+        "deepseek_v41_flash_552B",
+        "glm_53_flash_331B",
+        "glm_53_flash_331B_sproket",
+        "vllmsr_d3_turbo_27b",
         "qwen3_vl_8B",
         "qwen3_vl_reranker_8B",
+        "whisper_large_v3_turbo",
+        "cohere_transcribe_3_2b",
+        "qwen3_tts_1_7B",
+        "fish_s2_pro_4B",
     }
 )
 

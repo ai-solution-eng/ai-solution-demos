@@ -1,0 +1,20 @@
+{"id": "if_001", "prompt": "Reply with just the word 'yes' or 'no'. Is water wet?", "scorer": "regex", "expected": "^(yes|no)\\.?$", "flags": "i"}
+{"id": "if_002", "prompt": "Reply with just the word 'yes' or 'no'. Is fire cold?", "scorer": "regex", "expected": "^(yes|no)\\.?$", "flags": "i"}
+{"id": "if_003", "prompt": "Answer in exactly one word: what color is the sky on a clear day?", "scorer": "regex", "expected": "^[A-Za-z]+\\.?$"}
+{"id": "if_004", "prompt": "Answer in exactly one word: what is the capital of France?", "scorer": "regex", "expected": "^Paris\\.?$", "flags": "i"}
+{"id": "if_005", "prompt": "Respond with only the number, no words. What is 5 + 3?", "scorer": "regex", "expected": "^8\\.?$"}
+{"id": "if_006", "prompt": "Respond with only the letter A, B, C, or D. Which is a fruit: A) hammer B) apple C) desk D) cloud?", "scorer": "regex", "expected": "^B\\.?$", "flags": "i"}
+{"id": "if_007", "prompt": "List exactly three colors, separated by commas, no other text.", "scorer": "regex", "expected": "^[A-Za-z]+,\\s*[A-Za-z]+,\\s*[A-Za-z]+\\.?$"}
+{"id": "if_008", "prompt": "Reply with only 'TRUE' or 'FALSE' in uppercase. The Earth orbits the Sun.", "scorer": "regex", "expected": "^(TRUE|FALSE)\\.?$"}
+{"id": "if_009", "prompt": "Translate to Spanish. Reply with only the translation, no explanation: 'hello world'", "scorer": "substring", "expected": "hola mundo", "case_sensitive": false}
+{"id": "if_010", "prompt": "Translate to French. Reply with only the translation, no explanation: 'good morning'", "scorer": "substring", "expected": "bonjour", "case_sensitive": false}
+{"id": "if_011", "prompt": "Reply with a single sentence ending in a period. Describe the color red.", "scorer": "regex", "expected": "^[^.!?]+\\.$"}
+{"id": "if_012", "prompt": "Respond with exactly this format: 'X is Y' where X is a color and Y is an object. Give one example.", "scorer": "regex", "expected": "^[A-Za-z]+ is [A-Za-z ]+\\.?$"}
+{"id": "if_013", "prompt": "Answer with only 'a', 'an', or 'the'. Which article precedes 'elephant' in 'I saw ___ elephant'?", "scorer": "regex", "expected": "^(an)\\.?$", "flags": "i"}
+{"id": "if_014", "prompt": "Respond with just a number. How many days are in a week?", "scorer": "regex", "expected": "^7\\.?$"}
+{"id": "if_015", "prompt": "Reply with only the ISO 8601 date format YYYY-MM-DD for January 15, 2024.", "scorer": "regex", "expected": "^2024-01-15\\.?$"}
+{"id": "if_016", "prompt": "Reply with only lowercase letters, no spaces or punctuation. What sound does a dog make?", "scorer": "regex", "expected": "^[a-z]+$"}
+{"id": "if_017", "prompt": "Answer with just the number in digits, not words. What is the square root of 16?", "scorer": "regex", "expected": "^4\\.?$"}
+{"id": "if_018", "prompt": "Respond with the format 'FIRST LAST'. Give a common English name.", "scorer": "regex", "expected": "^[A-Z][a-z]+ [A-Z][a-z]+\\.?$"}
+{"id": "if_019", "prompt": "Respond with exactly two words separated by a hyphen. Give an example of a compound word.", "scorer": "regex", "expected": "^[A-Za-z]+-[A-Za-z]+\\.?$"}
+{"id": "if_020", "prompt": "Answer with just the phrase 'positive', 'negative', or 'neutral'. The sentiment of 'I love this product': ", "scorer": "regex", "expected": "^positive\\.?$", "flags": "i"}

@@ -10,8 +10,10 @@ import base64
 import bisect
 import contextlib
 import contextvars
+import copy
 import hashlib
 import json
+import math
 import mimetypes
 import os
 import re
@@ -23,7 +25,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, overload
+from typing import Any, cast, overload
 
 import httpx2
 
@@ -54,8 +56,18 @@ from multimodal_rag.input_processing import (
     YAMLProcessor,
 )
 from multimodal_rag.rag_system import MultimodalRAG, _record_ingest_warning, _store_write_guard
+from multimodal_rag.stm_lifetime import validate_lifetime, validate_stored_lifetime
 from multimodal_rag.utils.general_tools import retry_call
 from multimodal_rag.utils.logging_utils import logging
+from multimodal_rag.vector_store import QdrantVectorStore, RrfParams
+
+# Per-dataset weighted-RRF defaults (feature: weighted RRF, dataset-defaults
+# slice).  Stored in meta.json as ``meta["rrf"] = {"dense_weight": …,
+# "sparse_weight": …, "k": …}``.  Resolution order at search time is
+# per-call override > dataset meta default > global default (1.0/1.0 with no
+# pinned k).  The clamp discipline mirrors the API slices exactly: weights
+# clamp to ``[0.0, 10.0]`` rounded to 3 decimals, ``k`` to ``[1, 1000]``.
+_RRF_WEIGHT_MAX = 10.0
 
 logger = logging.getLogger(__name__)
 
@@ -330,6 +342,14 @@ def _record_upload_history(dataset_name: str, files: list[dict[str, Any]], sourc
 # request, no latency.  Bulk replays (dataset restore/import) are muted.
 
 
+def _int_or_zero(value: Any) -> int:
+    """Non-negative int from a stored counter; garbage reads as 0 (never raises)."""
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _stored_points_count(files: list[dict[str, Any]] | None) -> int:
     """Points added by a batch ingest result (failed and dedup-skipped
     files add 0; legacy shapes without stored_ids fall back to chunks)."""
@@ -343,6 +363,55 @@ def _stored_points_count(files: list[dict[str, Any]] | None) -> int:
         else:
             total += f.get("chunks") or 0
     return total
+
+
+def _ingest_retry_call(
+    func: Callable[..., Any],
+    *,
+    max_attempts: int = 3,
+    base_delay: float = 2.0,
+    connection_delay: float = 10.0,
+) -> Any:
+    """retry_call for ingest, with Feature D's fail-closed error NOT retried.
+
+    Same policy as multimodal_rag.utils.general_tools.retry_call — linear
+    backoff, a longer floor for connection-shaped errors, the last exception
+    re-raised — with exactly one exception class excluded from retrying.
+
+    WHY THIS EXISTS (Feature D cross-validation finding F4, 2026-11-10).
+    LateInteractionUnavailable is the CONTRACTED fail-closed error for
+    "late-enabled dataset, no token embedder".  The shared retry_call retries
+    ANY exception, and for an ingest that is actively harmful rather than
+    merely wasteful: the first attempt can already have upserted the main
+    points before the sidecar write raised, so the retry hits content-hash /
+    vector dedup, stores nothing and returns an empty list.  The caller then
+    reports the file "complete, 0 chunks" — the ingest SUCCEEDS while its
+    points have no token matrices, which is precisely the state the
+    fail-closed contract exists to prevent.  A missing token embedder is a
+    configuration error, so there is nothing to wait for: catch it BEFORE the
+    generic handler and re-raise immediately (never a "give up and continue"
+    outcome).
+
+    The shared util lives in a fleet-hardlinked module, so the exclusion is
+    implemented here rather than by widening that signature.
+    """
+    from multimodal_rag.late_interaction import LateInteractionUnavailable
+
+    last_exc: Exception | None = None
+    for attempt in range(max_attempts):
+        try:
+            return func()
+        except LateInteractionUnavailable:
+            raise
+        except Exception as exc:
+            last_exc = exc
+            if attempt < max_attempts - 1:
+                delay = base_delay * (attempt + 1)
+                if "connection" in str(exc).lower():
+                    delay = max(delay, connection_delay)
+                time.sleep(delay)
+    assert last_exc is not None
+    raise last_exc
 
 
 def _notify_ingest_hook(dataset_name: str, doc_count: int, status: str = "ok") -> None:
@@ -415,7 +484,16 @@ def _write_hash_index(hashes_path: Path, index: dict[str, str]) -> None:
 # index under the cross-process lock once per batch.  If the process dies
 # before the flush the files are still on disk — only the dedup entries are
 # missing, so a retry re-copies them (benign duplicates, never corruption).
-_hash_index_dirty: dict[Path, dict[str, str]] = {}
+#
+# A value of None is a DELETE sentinel (the entry must be removed, not set):
+# dropping a tier-1 original with keep_originals=False deletes the stored
+# file, so its hash entry has to go too — and because that hash entry may
+# still be PENDING here from _store_file's deferred write, a direct
+# read-modify-write of the index would be resurrected by the flush at the end
+# of the batch.  Staging the delete in this same dict makes last-write-wins
+# do the right thing (the delete is always staged after the store) and keeps
+# the batch at one index write.
+_hash_index_dirty: dict[Path, dict[str, str | None]] = {}
 _hash_index_dirty_lock = threading.Lock()
 
 
@@ -424,6 +502,17 @@ def _flush_hash_index_writes() -> None:
 
     Re-reads the on-disk index under the dataset's cross-process lock so
     entries written by another pod during our batch survive.
+
+    That merge guarantee is honest for ADDS only.  A staged DELETE is a
+    key-blind ``pop``: if another pod re-added the SAME hash after we read the
+    index, the flush drops that fresh entry too.  The consequence is a lost
+    dedup entry for content that still exists on disk - the next upload of it
+    re-copies the bytes and stores a benign duplicate (the ``existing.exists()``
+    guard in _store_file cannot help, the entry is gone), never corruption.
+    Closing that window would need a compare-and-delete under the same lock
+    (read the value, delete only if it still equals the deleted path); the
+    single-writer-per-dataset assumption every batch path already makes is
+    what we rely on instead.
     """
     with _hash_index_dirty_lock:
         dirty = dict(_hash_index_dirty)
@@ -433,14 +522,136 @@ def _flush_hash_index_writes() -> None:
             continue
         with _cross_process_lock(hashes_path.parent / ".hashes.lock"):
             fresh = _load_hash_index(hashes_path)
-            fresh.update(updates)
+            for key, value in updates.items():
+                if value is None:
+                    # Delete sentinel (see _hash_index_dirty).
+                    fresh.pop(key, None)
+                else:
+                    fresh[key] = value
             _write_hash_index(hashes_path, fresh)
+
+
+def _stage_hash_index_delete(hashes_path: Path, path_to_forget: str) -> bool:
+    """Stage removal of every entry pointing at *path_to_forget*.
+
+    Returns True when at least one entry matched (i.e. there is something to
+    flush).  Reads the index through the mtime cache and stages the delete in
+    the deferred dirty set, so the actual write happens once per batch instead
+    of once per dropped original (the O(n²) pattern _store_file's defer_write
+    exists to avoid).  The read is unlocked on purpose: _write_hash_index
+    publishes with os.replace(), so a reader always sees a whole index, and
+    the mutation itself happens under the cross-process lock at flush time.
+    """
+    try:
+        hash_index = _load_hash_index(hashes_path)
+    except Exception:
+        logger.debug("Failed to read %s for a delete", hashes_path, exc_info=True)
+        return False
+    stale = [k for k, v in hash_index.items() if v == path_to_forget]
+    if not stale:
+        return False
+    with _hash_index_dirty_lock:
+        bucket = _hash_index_dirty.setdefault(hashes_path, {})
+        for key in stale:
+            bucket[key] = None
+    return True
+
+
+# ── Source-only payload projections (perf quick-win #3, audit perf P1-5) ──
+# Source scans (S3 sync's "which sources does this prefix hold?") need two
+# small payload keys — the canonical ``metadata.source`` and, for objects
+# that carry it, ``original_source`` / ``page_content``.  Asking Qdrant for
+# the whole ``metadata`` object instead drags the multi-MB base64
+# ``metadata.image`` / ``metadata.video`` / ``metadata.audio`` values over
+# the wire on every scan (the same waste ``vector_store._lightweight_payload_selector``
+# exists to avoid on the search path).
+#
+# Nested keys DO work with ``PayloadSelectorInclude`` (verified against the
+# pinned qdrant-client 1.19.x: the filter is applied server-side by Qdrant's
+# payload projection, and the local in-memory client behaves identically) —
+# ``include=["metadata.source"]`` returns exactly ``{"metadata": {"source": …}}``.
+#
+# ``_prune_sources`` uses the include form too (with page_content): its
+# scroll projects exactly ``_source_scan_payload_keys(True)``.
+_SOURCE_SCAN_PAYLOAD_KEYS: tuple[str, ...] = ("metadata.source", "metadata.original_source")
+# ``page_content`` is included only for callers that actually consume it
+# (prune's BM25 df decrement) — ``_stored_sources`` never touches it, so it
+# keeps the projection to the two source keys.
+_SOURCE_SCAN_TEXT_PAYLOAD_KEY = "page_content"
+
+
+def _source_scan_payload_selector(include_page_content: bool = False) -> Any:
+    """``PayloadSelectorInclude`` form of :func:`_source_scan_payload_keys`.
+
+    The include form is what the Qdrant client needs for a projected scroll;
+    building it here keeps ``_stored_sources`` and ``_prune_sources`` on one
+    definition of the keys a source scan needs.
+    """
+    from qdrant_client.models import PayloadSelectorInclude
+
+    return PayloadSelectorInclude(include=_source_scan_payload_keys(include_page_content))
+
+
+def _source_scan_payload_keys(include_page_content: bool = False) -> list[str]:
+    """Key list for ``scroll_documents(..., payload_keys=...)`` source scans.
+
+    Nested keys are supported by ``PayloadSelectorInclude`` (verified against
+    the pinned qdrant-client 1.19.x — the projection is Qdrant-side, and the
+    local in-memory client returns exactly ``{"metadata": {"source": …}}``),
+    so only the requested leaves cross the wire: the multi-MB base64
+    ``metadata.image`` / ``metadata.video`` / ``metadata.audio`` values stay
+    on the server.
+    """
+    keys = list(_SOURCE_SCAN_PAYLOAD_KEYS)
+    if include_page_content:
+        keys.append(_SOURCE_SCAN_TEXT_PAYLOAD_KEY)
+    return keys
 
 
 # Ingest-dedup (.ingested_hashes.json) read cache — the batch loop used to
 # re-read and re-parse the whole file for every file (same O(n²) pattern).
 _ingested_hashes_cache: dict[Path, tuple[int, set[str]]] = {}
 _ingested_hashes_cache_lock = threading.Lock()
+
+# Deferred ingest-dedup writes (audit 2026-10-16, P2) — the exact pattern
+# ``_hash_index_dirty`` above already uses for .hashes.json.  The batch
+# consumer calls _mark_ingested once per successfully embedded FILE, and each
+# call rewrote the whole JSON (and took the cross-process lock) — O(n²)
+# bytes and O(n²) NFS writes for an n-file batch.  _mark_ingested instead
+# records the hash here; _flush_ingested_hash_writes() merges the dirty set
+# into the on-disk file ONCE per batch, under the same lock discipline.
+#
+# Crash semantics (same as .hashes.json): a process that dies before the
+# flush loses only dedup ENTRIES — the vectors are already stored, so the
+# worst case is a later re-upload re-embedding a file that was already
+# ingested (benign duplicate work), never corruption or data loss.
+_ingested_hashes_dirty: dict[Path, set[str]] = {}
+_ingested_hashes_dirty_lock = threading.Lock()
+
+
+def _flush_ingested_hash_writes() -> None:
+    """Persist all deferred ingest-dedup hashes (merge, not clobber).
+
+    Re-reads the on-disk set under the dataset's cross-process lock so hashes
+    written by another pod during our batch survive the merge.
+    """
+    with _ingested_hashes_dirty_lock:
+        dirty = dict(_ingested_hashes_dirty)
+        _ingested_hashes_dirty.clear()
+    for hashes_path, updates in dirty.items():
+        if not updates:
+            continue
+        with _cross_process_lock(hashes_path.with_suffix(".lock")):
+            hashes = _load_ingested_hashes(hashes_path)
+            if updates <= hashes and hashes_path.exists():
+                continue  # every hash already on disk (another pod's flush)
+            hashes |= updates
+            hashes_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = hashes_path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(sorted(hashes)), encoding="utf-8")
+            os.replace(tmp, hashes_path)
+            with _ingested_hashes_cache_lock:
+                _ingested_hashes_cache[hashes_path] = (hashes_path.stat().st_mtime_ns, hashes)
 
 
 def _load_ingested_hashes(p: Path) -> set[str]:
@@ -461,6 +672,46 @@ def _load_ingested_hashes(p: Path) -> set[str]:
         if len(_ingested_hashes_cache) > 100:  # bound across many datasets
             _ingested_hashes_cache.pop(next(iter(_ingested_hashes_cache)), None)
     return hashes
+
+
+# ---------------------------------------------------------------------------
+# meta.json parsed-read cache (perf P1-2)
+# ---------------------------------------------------------------------------
+# ``_read_meta`` sits on the hottest search path (once per search via
+# ``_effective_rrf``, plus once per federated target) and used to cost two NFS
+# syscalls (``exists()`` + ``read_text()``) AND a full JSON parse on every
+# call.  The parsed dict is cached per meta path under an mtime/size stamp —
+# the read discipline of ``clients_registry.is_public_dataset`` /
+# ``created_by_dataset`` and this module's own ``_load_hash_index``: stat →
+# (mtime_ns, size) compare → parse only on a miss.
+#
+# Deliberately NO TTL/max-age floor.  A stamp check is what the NFS
+# close-to-open visibility contract wants: the stat() that decides hit/miss is
+# the same syscall that observes another pod's write, so a write is picked up
+# on the very next read, whereas any TTL would serve a pre-change dict for its
+# whole window.  The win does not depend on a TTL — a hit still removes the
+# JSON parse and the exists()/open/read/close round trips, leaving one cheap
+# stat() per call.
+#
+# Every in-process writer invalidates explicitly (``_write_meta`` plus the
+# password/delete paths) so correctness never rides on timestamp granularity:
+# a rewrite landing with an identical (mtime_ns, size) — same-length value,
+# coarse clock — would otherwise match the stale entry.
+_META_CACHE: dict[str, tuple[int, int, dict[str, Any] | None]] = {}
+_meta_cache_lock = threading.Lock()
+_META_CACHE_MAX = 100  # bound across many datasets (same cap as _hash_index_cache)
+# Stamp for a stat() failure (missing/unstat-able meta): a real file always
+# carries mtime_ns >= 0 and size >= 0, so this can never collide with one.
+_META_CACHE_MISSING = (-1, -1)
+# Sentinel for "no usable cache hit" — distinct from a cached None (a missing
+# or corrupt meta, which IS a legitimate cached value).
+_META_CACHE_HIT = object()
+
+
+def _invalidate_meta_cache(path: Path) -> None:
+    """Drop the parsed-meta cache entry for *path* (call after any write)."""
+    with _meta_cache_lock:
+        _META_CACHE.pop(str(path), None)
 
 
 # Supported file extensions mapped to a media type label
@@ -513,6 +764,18 @@ _LOG_EXTS = frozenset({".log", ".txt.log"})
 _ARCHIVE_EXTS = frozenset({".zip", ".tar", ".gz", ".bz2", ".xz", ".tgz", ".tbz2", ".txz", ".rar"})
 _INGESTED_HASHES_FILE = ".ingested_hashes.json"
 
+# Watched S3 sources (feature: watched sources): per-dataset skip-state sidecar
+# next to .hashes.json / .bm25_stats.json.  Key = the object's canonical S3 URL
+# (``s3://bucket/key``), value = ``{"etag": ..., "size": ...}`` — the fingerprint
+# of the last successfully ingested version of that object.  On the next sync,
+# an object whose listed ETag+Size still matches is dropped from the download
+# set entirely (no re-download, no re-embed attempt); a changed ETag+Size (the
+# content-changed-under-same-key case) or a new key re-ingests.  ETag+Size is
+# the fingerprint because S3 ETags of multipart uploads are opaque (not MD5) —
+# together the pair catches every realistic mutation.  No ETag use existed in
+# the repo before this feature (verified).
+_WATCHED_STATE_FILE = ".watched_state.json"
+
 
 def _sha256_file(path: str | Path) -> str:
     """Return the SHA-256 hex digest of a file's contents (streamed)."""
@@ -523,6 +786,76 @@ def _sha256_file(path: str | Path) -> str:
         while chunk := f.read(8192):
             h.update(chunk)
     return h.hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Watched S3 sources: per-dataset ETag/Size skip state (.watched_state.json)
+# ---------------------------------------------------------------------------
+# The reconciler CronJob re-lists its prefixes every tick and ingests what it
+# finds.  Without state, every tick re-downloads every object (the content-hash
+# ingest dedup then discards the identical bytes — network + disk I/O for
+# nothing, and the skip hides would-be "changed" objects until after the
+# download).  This sidecar mirrors the ``.bm25_stats.json`` discipline: a JSON
+# file in the dataset's files/ directory, read/write under the same
+# cross-process fcntl lock, atomically promoted so a crash mid-write never
+# truncates it.  Written ONLY after a successful ingest of the object.
+
+# module-level read cache (mtime-keyed) — the same shape as _load_hash_index's
+_watched_state_cache: dict[Path, tuple[int, dict[str, dict[str, Any]]]] = {}
+_watched_state_cache_lock = threading.Lock()
+
+
+def _canonical_s3_url(url: str) -> str:
+    """Canonical state key for an S3 URL: query stripped, no trailing slash.
+
+    Matches how ``metadata.source`` records URL ingests
+    (``url.split("?")[0].rstrip("/")``), so a state key and a stored source
+    are the same string.
+    """
+    return url.split("?")[0].rstrip("/")
+
+
+def _load_watched_state(p: Path) -> dict[str, dict[str, Any]]:
+    """Return the parsed watched-source state for *p* (mtime-cached).
+
+    Corrupt/missing file → empty state (a re-ingest of everything is the safe
+    recovery; the state is an optimisation, never a correctness gate).
+    """
+    try:
+        mtime = p.stat().st_mtime_ns if p.exists() else 0
+    except OSError:
+        return {}
+    with _watched_state_cache_lock:
+        cached = _watched_state_cache.get(p)
+        if cached is not None and cached[0] == mtime:
+            return cached[1]
+    state: dict[str, dict[str, Any]] = {}
+    if mtime:
+        try:
+            raw = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                state = {str(k): dict(v) for k, v in raw.items() if isinstance(v, dict)}
+        except (json.JSONDecodeError, OSError, ValueError):
+            logger.debug("Unable to parse watched-source state %s — starting empty", p, exc_info=True)
+    with _watched_state_cache_lock:
+        _watched_state_cache[p] = (mtime, state)
+        if len(_watched_state_cache) > 100:  # bound across many datasets
+            _watched_state_cache.pop(next(iter(_watched_state_cache)), None)
+    return state
+
+
+def _save_watched_state(p: Path, state: dict[str, dict[str, Any]]) -> None:
+    """Atomically persist *state* and refresh the read cache.
+
+    Caller holds the cross-process lock (the read→modify→write must be
+    serialised across pods sharing the RWX PVC).
+    """
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+    os.replace(tmp, p)
+    with _watched_state_cache_lock:
+        _watched_state_cache[p] = (p.stat().st_mtime_ns, state)
 
 
 # ── Preprocessing limits for files stored on PVC ─────────────────────────
@@ -720,12 +1053,32 @@ def _sync_prefixes(urls: list[str]) -> list[str]:
     return out
 
 
+# -- Prune mass-deletion guards (audit 2026-10-02, P1-4) ---------------------
+# The empty-listing refusal needs no constant (it is NOT env-overridable —
+# it is the one that protects a whole corpus).  The ratio guard is tunable:
+# pruning more than max(min, ratio × in-scope points) points under one
+# prefix is refused.  The floor keeps small corpora from tripping on a
+# normal one- or two-object deletion; the ratio catches a listing that lost
+# most of a large corpus.  Both are env-overridable for operators who
+# deliberately want an aggressive prune (PRUNE_STALE_RATIO=0 disables the
+# ratio guard entirely).
+_PRUNE_STALE_RATIO: float = max(0.0, float(os.environ.get("PRUNE_STALE_RATIO", "0.2")))
+_PRUNE_STALE_MIN: int = max(0, int(os.environ.get("PRUNE_STALE_MIN", "50")))
+
+
 def _list_s3_prefix(s3_url: str) -> list[str]:
-    """List all supported-file-type objects under an S3 prefix.
+    """List all supported-file-type objects under an S3 prefix, **recursively**.
 
     Returns full ``s3://bucket/key`` URLs for every object whose extension
-    is recognised by :func:`_classify_file`.  Directories (common prefixes)
-    are **not** recursed — only the immediate level is listed.
+    is recognised by :func:`_classify_file`.  The listing paginates
+    ``list_objects_v2`` with the ``Prefix`` filter only — that is a recursive
+    walk of the whole subtree, not just the immediate level (directories are
+    not recursed *as directories*; every object under the prefix shows up).
+    Directory marker keys (``key/``) are skipped.
+
+    (Historical bug fixed 2026-09: the docstring used to claim only the
+    immediate level was listed — the code has always been recursive, which is
+    exactly the behaviour S3 sync and watched sources rely on.)
     """
     from urllib.parse import urlparse
 
@@ -755,6 +1108,47 @@ def _list_s3_prefix(s3_url: str) -> list[str]:
         raise ValueError(f"Failed to list S3 prefix {s3_url}: {e}")
 
     return urls
+
+
+def _list_s3_prefix_fingerprints(s3_url: str) -> dict[str, dict[str, Any]]:
+    """List an S3 prefix (same recursive walk as :func:`_list_s3_prefix`) and
+    return a per-object fingerprint map: ``s3://bucket/key → {etag, size}``.
+
+    Watched-sources helper: the ETag+Size pair is the object fingerprint —
+    ETag alone is not comparable across multipart uploads (S3 renders it as
+    ``<md5>-N`` there) and Size alone misses same-length edits.  Bucket
+    allowlist and the supported-file-type filter apply exactly as in the
+    plain listing.  Objects without an ETag (shouldn't happen on real S3/
+    MinIO listings) are still returned with ``etag: None`` so a missing
+    fingerprint can never falsely "unchanged"-match.
+    """
+    from urllib.parse import urlparse
+
+    parsed = urlparse(s3_url)
+    bucket = parsed.hostname
+    prefix = parsed.path.lstrip("/")
+    _check_s3_bucket(bucket)
+
+    def _list() -> dict[str, dict[str, Any]]:
+        s3 = _get_s3_client()
+        paginator = s3.get_paginator("list_objects_v2")
+        out: dict[str, dict[str, Any]] = {}
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                key: str = obj["Key"]
+                if key.endswith("/"):
+                    continue
+                if _classify_file(key) != "unknown":
+                    out[f"s3://{bucket}/{key}"] = {
+                        "etag": obj.get("ETag"),
+                        "size": obj.get("Size"),
+                    }
+        return out
+
+    try:
+        return retry_call(_list, max_attempts=3, base_delay=2.0, connection_delay=10.0)
+    except Exception as e:
+        raise ValueError(f"Failed to list S3 prefix {s3_url}: {e}")
 
 
 def _expand_urls(raw_urls: list[str]) -> list[str]:
@@ -919,6 +1313,20 @@ def _download_url(url: str, timeout: int = 120) -> str:
 
 
 _PBKDF2_ITERATIONS = 600_000  # OWASP 2023 minimum for PBKDF2-SHA256
+
+# Sentinel for the short-term-memory cap argument on the file-ingest path.
+#
+# dataset_lifetime=None is a MEANINGFUL value (an immortal dataset), so a
+# plain '= None' default cannot distinguish 'the caller resolved the cap and
+# it is infinite' from 'the caller forgot to pass the cap'.  That ambiguity
+# is exactly how a file-ingested point escaped a finite dataset's cap: every
+# leaf silently fell back to immortal, and PLAN section 2.2 row 4 forbids
+# permanent samples in a finite dataset.
+#
+# With this sentinel a forgotten argument RAISES at the point of the mistake
+# instead of quietly minting an immortal point.  Callers must pass the value
+# explicitly, even when it is None.
+_CAP_REQUIRED: Any = object()
 
 
 def _hash_password(password: str) -> str:
@@ -1330,8 +1738,18 @@ def _truncate_audio_file(path: Path, max_seconds: float = 60.0) -> Path:
         with contextlib.suppress(OSError):
             tmp.unlink(missing_ok=True)
         logger.debug("Audio truncation failed", exc_info=True)
+        # Truncation FAILED: the sibling may be absent or half-written, so
+        # the caller must keep using the original path.
+        return path
 
-    return path
+    # SUCCESS (audit 2026-10-16, P1-4): the sibling is now the truncated
+    # copy and MUST be returned.  This used to fall through to ``return
+    # path``, which made every caller treat a successful truncation as
+    # "nothing to do" -- the documented 60s ASR cap was a no-op, and
+    # staging/transcribe/repair all kept handing the ORIGINAL oversized
+    # audio to the ASR endpoint (the payload-cap failure this function
+    # exists to prevent).
+    return truncated
 
 
 def _split_audio_segments(
@@ -1479,6 +1897,7 @@ class DatasetManager:
         caption_with_vlm: bool = False,
         remote: bool = True,
         dedup_threshold: float = 0.995,
+        contextualize: bool = False,
     ):
         self.base_path = Path(base_path)
         self.datasets_path = self.base_path / "datasets"
@@ -1503,6 +1922,12 @@ class DatasetManager:
         self.caption_with_vlm = caption_with_vlm
         self.remote = remote
         self.dedup_threshold = dedup_threshold
+        # Per-dataset default for the contextual flag on CREATE when the
+        # request body omits it (RAG_CONTEXTUAL_DEFAULT, chart values
+        # rag.contextual — disabled by default).  Also what the fingerprint
+        # guard reads as "the mode the manager would ingest with" before
+        # meta stamps anything.  Feature module: utils/contextualizer.py.
+        self.contextualize = bool(contextualize)
 
         self._verify_endpoints()
 
@@ -1649,6 +2074,12 @@ class DatasetManager:
         keep_originals: bool = True,
         password: str | None = None,
         ocr: bool = False,
+        rrf: "dict[str, Any] | None" = None,
+        contextual: bool = False,
+        created_by: "str | None" = None,
+        lifetime: "int | None" = None,
+        kind: "str | None" = None,
+        chunk: "dict[str, Any] | None" = None,
     ) -> dict[str, Any]:
         """Create a new dataset.
 
@@ -1678,8 +2109,66 @@ class DatasetManager:
             Off by default — OCR on a large scan is expensive and must be
             opted into.  Requires the tesseract binary in the image (shipped
             in the Dockerfile); without it the flag is a no-op.
+        rrf:
+            Optional per-dataset weighted-RRF defaults (feature: weighted
+            RRF, dataset-defaults slice): ``{"dense_weight": …,
+            "sparse_weight": …, "k": …}``, all optional keys.  Stored in
+            meta.json; validated with the same clamp discipline as the
+            REST/MCP search surfaces (weights 0.0–10.0 rounded to 3
+            decimals, k 1–1000).  ``None``/empty stores nothing — the
+            dataset then simply inherits the global default (1.0/1.0).
+            Query-time only: no recreate, no schema change; applies to
+            single-dataset searches when the caller passes no explicit
+            override (federated search ignores per-dataset defaults).
+        contextual:
+            Whether ingest-time contextual retrieval runs for this dataset
+            (feature: contextual retrieval, DECISIONS.md 2026-09): one small
+            LLM call per real-text chunk writes 1–2 sentences of
+            document-level context, prepended as a ``[Document context]:``
+            line before embedding.  Off by default — one LLM call per chunk
+            is real cost and must be opted into (the
+            ``/api/admin/datasets/{name}/contextual-preview`` endpoint makes
+            it visible before the flag flips).  Requires a VLM model; without
+            one the flag is a no-op.  Affects NEW ingests only — enabling it
+            on an existing dataset does NOT re-contextualize stored content
+            (content-hash dedup would skip the re-embed anyway); run Recreate
+            to re-contextualize existing files.
+        created_by:
+            D23 dataset ownership: the CREATOR identity name stamped into
+            meta.json at create time.  ``None`` stores nothing (the dataset
+            is then "pre-D23" — deletable by admins only, never toggleable
+            public by a non-admin).  The REST surface passes the request's
+            resolved identity: a registry/JWT/SSO name, ``"admin"`` (admins
+            act as the deployment), or ``"anonymous"``.
+        lifetime:
+            Short-term-memory dataset cap, in SECONDS (stmem/PLAN section
+            4.1).  ``None`` (the default) means INFINITE — every dataset that
+            predates this field has no ``lifetime`` key at all and is therefore
+            immortal, which is what makes Phase 1 unreachable by the reaper by
+            arithmetic rather than by a filter we have to remember to write.
+            Validated with :func:`stm_lifetime.validate_lifetime`, so a
+            malformed value (0, negative, bool, non-integer, or a value whose
+            ``expires_at`` would overflow the signed 64-bit Qdrant Range
+            bound) raises ``ValueError`` here rather than minting a dataset
+            whose lifetime nobody can reason about.
+        kind:
+            Dataset class (stmem/PLAN section 4.1).  ``"short_term"`` marks a
+            session-scoped dataset that may eventually be deleted by the
+            reaper.  ``None`` (the default) stores NOTHING — an absent ``kind``
+            means "normal dataset", and :func:`stm_lifetime.dataset_deletable`
+            requires the exact string ``"short_term"`` before it will ever
+            consider deleting a dataset.
         """
         self._validate_name(name)
+        # Short-term memory (stmem/PLAN section 4.1): validate the dataset
+        # lifetime BEFORE touching the filesystem, so a malformed value can
+        # never leave a half-created dataset behind.  validate_lifetime is the
+        # frozen write-time gate — it RAISES on 0/negative/bool/non-integer and
+        # on anything whose expires_at would overflow the signed 64-bit Qdrant
+        # Range bound.  We deliberately do not catch it: a caller bug must be
+        # loud here, because a silently-accepted lifetime is data whose
+        # lifetime nobody can reason about (and the reaper would act on it).
+        lifetime = validate_lifetime(lifetime, field="dataset lifetime")
         dataset_dir = self.datasets_path / name
         if dataset_dir.exists():
             raise FileExistsError(f"Dataset '{name}' already exists")
@@ -1693,6 +2182,7 @@ class DatasetManager:
             "caption_with_vlm": caption_with_vlm,
             "keep_originals": keep_originals,
             "ocr": bool(ocr),
+            "contextual": bool(contextual),
             "created": datetime.now().isoformat(),
             "document_count": 0,
             # The collection _get_rag creates below uses the current schema
@@ -1701,6 +2191,33 @@ class DatasetManager:
             # recreate.
             "schema_version": DATASET_SCHEMA_VERSION,
         }
+        rrf_meta = self._sanitize_rrf_meta(rrf)
+        if rrf_meta is not None:
+            meta["rrf"] = rrf_meta
+        # Per-dataset chunk overrides (feature: per-dataset chunk size).
+        # OMITTED when empty: an absent "chunk" key IS "inherit the
+        # embedder model", which keeps every dataset created without an
+        # explicit override byte-identical to a pre-feature meta.
+        chunk_meta = self._sanitize_chunk_meta(chunk)
+        if chunk_meta:
+            meta["chunk"] = chunk_meta
+        # Short-term memory (stmem/PLAN section 4.1).  ``lifetime`` is stored
+        # for EVERY create, ``None`` included: the explicit null is the
+        # "immortal" stamp, and it keeps every post-STM meta self-describing
+        # (the reaper reads the key, not its absence).  Pre-STM metas have no
+        # key at all — ``validate_stored_lifetime`` reads both shapes as
+        # INFINITE, so nothing that predates this field can ever be selected.
+        meta["lifetime"] = lifetime
+        # ``kind`` is OMITTED when None: an absent kind IS "normal dataset",
+        # and stm_lifetime.dataset_deletable requires the exact string
+        # "short_term" before any dataset-deletion path may fire.
+        if kind is not None:
+            meta["kind"] = kind
+        # D23 ownership: the creator's identity name — the delete/public
+        # surfaces read it back.  Empty/None stores nothing (pre-D23 shape).
+        creator = str(created_by or "").strip()
+        if creator:
+            meta["created_by"] = creator
         if password:
             meta["password_hash"] = _hash_password(password)
         self._write_meta(name, meta)
@@ -1714,7 +2231,15 @@ class DatasetManager:
 
         # Pre-create the Qdrant collection by initialising the RAG instance
         self._get_rag(name)
-        logger.info("Created dataset '%s' (caption_with_asr=%s)", name, caption_with_asr)
+        logger.info(
+            "Created dataset '%s' (caption_with_asr=%s, rrf_defaults=%s, contextual=%s, lifetime=%s, kind=%s)",
+            name,
+            caption_with_asr,
+            rrf_meta is not None,
+            bool(contextual),
+            lifetime,
+            kind,
+        )
         return self._strip_password(meta)
 
     def has_password(self, name: str) -> bool:
@@ -1764,6 +2289,11 @@ class DatasetManager:
     def _invalidate_has_password(self, name: str) -> None:
         with self._has_password_lock:
             self._has_password_cache.pop(name, None)
+        # Both caches describe the same file and must move together: every
+        # password set/remove (and every dataset delete/recreate, which call
+        # this) drops the parsed-meta entry too, so a has_password decision
+        # can never be served from a meta read that predates the change.
+        _invalidate_meta_cache(self._meta_path(name))
 
     def verify_password(self, name: str, password: str) -> bool:
         meta = self._read_meta(name)
@@ -1785,13 +2315,95 @@ class DatasetManager:
             meta.pop("password_hash", None)
         self._write_meta(name, meta)
 
+    def set_public(self, name: str, public: bool) -> dict[str, Any]:
+        """Set the dataset's "public" flag (feature: public-to-all-keys).
+
+        A public dataset is readable by every AUTHENTICATED registry-client
+        key (D15/D16/D17 identities) without an explicit grant - list, read
+        and search. Guardrails:
+
+          * ADMIN-ONLY operation: the REST surface is
+            POST /api/admin/datasets/{name}/public (the middleware 403s
+            client keys on /api/admin/*) - this method trusts its caller
+            to have resolved an admin identity.
+          * A password-protected dataset can NEVER be made public: the flag
+            would silently publish password-gated content to every minted
+            key. ValueError - remove the password first
+            (set_password(name, None)) if publication is really intended.
+            The read side (clients_registry.is_public_dataset) enforces
+            the same rule, so even a hand-edited meta.json cannot publish a
+            protected dataset.
+
+        The flag is unstamped (key removed) when *public* is false, so
+        datasets created before the feature - and recreated datasets - are
+        private by default. Query-time only: no RAG rebuild, no re-ingest;
+        effective on the next request from any replica (meta.json is
+        re-read per check, mtime-cached).
+        """
+        with self._get_meta_lock(name):
+            meta = self._read_meta(name)
+            if not meta:
+                raise FileNotFoundError(f"Dataset '{name}' not found")
+            if public and meta.get("password_hash"):
+                raise ValueError(
+                    "Refusing to make a password-protected dataset public - "
+                    "remove the password first if you really mean to publish it."
+                )
+            if public:
+                meta["public"] = True
+            else:
+                meta.pop("public", None)
+            self._write_meta(name, meta)
+            return {
+                "name": name,
+                "public": "public" in meta,
+                "has_password": "password_hash" in meta,
+            }
+
+    def _dataset_lifetime(self, dataset_name: str) -> int | None:
+        """The dataset's stored short-term-memory lifetime, or None (INFINITE).
+
+        None is the value every dataset that predates this feature reads as,
+        and the reason such a dataset can never be reaped.
+
+        Read FRESH from meta.json on every ingest rather than cached on the
+        RAG instance: setting a dataset's lifetime later must apply to
+        subsequent ingests, and a cached value would silently stamp a stale
+        cap.  The read is cheap -- the parsed meta is cached under an
+        mtime/size stamp and invalidated on every write.
+
+        The STORED value goes through validate_stored_lifetime, which never
+        raises.  This is a read-back of data we already wrote, and the frozen
+        reaper gate stm_lifetime.dataset_point_reapable applies the very same
+        fail-closed read to the very same field -- so a malformed value reads
+        as INFINITE here exactly as it does there.  The points get stamped
+        immortal and the reaper skips the dataset: the two can never
+        disagree.  (Contrast create_dataset, which applies the STRICT
+        validate_lifetime to the CALLER's value -- a caller bug must be loud,
+        a stored value must fail closed.)
+        """
+        meta = self._read_meta(dataset_name) or {}
+        return validate_stored_lifetime(meta.get("lifetime"), field="dataset lifetime")
+
     @staticmethod
     def _strip_password(meta: dict[str, Any]) -> dict[str, Any]:
         """Return a copy of *meta* with the password hash removed and a
-        ``has_password`` boolean added."""
+        ``has_password`` boolean added.
+
+        The short-term-memory fields ``lifetime`` and ``kind`` are pinned
+        explicitly (stmem/INTERFACE-FREEZE.md section 1, T1): every meta the
+        create/get/list surfaces return must carry BOTH keys, so the reaper's
+        dataset gate (:func:`stm_lifetime.dataset_point_reapable`) and the
+        catalog's ``kind == "short_term"` filter can read them straight off a
+        listing row without a second meta read.  A pre-STM meta has neither
+        key; materialising them here as ``None`` keeps the row shape uniform
+        and is still read as INFINITE / "normal" by the frozen algebra.
+        """
         m = dict(meta)
         m["has_password"] = "password_hash" in m
         m.pop("password_hash", None)
+        m.setdefault("lifetime", None)
+        m.setdefault("kind", None)
         return m
 
     def delete_dataset(self, name: str) -> None:
@@ -1804,6 +2416,21 @@ class DatasetManager:
             assert vs is not None and not isinstance(vs, dict)
             client = vs._client  # type: ignore[attr-defined]
             client.delete_collection(vs.collection_name)  # type: ignore[attr-defined]
+            # Late-interaction sidecar (feature D follow-up, 2026-11-10): the
+            # token vectors live in a SEPARATE '<collection>__late' collection,
+            # so a deleted dataset would otherwise leak it forever.  No-op when
+            # the dataset was never late-enabled; best-effort, because the main
+            # collection is already gone.
+            try:
+                from multimodal_rag import late_interaction as late_lane
+
+                late_lane.delete_late_sidecar(client, vs.collection_name)  # type: ignore[attr-defined]
+            except Exception:
+                logger.warning(
+                    "late-interaction sidecar drop failed for %s",
+                    vs.collection_name,  # type: ignore[attr-defined]
+                    exc_info=True,
+                )
         except Exception:
             logger.debug("Suppressed exception", exc_info=True)
         if name in self._rag_cache:
@@ -1818,6 +2445,10 @@ class DatasetManager:
         # Drop any cached hash index for the deleted files dir.
         with _hash_index_cache_lock:
             _hash_index_cache.pop(self._dataset_dir(name) / "files" / ".hashes.json", None)
+
+        # …and the cached meta parse: the file is gone (mtime/size would miss
+        # anyway, but a same-stamp recreate must not inherit the dead entry).
+        _invalidate_meta_cache(self._meta_path(name))
 
         # Invalidate Redis existence cache so other pods don't retry
         _dataset_exist_delete(name)
@@ -1896,6 +2527,23 @@ class DatasetManager:
             if vs is not None and not isinstance(vs, dict):
                 client = vs._client  # type: ignore[attr-defined]
                 client.delete_collection(vs.collection_name)  # type: ignore[attr-defined]
+                # Late-interaction sidecar (feature D follow-up, 2026-11-10):
+                # the token vectors live in '<collection>__late', a SEPARATE
+                # collection, so dropping only the main one leaves a sidecar
+                # whose point ids belong to the OLD collection — a recreated
+                # dataset would then carry stale token matrices.  No-op when
+                # the dataset was never late-enabled; best-effort, because the
+                # main drop already succeeded.
+                try:
+                    from multimodal_rag import late_interaction as late_lane
+
+                    late_lane.delete_late_sidecar(client, vs.collection_name)  # type: ignore[attr-defined]
+                except Exception:
+                    logger.warning(
+                        "late-interaction sidecar drop failed for %s",
+                        vs.collection_name,  # type: ignore[attr-defined]
+                        exc_info=True,
+                    )
         except Exception:
             logger.debug("Suppressed exception while dropping collection", exc_info=True)
         self._rag_cache.pop(dataset_name, None)
@@ -1930,6 +2578,9 @@ class DatasetManager:
         # previously-ingested content hash as "already ingested" and skip the
         # file — leaving a freshly-dropped, empty collection.
         self._clear_ingested_hashes(dataset_name)
+        # Same reasoning for the watched-source skip state: the collection was
+        # dropped, so every watched prefix must re-ingest on the next sync.
+        self._watched_state_clear(dataset_name)
         return self.add_files_batch(dataset_name, file_entries, progress_callback=progress_callback)
 
     # ------------------------------------------------------------------
@@ -2328,6 +2979,19 @@ class DatasetManager:
         rebuilt so the new settings apply to subsequent ingests and
         retrievals without a restart. Only affects future operations;
         already-ingested content keeps its stored captions.
+
+        The weighted-RRF defaults (``{"rrf": {…}}``) are query-time only —
+        they are read per search, so no RAG rebuild or re-ingest is needed;
+        the change takes effect on the next search of this dataset from any
+        replica (meta.json is re-read per query).
+
+        Per-feature opt-in blocks ride the generic ``{"features": {…}}`` PATCH
+        (2026-11-10): the value is an object of feature name -> config, merged
+        into the stored block so independent features cannot clobber each
+        other.  The block lives in meta.json, so it survives export / backup /
+        restore; flipping it invalidates the cached RAG exactly like the
+        caption flags (a feature flag is baked into the MultimodalRAG
+        instance).  An empty object or null removes the block.
         """
         with self._get_meta_lock(name):
             meta = self._read_meta(name)
@@ -2341,11 +3005,119 @@ class DatasetManager:
                         caption_changed = key != "ocr"  # ocr needs no RAG rebuild (read per file at ingest)
                     else:
                         meta[key] = updates[key]
+            # Contextual retrieval (feature: contextual retrieval): a plain
+            # boolean that rides the SAME cached-RAG invalidation as the
+            # caption flags — the flag is baked into the MultimodalRAG
+            # instance (contextualize=), so a flip must rebuild the cached
+            # RAG to apply to subsequent ingests.  Affects NEW ingests only;
+            # already-ingested content keeps its stored form (content-hash
+            # dedup would skip the re-embed anyway) — Recreate is the
+            # adoption path for existing files.
+            if "contextual" in updates:
+                meta["contextual"] = bool(updates["contextual"])
+                caption_changed = True
+            # The public flag (feature: public-to-all-keys) NEVER rides the
+            # generic PATCH: this endpoint is reachable by registry clients,
+            # and a client must never be able to publish a dataset
+            # (capabilities travel with the credential - D15). The single
+            # admin surface is POST /api/admin/datasets/{name}/public.
+            if "public" in updates:
+                raise ValueError(
+                    "The 'public' flag is admin-only: POST /api/admin/datasets/{name}/public"
+                )  # Weighted-RRF defaults (feature: weighted RRF, dataset-defaults
+            # slice): PATCH ``{"rrf": {"dense_weight": …, "sparse_weight": …,
+            # "k": …}}`` with any subset of keys.  Clamped/validated like the
+            # create-time surface; an empty object or a payload that reduces
+            # to the global default (1.0/1.0, no k) REMOVES the stored
+            # default entirely, so ``meta["rrf"]`` never claims a default
+            # that behaves like "no default".
+            if "rrf" in updates:
+                rrf_meta = self._sanitize_rrf_meta(updates["rrf"])
+                if rrf_meta is None:
+                    meta.pop("rrf", None)
+                else:
+                    meta["rrf"] = rrf_meta
+            # Per-dataset chunk overrides (feature: per-dataset chunk size).
+            # MERGE semantics: a PATCH carrying any subset of the four keys
+            # updates only those keys, so the panel can send one field at a
+            # time.  An explicit null clears that override; an EMPTY object
+            # (or one that sanitizes to nothing) removes the stored block
+            # entirely, restoring "inherit the embedder model".  The cached
+            # RAG is invalidated because the splitter is baked into the
+            # processors built from these values.  Affects NEW ingests only
+            # - Recreate is the adoption path for existing files.
+            if "chunk" in updates:
+                payload = updates["chunk"]
+                # Raises TypeError for a non-dict (the REST boundary maps it to
+                # HTTP 400), so everything below can assume a dict.
+                chunk_meta = self._sanitize_chunk_meta(payload)
+                # An EMPTY payload -- {} or one carrying only keys we do not
+                # recognise -- is the documented "clear the override, inherit
+                # the embedder model" gesture, and must be honoured even when
+                # the dataset already HAS a stored block.  The previous code
+                # only cleared when the MERGED result happened to be empty, so
+                # {} was a silent no-op on any dataset with overrides.
+                # A payload carrying an explicit null is NOT this gesture: it
+                # clears only the named keys (so {"chunk_size": null} leaves a
+                # stored code override in place).
+                has_explicit_null = any(key in payload and payload[key] is None for key in self._CHUNK_META_KEYS)
+                merged = dict(meta.get("chunk") or {})
+                if not chunk_meta and not has_explicit_null:
+                    merged = {}
+                else:
+                    for key in self._CHUNK_META_KEYS:
+                        if key in payload and payload[key] is None:
+                            merged.pop(key, None)
+                    merged.update(chunk_meta)
+                if merged:
+                    meta["chunk"] = merged
+                else:
+                    meta.pop("chunk", None)
+                caption_changed = True
+            # Per-feature opt-in blocks (2026-11-10): a feature owns the SHAPE of
+            # its own block; the manager only guarantees it is a JSON-serialisable
+            # dict, that it survives export/backup/restore (it lives in
+            # meta.json), and that flipping it invalidates the cached RAG so the
+            # next ingest/search sees it.  MERGED, not replaced, so independent
+            # features can each PATCH their own key without clobbering the rest;
+            # an empty object (or None) removes the whole block.
+            if "features" in updates:
+                feats = updates["features"]
+                if feats is None or (isinstance(feats, dict) and not feats):
+                    meta.pop("features", None)
+                    caption_changed = True
+                elif not isinstance(feats, dict):
+                    raise ValueError("'features' must be an object of feature -> config")
+                else:
+                    try:
+                        json.dumps(feats)
+                    except (TypeError, ValueError) as exc:
+                        raise ValueError(f"'features' must be JSON-serialisable: {exc}") from exc
+                    merged_features = dict(meta.get("features") or {})
+                    merged_features.update(feats)
+                    meta["features"] = merged_features
+                    caption_changed = True
             self._write_meta(name, meta)
         # Rebuild the cached RAG so the new caption flags take effect now.
         if caption_changed:
             with self._rag_cache_lock:
-                self._rag_cache.pop(name, None)
+                evicted = self._rag_cache.pop(name, None)
+                # CLOSE the evicted RAG's Qdrant client — the same discipline
+                # the LRU-eviction path in _get_rag already applies.  A cached
+                # RAG holds an open client; on the LOCAL embedded backend an
+                # unclosed client keeps the storage folder locked, so the next
+                # _get_rag() for this dataset fails with portalocker
+                # AlreadyLocked (feature D hit exactly this after a features
+                # flip).  Guarded for a None / missing close() so a store
+                # without one (or a test double) can never make a settings
+                # change fail.
+                try:
+                    evicted_vs = getattr(evicted, "vector_store", None)
+                    evicted_client = getattr(evicted_vs, "_client", None)
+                    if evicted_client is not None:
+                        evicted_client.close()
+                except Exception:
+                    logger.debug("Invalidated RAG client close failed", exc_info=True)
             logger.info("Dataset '%s' caption settings updated; RAG cache invalidated", name)
 
     # ------------------------------------------------------------------
@@ -2357,9 +3129,23 @@ class DatasetManager:
 
         Documents are embedded and stored in the dataset's Qdrant collection.
         Returns the list of stored point IDs.
+
+        Short-term memory (stmem/PLAN section 4.2): this is the ONE ingest
+        entry point that holds BOTH the target dataset and the documents, so
+        the dataset's lifetime is resolved here and handed to the RAG core as
+        a keyword argument.  The RAG core itself stays dataset-agnostic — it
+        never reads meta.json and never accepts a dataset name from the
+        request body (PLAN section 2.3: nothing about a document's lifetime
+        may come from the client).
+
+        The lifetime is read FRESH from meta.json on every ingest rather than
+        cached on the RAG instance: setting a dataset's lifetime later must
+        apply to subsequent ingests, and a cached value would silently stamp
+        a stale cap.  The read is cheap (TTL'd meta cache, invalidated on
+        write) and this call already does NFS work for the embed + upsert.
         """
         rag = self._get_rag(dataset_name)
-        ids = rag.add_to_vector_store(documents)
+        ids = rag.add_to_vector_store(documents, dataset_lifetime=self._dataset_lifetime(dataset_name))
         self._increment_count(dataset_name, len(ids))
         # Opt-in ingest webhook (RAG_WEBHOOK_URL) — logged-not-fatal, no-op
         # when unset.
@@ -2385,9 +3171,16 @@ class DatasetManager:
         """
         rag = self._get_rag(dataset_name)
         mpk = rag.embedder.mm_processor_kwargs
-        chunk_size = rag.embedder.chunk_size
-        chunk_overlap = rag.embedder.chunk_overlap
-        text_splitter = rag.embedder.text_splitter
+        # Per-dataset chunk overrides (feature: per-dataset chunk size)
+        # resolve to the model defaults when the dataset stores none, so
+        # the no-override path is unchanged.
+        chunk_size, chunk_overlap, text_splitter = self._resolve_chunk_params(dataset_name, rag)
+        # Short-term memory: the dataset's lifetime is resolved ONCE here and
+        # threaded down to every store call the file path makes (see
+        # _add_file_processed).  Resolving it at the entry point rather than at
+        # each leaf keeps one meta read per file operation and makes it
+        # impossible to add a new per-filetype branch that forgets the cap.
+        dataset_lifetime = self._dataset_lifetime(dataset_name)
 
         # Download remote URLs (HTTP or S3) to a temporary file — they are
         # processed directly without a separate PVC copy.
@@ -2409,6 +3202,7 @@ class DatasetManager:
                 text_splitter=text_splitter,
                 original_name=original_name,
                 source_url=source_url,
+                dataset_lifetime=dataset_lifetime,
             )
             # Opt-in ingest webhook (RAG_WEBHOOK_URL) — logged-not-fatal.
             _notify_ingest_hook(dataset_name, len(result.get("stored_ids") or []))
@@ -2427,6 +3221,7 @@ class DatasetManager:
         progress_callback: Any | None = None,
         batch_score: float = 128.0,
         force_names: set[str] | None = None,
+        source_urls: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Process multiple files and store dedup-aware chunk counts.
 
@@ -2441,6 +3236,17 @@ class DatasetManager:
         dedup skip is bypassed — used for URLs that have no stored points
         (a file pruned after an upstream delete and re-appeared), so the
         content is re-embedded instead of silently skipped.
+
+        ``source_urls`` (S3 sync / URL ingest, audit 2026-10-02 P1-3 fix):
+        ``tmp_path → canonical s3:// URL`` (keyed by tmp_path — unique per
+        download; a basename key would collide when one sync spans prefixes
+        holding the same object name).  When provided, the point
+        payload's ``metadata.source`` is stamped with the canonical URL
+        instead of the stored PVC path — prune matches ``s3://`` prefixes
+        against ``metadata.source``, so a PVC-path stamp makes the prune
+        structurally dead (upstream deletions never propagate).  Mirrors
+        how the single-file ``add_file`` path stamps ``source_url``.
+        Files whose name has no entry keep the stored-path stamp.
 
         **Consumer** (background thread): calls the embedding API and
         stores results in Qdrant.  This overlap hides the embedding
@@ -2458,8 +3264,25 @@ class DatasetManager:
 
         rag = self._get_rag(dataset_name)
         mpk = rag.embedder.mm_processor_kwargs
-        chunk_size = rag.embedder.chunk_size
-        chunk_overlap = rag.embedder.chunk_overlap
+        # Token-count splitter for the batch path.  Without this, every
+        # text-type file that falls through to _add_file_processed (text,
+        # table, office, html, notebook, ebook, log — and every non-media
+        # member of an archive) was silently chunked by CHARACTERS while the
+        # identical file uploaded via add_file was chunked by TOKENS.  The
+        # single-file path resolves this in _resolve_chunk_params; the batch
+        # path must do the same so both surfaces agree on chunk boundaries.
+        #
+        # The resolved size/overlap MUST be the ones passed to the processors:
+        # the splitter is built for the resolved budget and the processors
+        # gate on their own chunk_size.  Passing the model default while
+        # handing over a splitter built for a per-dataset override would make
+        # the two disagree (the override silently half-applied).
+        chunk_size, chunk_overlap, text_splitter = self._resolve_chunk_params(dataset_name, rag)
+        # Short-term memory: resolved once per batch and threaded into BOTH
+        # store paths below (the batched media/PDF consumer and the direct
+        # per-filetype handler), so no file-ingested point can escape the
+        # dataset's hard cap (PLAN section 2.2, truth-table row 4).
+        dataset_lifetime = self._dataset_lifetime(dataset_name)
         max_pixels = mpk.get("max_pixels", 720 * 720)
         fps = mpk.get("fps", 1.0)
         total_pixels = mpk.get("total_pixels", 0)
@@ -2548,8 +3371,14 @@ class DatasetManager:
                             file_docs = docs[offset : offset + count]
                             offset += count
                             try:
-                                ids = retry_call(
-                                    lambda fd=file_docs: rag.add_to_vector_store(fd),
+                                # _ingest_retry_call, not the shared
+                                # retry_call: Feature D's fail-closed
+                                # LateInteractionUnavailable must propagate on
+                                # the FIRST attempt — a retry would hit dedup
+                                # and return 0 ids, reporting the file
+                                # "complete, 0 chunks" with no token matrices.
+                                ids = _ingest_retry_call(
+                                    lambda fd=file_docs: rag.add_to_vector_store(fd, dataset_lifetime=dataset_lifetime),
                                     max_attempts=3,
                                     base_delay=2.0,
                                     connection_delay=10.0,
@@ -2670,6 +3499,20 @@ class DatasetManager:
               ("done",)                                   — terminal; run tail logic
             """
             fname = orig_name_
+
+            # Canonical-source stamp (audit 2026-10-02 P1-3 fix): URL ingests
+            # carry their s3:// URL as metadata.source so prune's MatchPrefix
+            # filters can actually match them (a stored-PVC-path stamp made
+            # the prune structurally dead).  The map is keyed by THIS file's
+            # tmp_path (unique per download — a basename key collides when
+            # one sync spans prefixes holding the same object name,
+            # cross-validation finding 1) and falls through to the stored
+            # path for files with no entry.
+            def _source_for(_target_fname: str, stored: str) -> str:
+                if source_urls:
+                    return source_urls.get(tmp_path_, stored)
+                return stored
+
             try:
                 try:
                     evq.put(("progress", {"file": fname, "status": "preprocessing"}))
@@ -2694,7 +3537,12 @@ class DatasetManager:
                             dst_str,
                             chunk_size=chunk_size,
                             chunk_overlap=chunk_overlap,
-                            text_splitter=rag.embedder.text_splitter,
+                            # Use the RESOLVED splitter, not the model's cached
+                            # one: chunk_size/chunk_overlap above come from the
+                            # resolved pair, so a per-dataset override would
+                            # otherwise be measured against a splitter built
+                            # for a different budget.
+                            text_splitter=text_splitter,
                             ocr=self._get_ocr_enabled(dataset_name),
                         ):
                             pdf_batch.append(chunk)
@@ -2705,7 +3553,7 @@ class DatasetManager:
                             # start processing the first pages while later
                             # pages are still being extracted.
                             if len(pdf_batch) >= embed_batch:
-                                _fix_source(pdf_batch, fname, dst_str)
+                                _fix_source(pdf_batch, fname, _source_for(fname, dst_str))
                                 self._save_doc_media(dataset_name, pdf_batch, model_max_pixels=max_pixels)
                                 evq.put(
                                     (
@@ -2721,7 +3569,7 @@ class DatasetManager:
 
                         # Handle remaining chunks from the generator
                         if pdf_batch:
-                            _fix_source(pdf_batch, fname, dst_str)
+                            _fix_source(pdf_batch, fname, _source_for(fname, dst_str))
                             self._save_doc_media(dataset_name, pdf_batch, model_max_pixels=max_pixels)
                             evq.put(
                                 (
@@ -2741,7 +3589,7 @@ class DatasetManager:
                         dst_str = str(dst)
                         img_proc = ImageProcessor(max_pixels=max_pixels)
                         doc = img_proc.process(dst_str)
-                        _fix_source([doc], fname, dst_str)
+                        _fix_source([doc], fname, _source_for(fname, dst_str))
                         doc["preprocessed_image"] = f"file://{dst_str}"
                         if dst_str != original_dst:
                             doc["original_image"] = f"file://{original_dst}"
@@ -2750,7 +3598,9 @@ class DatasetManager:
                         # Delete original if keep_originals=False (mutates only
                         # this worker's own doc — emitted afterwards).
                         if dst_str != original_dst and not self._get_keep_originals(dataset_name):
-                            self._delete_original_file(dataset_name, original_dst, [], "original_image")
+                            self._delete_original_file(
+                                dataset_name, original_dst, [], "original_image", defer_hash_write=True
+                            )
                             doc.pop("original_image", None)
 
                         evq.put(
@@ -2787,7 +3637,7 @@ class DatasetManager:
                             vid_chunk_count += 1
 
                             if len(vid_batch) >= embed_batch:
-                                _fix_source(vid_batch, fname, dst_str)
+                                _fix_source(vid_batch, fname, _source_for(fname, dst_str))
                                 self._save_doc_media(dataset_name, vid_batch)
                                 evq.put(
                                     (
@@ -2803,7 +3653,7 @@ class DatasetManager:
 
                         delete_original = dst_str != original_dst and not self._get_keep_originals(dataset_name)
                         if vid_batch:
-                            _fix_source(vid_batch, fname, dst_str)
+                            _fix_source(vid_batch, fname, _source_for(fname, dst_str))
                             self._save_doc_media(dataset_name, vid_batch)
                             if delete_original:
                                 # Mirrors the sequential pop over the un-flushed
@@ -2823,7 +3673,9 @@ class DatasetManager:
                                 )
                             )
                         if delete_original:
-                            self._delete_original_file(dataset_name, original_dst, [], "original_video")
+                            self._delete_original_file(
+                                dataset_name, original_dst, [], "original_video", defer_hash_write=True
+                            )
                         file_total = vid_chunk_count
 
                     elif file_type == "audio":
@@ -2842,7 +3694,7 @@ class DatasetManager:
                                 "source": dst_str,
                                 "segment_index": seg_idx,
                             }
-                            _fix_source([doc], fname, dst_str)
+                            _fix_source([doc], fname, _source_for(fname, dst_str))
                             audio_batch.append(doc)
                         # Save each segment to disk so _strip_media_payloads
                         # doesn't replace the segment data URL with the full
@@ -2869,7 +3721,9 @@ class DatasetManager:
                             mpk,
                             chunk_size,
                             chunk_overlap,
+                            text_splitter=text_splitter,
                             original_name=fname,
+                            dataset_lifetime=dataset_lifetime,
                         )
                         evq.put(("direct_result", fname, result.get("chunks", 0)))
 
@@ -3022,15 +3876,24 @@ class DatasetManager:
             t.join(timeout=30)
 
         # -- Flush remaining batch and shut down consumer -----------------------
-        if batch_docs:
-            _queue_batch(batch_docs, batch_files_list)
-        batch_queue.put(None)  # sentinel
-        consumer_thread.join()
-
-        # Persist the batch's deferred .hashes.json entries — one merged
-        # write under the cross-process lock instead of a full index rewrite
-        # per stored file (O(n²) NFS I/O on large batches).
-        _flush_hash_index_writes()
+        # The deferred-write flushes live in a ``finally`` so a failure while
+        # draining the pipeline (a dead consumer, a join timeout) still
+        # persists the entries the batch already earned — the crash window is
+        # then a hard process kill, not any ordinary exception.
+        try:
+            if batch_docs:
+                _queue_batch(batch_docs, batch_files_list)
+            batch_queue.put(None)  # sentinel
+            consumer_thread.join()
+        finally:
+            # Persist the batch's deferred .hashes.json entries — one merged
+            # write under the cross-process lock instead of a full index
+            # rewrite per stored file (O(n²) NFS I/O on large batches).
+            _flush_hash_index_writes()
+            # Same treatment for .ingested_hashes.json (audit 2026-10-16, P2):
+            # _mark_ingested ran once per embedded file, each rewriting the
+            # whole set under the cross-process lock.
+            _flush_ingested_hash_writes()
 
         # If the consumer thread crashed, propagate the error
         if consumer_error[0] is not None:
@@ -3093,11 +3956,47 @@ class DatasetManager:
         touching anything.  Known limitation: an object whose *content*
         changed under the same key is re-ingested (its hash changes) but the
         old version's points stay — source-keyed pruning cannot see versions.
+
+        **Watched-source skip state** (feature: watched sources): sync paths
+        consult the per-dataset ``files/.watched_state.json`` sidecar —
+        ``s3://bucket/key → {etag, size}`` of the last successfully ingested
+        version of each object.  A listed object whose ETag+Size still
+        matches its state entry is dropped from the download set before any
+        bytes move (no re-download, no re-embed attempt); the state is written
+        back after the batch for every object whose ingest demonstrably
+        succeeded.  The fingerprint is ETag+Size together, so content changed
+        under the same key re-ingests (the ETag flips even when the size
+        doesn't).  Consequences worth knowing: an empty state changes nothing
+        (the first sync of a dataset behaves exactly as before and populates
+        the state), and — once state exists — deleting a source's documents
+        out-of-band (``dataset_delete_documents`` / the prune filter) sticks:
+        the reconciler no longer resurrects them on the next tick.  The state
+        is an optimisation, never a correctness gate: any parse/IO failure
+        degrades to re-downloading everything.  ``sync_dry_run`` reports the
+        split as ``would_download`` (objects that would move) vs ``unchanged``
+        (objects the state would skip).
         """
-        # Expand S3 directory prefixes to individual file URLs
-        expanded = _expand_urls(urls)
+        sync_mode = sync or sync_dry_run
+        # Expand S3 directory prefixes to individual file URLs.  On sync
+        # paths the per-prefix listing is the *fingerprinting* variant — the
+        # same recursive walk and filter as _expand_urls uses (identical URL
+        # set, same order), but it also carries each object's ETag/Size, so
+        # the watched-state skip costs zero extra S3 calls.  Non-sync paths
+        # keep the plain expansion byte-identical.
+        expanded: list[str] = []
+        listed_fingerprints: dict[str, dict[str, Any]] = {}
+        if sync_mode:
+            for u in urls:
+                if u.startswith("s3://") and _is_s3_directory_url(u):
+                    fps = _list_s3_prefix_fingerprints(u)
+                    listed_fingerprints.update(fps)
+                    expanded.extend(fps.keys())
+                else:
+                    expanded.append(u)
+        else:
+            expanded = _expand_urls(urls)
         if not expanded:
-            if sync or sync_dry_run:
+            if sync_mode:
                 return {
                     "status": "dry-run" if sync_dry_run else "ok",
                     "file_count": 0,
@@ -3108,7 +4007,7 @@ class DatasetManager:
 
         sync_prefixes = _sync_prefixes(urls)
         stored_sources: set[str] = set()
-        if sync or sync_dry_run:
+        if sync_mode:
             non_s3 = [u for u in expanded if not u.startswith("s3://")]
             if non_s3:
                 raise ValueError(
@@ -3116,19 +4015,41 @@ class DatasetManager:
                 )
             stored_sources = self._stored_sources(dataset_name, sync_prefixes)
 
+        # Watched-state skip: unchanged = listed object whose ETag+Size still
+        # matches the recorded fingerprint of a successful ingest.  Only
+        # fingerprint-listed objects (S3 prefix expansions) can match; plain
+        # URLs are always attempted.
+        unchanged: set[str] = set()
+        if sync_mode:
+            state = self._watched_state_load(dataset_name)
+            if state:
+                for u in expanded:
+                    key = _canonical_s3_url(u)
+                    fp = listed_fingerprints.get(key)
+                    st = state.get(key)
+                    if fp is not None and st and st.get("etag") == fp.get("etag") and st.get("size") == fp.get("size"):
+                        unchanged.add(key)
+
         if sync_dry_run:
-            expected = {u.split("?")[0].rstrip("/") for u in expanded}
+            expected = {_canonical_s3_url(u) for u in expanded}
+            download = [u for u in expanded if _canonical_s3_url(u) not in unchanged]
             return {
                 "status": "dry-run",
                 "scope": sync_prefixes,
                 "listed": sorted(expected),
-                "would_ingest": sorted(expected - stored_sources),
+                "would_ingest": sorted({_canonical_s3_url(u) for u in download} - stored_sources),
                 "would_prune": sorted(stored_sources - expected),
+                # Watched-source skip split (feature: watched sources).
+                "would_download": sorted({_canonical_s3_url(u) for u in download}),
+                "unchanged": sorted(unchanged),
             }
 
+        # Objects the state says are unchanged are NOT downloaded and NOT
+        # force-re-ingested — their recorded ingest is still current.
+        download = [u for u in expanded if _canonical_s3_url(u) not in unchanged]
         # Force-re-ingest URLs with no stored points (see docstring): keyed by
         # the original file name the producer loop sees.
-        force_names = {Path(u.split("?")[0].rstrip("/")).name for u in expanded if u not in stored_sources}
+        force_names = {Path(_canonical_s3_url(u)).name for u in download if u not in stored_sources}
 
         file_entries: list[tuple[str, str]] = []
         tmp_paths: list[str] = []
@@ -3136,30 +4057,53 @@ class DatasetManager:
             # Notify the frontend about each expanded file before downloading
             if progress_callback and len(expanded) > len(urls):
                 for url in expanded:
-                    clean = url.split("?")[0].rstrip("/")
+                    clean = _canonical_s3_url(url)
                     orig_name = Path(clean).name or "download"
-                    progress_callback({"file": orig_name, "status": "listed"})
+                    if clean in unchanged:
+                        progress_callback({"file": orig_name, "status": "unchanged"})
+                    else:
+                        progress_callback({"file": orig_name, "status": "listed"})
 
-            for url in expanded:
+            for url in download:
                 # Derive a human-readable original name from the URL
-                clean = url.split("?")[0].rstrip("/")
+                clean = _canonical_s3_url(url)
                 orig_name = Path(clean).name or "download"
 
                 tmp_path = _download_url(url)
                 tmp_paths.append(tmp_path)
                 file_entries.append((tmp_path, orig_name))
 
+            # Canonical-source stamping (audit 2026-10-02 P1-3): every
+            # ingested URL object carries its canonical s3:// URL as
+            # metadata.source so prune's MatchPrefix(scope) can match it —
+            # a stored-PVC-path stamp makes the prune structurally dead.
+            # Keyed by tmp_path (NOT basename — cross-validation finding 1,
+            # 2026-10-02: one sync may span several prefixes and two of them
+            # can hold the SAME object name; a basename key would stamp one
+            # file with the other's canonical URL and make per-object prune
+            # reconciliation impossible. tmp_path is unique per download).
+            canonical_by_tmp = {tmp: _canonical_s3_url(u) for (tmp, _), u in zip(file_entries, download)}
             result = self.add_files_batch(
                 dataset_name,
                 file_entries,
                 progress_callback=progress_callback,
                 batch_score=batch_score,
                 force_names=force_names or None,
+                source_urls=canonical_by_tmp,
             )
             if sync:
                 result["sync"] = self._prune_sources(
-                    dataset_name, sync_prefixes, expected={u.split("?")[0].rstrip("/") for u in expanded}
+                    dataset_name, sync_prefixes, expected={_canonical_s3_url(u) for u in expanded}
                 )
+                # Sources the prune deleted upstream are gone: forget their
+                # fingerprints so a pruned-and-reappeared object (even with an
+                # identical ETag) re-ingests instead of state-skipping — sync's
+                # documented heal path must keep working.
+                pruned = (result["sync"] or {}).get("pruned_sources") or []
+                if pruned:
+                    self._watched_state_forget(dataset_name, pruned)
+            if sync_mode:
+                self._record_watched_ingest_state(dataset_name, download, listed_fingerprints, result)
             return result
         finally:
             for tmp_path in tmp_paths:
@@ -3167,6 +4111,42 @@ class DatasetManager:
                     os.unlink(tmp_path)
                 except Exception:
                     logger.debug("Suppressed exception", exc_info=True)
+
+    def _record_watched_ingest_state(
+        self,
+        dataset_name: str,
+        attempted_urls: list[str],
+        fingerprints: dict[str, dict[str, Any]],
+        batch_result: dict[str, Any],
+    ) -> None:
+        """Record watched-state fingerprints for URLs whose ingest succeeded.
+
+        Success = the file shows up in the batch result without an error AND
+        with either stored chunks or a content-hash dedup skip (its content is
+        in the dataset either way).  Files that failed, produced no chunks, or
+        are missing from the result stay unrecorded — the next reconcile
+        re-downloads and re-attempts them (fail-soft: a wasted download, never
+        a silently skipped hole).  Basename collisions inside one batch (two
+        prefixes holding the same file name) cannot be resolved per-file and
+        stay unrecorded for the same reason.  Pruned (upstream-deleted) sources
+        were already forgotten by the caller.
+        """
+        if not fingerprints or not attempted_urls:
+            return
+        by_name: dict[str, list[str]] = {}
+        for u in attempted_urls:
+            by_name.setdefault(Path(_canonical_s3_url(u)).name or "download", []).append(u)
+        succeeded: set[str] = set()
+        for f in batch_result.get("files") or []:
+            if not isinstance(f, dict) or f.get("error"):
+                continue
+            urls_for_name = by_name.get(str(f.get("file") or "")) or []
+            if len(urls_for_name) != 1:
+                continue
+            if (f.get("chunks") or 0) > 0 or f.get("deduplicated"):
+                succeeded.add(_canonical_s3_url(urls_for_name[0]))
+        if succeeded:
+            self._watched_state_update(dataset_name, fingerprints, only_urls=succeeded)
 
     def _add_file_processed(
         self,
@@ -3179,13 +4159,37 @@ class DatasetManager:
         text_splitter=None,
         original_name: str | None = None,
         source_url: str | None = None,
+        dataset_lifetime: Any = _CAP_REQUIRED,
     ) -> dict[str, Any]:
         """Core file processing logic (shared by ``add_file`` and URL ingestion).
 
         If *source_url* is set (HTTP/S3 URL), the file is processed from the
         temp download and **not** copied to the PVC files directory.  The
         original URL is used as the canonical ``source``.
+
+        *dataset_lifetime* is the target dataset's STM lifetime in seconds
+        (``None`` = infinite).  It is resolved ONCE by the calling entry point
+        (:meth:`add_file` / :meth:`add_files_batch` / the URL path) and passed
+        down, because this function fans out into ~15 per-filetype store calls
+        and each of them must carry the dataset's hard cap (PLAN section 2.2:
+        the dataset lifetime caps every point in it).  Threading it as a
+        parameter — rather than re-reading meta here — keeps ONE meta read per
+        file operation and, more importantly, makes the cap impossible to
+        forget in a new branch: a leaf that omits it is a visible omission
+        rather than a silent immortal point.
+
+        The default is the _CAP_REQUIRED sentinel rather than None precisely
+        because None is a legal value here: a caller that FORGETS the cap
+        must fail loudly instead of silently storing immortal points inside
+        a finite dataset.  See _CAP_REQUIRED.
         """
+        if dataset_lifetime is _CAP_REQUIRED:
+            raise TypeError(
+                "_add_file_processed() requires dataset_lifetime explicitly "
+                "(pass the dataset's STM lifetime, or None for an immortal "
+                "dataset). A missing cap would store points the reaper can "
+                "never collect -- see _CAP_REQUIRED."
+            )
         fname = original_name or Path(file_path).name
         # Archives: extract and process each contained file through the same
         # per-file handler used for standalone uploads (_add_file_processed), so
@@ -3202,6 +4206,11 @@ class DatasetManager:
             else:
                 archive_path = str(self._store_file(dataset_name, file_path, original_name=fname))
 
+            # Feature D fail-closed (cross-validation F4): see _process_member.
+            from multimodal_rag.late_interaction import LateInteractionUnavailable
+
+            late_abort: list[BaseException] = []
+
             def _process_member(member_path: str, member_name: str) -> list[str]:
                 try:
                     result = self._add_file_processed(
@@ -3213,8 +4222,17 @@ class DatasetManager:
                         chunk_overlap,
                         text_splitter=text_splitter,
                         original_name=member_name,
+                        dataset_lifetime=dataset_lifetime,
                     )
                     return list(result.get("stored_ids") or [])
+                except LateInteractionUnavailable as exc:
+                    # Feature D fail-closed, same rule as the batch retry
+                    # wrapper: a member that cannot store its token matrices
+                    # must FAIL the archive, not be skipped into a "0 chunks"
+                    # success.  ArchiveProcessor.process swallows member
+                    # exceptions, so record it here and re-raise after process().
+                    late_abort.append(exc)
+                    raise
                 except ValueError as exc:
                     # Unsupported member type — skip it, matching the old
                     # behaviour of silently ignoring such files.
@@ -3226,6 +4244,11 @@ class DatasetManager:
 
             archive_proc = ArchiveProcessor(process_member=_process_member)
             ids = archive_proc.process(archive_path)
+            # process() catches member exceptions and returns [] — re-raise the
+            # fail-closed one here so the archive is reported FAILED, never as a
+            # silent "0 chunks" success.
+            if late_abort:
+                raise late_abort[0]
             return {"type": "archive", "chunks": len(ids), "stored_ids": ids}
 
         file_type = _classify_file(file_path)
@@ -3236,11 +4259,10 @@ class DatasetManager:
         # Uses the model's ``code_chunk_size`` / ``code_chunk_overlap``
         # (typically 8192/512) so that functions and document structures
         # stay intact.  A matching ``code_text_splitter`` is used when
-        # available.
+        # available.  A per-dataset code override (if stored) wins over the
+        # model value; otherwise this is exactly the old behaviour.
         if file_type in _STRUCTURED_TYPES:
-            chunk_size = rag.embedder.code_chunk_size
-            chunk_overlap = rag.embedder.code_chunk_overlap
-            text_splitter = rag.embedder.code_text_splitter
+            chunk_size, chunk_overlap, text_splitter = self._resolve_chunk_params(dataset_name, rag, structured=True)
 
         if source_url:
             # URL-based file: process from temp, use original URL as source, no PVC copy
@@ -3271,7 +4293,7 @@ class DatasetManager:
             )
             _fix_source(chunks, fname, source_str)
             self._save_doc_media(dataset_name, chunks, model_max_pixels=mpk.get("max_pixels", 720 * 720))
-            ids = rag.add_to_vector_store(chunks)
+            ids = rag.add_to_vector_store(chunks, dataset_lifetime=dataset_lifetime)
             self._strip_media_payloads(rag, ids)
             self._increment_count(dataset_name, len(ids), file_type=file_type)
             self._cleanup_dropped_file(dataset_name, rag, source_url, str(dst_path), content_hash, ids)
@@ -3290,7 +4312,7 @@ class DatasetManager:
             doc["preprocessed_image"] = store_url
             if not source_url and source_str != original_path:
                 doc["original_image"] = f"file://{original_path}"
-            ids = rag.add_to_vector_store([doc])
+            ids = rag.add_to_vector_store([doc], dataset_lifetime=dataset_lifetime)
             self._strip_media_payloads(rag, ids, store_url)
             self._increment_count(dataset_name, len(ids), file_type=file_type)
             self._cleanup_dropped_file(dataset_name, rag, source_url, original_path, content_hash, ids)
@@ -3322,7 +4344,7 @@ class DatasetManager:
                     doc["original_video"] = original_url
             _fix_source(docs, fname, source_str)
             if docs:
-                ids = rag.add_to_vector_store(docs)
+                ids = rag.add_to_vector_store(docs, dataset_lifetime=dataset_lifetime)
                 self._strip_media_payloads(rag, ids, store_url)
                 self._increment_count(dataset_name, len(ids), file_type=file_type)
             else:
@@ -3362,7 +4384,7 @@ class DatasetManager:
             # file (which could be tens of MB and exceed the ASR endpoint's
             # size cap at query time).
             self._save_doc_media(dataset_name, audio_docs)
-            ids = rag.add_to_vector_store(audio_docs)
+            ids = rag.add_to_vector_store(audio_docs, dataset_lifetime=dataset_lifetime)
             self._strip_media_payloads(rag, ids, store_url)
             self._increment_count(dataset_name, len(ids), file_type=file_type)
             self._cleanup_dropped_file(dataset_name, rag, source_url, str(dst_path), content_hash, ids)
@@ -3378,7 +4400,7 @@ class DatasetManager:
             )
             chunks = json_proc.process(source_str)
             _fix_source(chunks, fname, source_str)
-            ids = rag.add_to_vector_store(chunks) if chunks else []
+            ids = rag.add_to_vector_store(chunks, dataset_lifetime=dataset_lifetime) if chunks else []
             self._increment_count(dataset_name, len(ids), file_type=file_type)
             return self._finish_ingest(
                 dataset_name, content_hash, {"type": "json", "chunks": len(ids), "stored_ids": ids}
@@ -3388,7 +4410,7 @@ class DatasetManager:
             table_proc = TableProcessor(chunk_size=chunk_size, text_splitter=text_splitter)
             chunks = table_proc.process(source_str)
             _fix_source(chunks, fname, source_str)
-            ids = rag.add_to_vector_store(chunks) if chunks else []
+            ids = rag.add_to_vector_store(chunks, dataset_lifetime=dataset_lifetime) if chunks else []
             self._increment_count(dataset_name, len(ids), file_type=file_type)
             return self._finish_ingest(
                 dataset_name, content_hash, {"type": "table", "chunks": len(ids), "stored_ids": ids}
@@ -3402,7 +4424,7 @@ class DatasetManager:
             )
             chunks = code_proc.process(source_str)
             _fix_source(chunks, fname, source_str)
-            ids = rag.add_to_vector_store(chunks)
+            ids = rag.add_to_vector_store(chunks, dataset_lifetime=dataset_lifetime)
             self._increment_count(dataset_name, len(ids), file_type=file_type)
             return self._finish_ingest(
                 dataset_name, content_hash, {"type": "code", "chunks": len(ids), "stored_ids": ids}
@@ -3418,7 +4440,7 @@ class DatasetManager:
             _fix_source(chunks, fname, source_str)
             if chunks:
                 self._save_doc_media(dataset_name, chunks)
-                ids = rag.add_to_vector_store(chunks)
+                ids = rag.add_to_vector_store(chunks, dataset_lifetime=dataset_lifetime)
                 self._strip_media_payloads(rag, ids, store_url)
                 self._increment_count(dataset_name, len(ids), file_type=file_type)
             else:
@@ -3435,7 +4457,7 @@ class DatasetManager:
             )
             chunks = html_proc.process(source_str)
             _fix_source(chunks, fname, source_str)
-            ids = rag.add_to_vector_store(chunks)
+            ids = rag.add_to_vector_store(chunks, dataset_lifetime=dataset_lifetime)
             self._increment_count(dataset_name, len(ids), file_type=file_type)
             return self._finish_ingest(
                 dataset_name, content_hash, {"type": "html", "chunks": len(ids), "stored_ids": ids}
@@ -3449,7 +4471,7 @@ class DatasetManager:
             )
             chunks = xml_proc.process(source_str)
             _fix_source(chunks, fname, source_str)
-            ids = rag.add_to_vector_store(chunks) if chunks else []
+            ids = rag.add_to_vector_store(chunks, dataset_lifetime=dataset_lifetime) if chunks else []
             self._increment_count(dataset_name, len(ids), file_type=file_type)
             return self._finish_ingest(
                 dataset_name, content_hash, {"type": "xml", "chunks": len(ids), "stored_ids": ids}
@@ -3463,7 +4485,7 @@ class DatasetManager:
             )
             chunks = yaml_proc.process(source_str)
             _fix_source(chunks, fname, source_str)
-            ids = rag.add_to_vector_store(chunks) if chunks else []
+            ids = rag.add_to_vector_store(chunks, dataset_lifetime=dataset_lifetime) if chunks else []
             self._increment_count(dataset_name, len(ids), file_type=file_type)
             return self._finish_ingest(
                 dataset_name, content_hash, {"type": "yaml", "chunks": len(ids), "stored_ids": ids}
@@ -3479,7 +4501,7 @@ class DatasetManager:
             _fix_source(chunks, fname, source_str)
             if chunks:
                 self._save_doc_media(dataset_name, chunks)
-                ids = rag.add_to_vector_store(chunks)
+                ids = rag.add_to_vector_store(chunks, dataset_lifetime=dataset_lifetime)
                 self._strip_media_payloads(rag, ids)
                 self._increment_count(dataset_name, len(ids), file_type=file_type)
             else:
@@ -3498,7 +4520,7 @@ class DatasetManager:
             _fix_source(chunks, fname, source_str)
             if chunks:
                 self._save_doc_media(dataset_name, chunks)
-                ids = rag.add_to_vector_store(chunks)
+                ids = rag.add_to_vector_store(chunks, dataset_lifetime=dataset_lifetime)
                 self._strip_media_payloads(rag, ids)
                 self._increment_count(dataset_name, len(ids), file_type=file_type)
             else:
@@ -3511,7 +4533,7 @@ class DatasetManager:
             log_proc = LogProcessor(chunk_size=chunk_size, text_splitter=text_splitter)
             chunks = log_proc.process(source_str)
             _fix_source(chunks, fname, source_str)
-            ids = rag.add_to_vector_store(chunks)
+            ids = rag.add_to_vector_store(chunks, dataset_lifetime=dataset_lifetime)
             self._increment_count(dataset_name, len(ids), file_type=file_type)
             return self._finish_ingest(
                 dataset_name, content_hash, {"type": "log", "chunks": len(ids), "stored_ids": ids}
@@ -3525,7 +4547,7 @@ class DatasetManager:
             )
             chunks = text_proc.process(source_str)
             _fix_source(chunks, fname, source_str)
-            ids = rag.add_to_vector_store(chunks)
+            ids = rag.add_to_vector_store(chunks, dataset_lifetime=dataset_lifetime)
             self._increment_count(dataset_name, len(ids), file_type=file_type)
             return self._finish_ingest(
                 dataset_name, content_hash, {"type": "text", "chunks": len(ids), "stored_ids": ids}
@@ -3927,18 +4949,30 @@ class DatasetManager:
                 except OSError:
                     pass
                 file_type = _classify_file(str(tier1))
+                # The artifact each branch produces: image/video rewrite the
+                # *_preprocessed sibling the candidate scan keyed on, but
+                # _truncate_audio_file writes a *_truncated sibling instead
+                # (audit 2026-10-16, P1-4 follow-up).  Comparing the result
+                # against `preproc` unconditionally made the audio branch
+                # structurally unable to report a repair — it always fell to
+                # the "failed validation" arm even on a clean truncation.
                 if file_type == "image":
                     result = _preprocess_image_file(tier1)
+                    artifact = preproc
                 elif file_type == "video":
                     result = _preprocess_video_file(tier1)
+                    artifact = preproc
                 elif file_type == "audio":
                     result = _truncate_audio_file(tier1, max_seconds=60.0)
+                    artifact = result if result != tier1 else preproc
                 else:
                     result = tier1
-                if result != tier1 and result == preproc and ok(preproc):
-                    record["regenerated_bytes"] = preproc.stat().st_size
+                    artifact = preproc
+                if result != tier1 and result == artifact and ok(artifact):
+                    record["preprocessed"] = str(artifact)
+                    record["regenerated_bytes"] = artifact.stat().st_size
                     repaired.append(record)
-                    logger.info("Repaired broken preprocessed media: %s", preproc.name)
+                    logger.info("Repaired broken preprocessed media: %s", artifact.name)
                 else:
                     record["reason"] = (
                         "preprocess returned the original (no transcode needed, or the original's "
@@ -3985,23 +5019,50 @@ class DatasetManager:
                     if isinstance(v, str) and v.startswith("file://") and v[7:] in candidates:
                         return True
             return False
-        # QdrantVectorStore — one bounded scroll per source (limit 1).
+        # QdrantVectorStore — one bounded scroll per source, checking the SAME
+        # key set the InMemory branch above checks (audit 2026-10-16, P2).
+        # The caller passes tier-1/tier-2 ARTIFACT paths (a file and its
+        # ``*_preprocessed`` sibling) while the store may reference such a
+        # path only through a ``preprocessed_*`` / ``original_*`` payload key
+        # — the shape every ingest path writes (``doc["preprocessed_image"]
+        # = f"file://{dst}"``).  Matching on ``metadata.source`` alone was
+        # blind to those, so a surviving point could keep a reference to a
+        # file this guard then deleted (dangling media for the reranker/VLM,
+        # the UI and any later repair pass).
         try:
-            from qdrant_client.models import FieldCondition, Filter, MatchValue
+            from qdrant_client.models import FieldCondition, Filter, MatchAny
 
             client = vs._client  # type: ignore[attr-defined]
             coll = vs.collection_name  # type: ignore[attr-defined]
-            for s in sources:
-                points, _ = client.scroll(
-                    coll,
-                    limit=1,
-                    with_payload=False,
-                    with_vectors=False,
-                    filter=Filter(must=[FieldCondition(key="metadata.source", match=MatchValue(value=s))]),
+            # Tier refs are stored as file:// URLs; compare on the stripped
+            # path so a plain-path argument matches its stored ref.
+            want = {s.removeprefix("file://") for s in sources}
+            # Explicit list[...] annotation: the inferred list[FieldCondition]
+            # is invariant, so it does not satisfy Filter.should's wider
+            # element union. Widening the ELEMENT type keeps the append below
+            # valid while matching what qdrant actually accepts.
+            conditions: list[Any] = [
+                FieldCondition(key="metadata.source", match=MatchAny(any=sorted(want))),
+            ]
+            for key in (
+                "preprocessed_image",
+                "preprocessed_video",
+                "preprocessed_audio",
+                "original_image",
+                "original_video",
+                "original_audio",
+            ):
+                conditions.append(
+                    FieldCondition(key=f"metadata.{key}", match=MatchAny(any=sorted(f"file://{s}" for s in want)))
                 )
-                if points:
-                    return True
-            return False
+            points, _ = client.scroll(
+                coll,
+                limit=1,
+                with_payload=False,
+                with_vectors=False,
+                scroll_filter=Filter(should=conditions),
+            )
+            return bool(points)
         except Exception:
             logger.warning("Could not verify file references — keeping file (conservative)")
             return True
@@ -4030,6 +5091,7 @@ class DatasetManager:
         original_path: str,
         doc_ids: list[str],
         tier1_key: str,
+        defer_hash_write: bool = False,
     ) -> None:
         """Delete a tier-1 original file and remove its Qdrant reference.
 
@@ -4038,6 +5100,10 @@ class DatasetManager:
         preprocessed copy.  Also removes the ``original_image`` /
         ``original_video`` key from the Qdrant payloads and updates
         the dedup hash index.
+
+        *defer_hash_write* is for callers already inside a deferred batch:
+        the dedup-index removal is staged and flushed with the batch's other
+        hash writes instead of rewriting the whole index here.
         """
         p = Path(original_path)
         if not p.exists():
@@ -4051,20 +5117,19 @@ class DatasetManager:
             logger.debug("Failed to delete original file %s", original_path, exc_info=True)
             return
 
-        # Remove from dedup hash index
+        # Remove from dedup hash index.  Staged in the deferred dirty set (see
+        # _hash_index_dirty) so a batch performs ONE index write instead of a
+        # full rewrite per dropped original, and so the removal cannot be
+        # resurrected by the batch's flush re-adding the entry _store_file
+        # deferred for this very path.  No match = no write at all.
         files_dir = self._dataset_dir(dataset_name) / "files"
         hashes_path = files_dir / ".hashes.json"
         if hashes_path.exists():
-            with _cross_process_lock(files_dir / ".hashes.lock"):
-                try:
-                    hash_index = _load_hash_index(hashes_path)
-                    # Remove any entry pointing at this file
-                    stale = [k for k, v in hash_index.items() if v == original_path]
-                    for k in stale:
-                        del hash_index[k]
-                    _write_hash_index(hashes_path, hash_index)
-                except Exception:
-                    logger.debug("Failed to update .hashes.json", exc_info=True)
+            try:
+                if _stage_hash_index_delete(hashes_path, original_path) and not defer_hash_write:
+                    _flush_hash_index_writes()
+            except Exception:
+                logger.debug("Failed to update .hashes.json", exc_info=True)
 
         # Remove original_* key from Qdrant payloads
         try:
@@ -4074,11 +5139,23 @@ class DatasetManager:
             client = vs._client  # type: ignore[attr-defined]
             coll = vs.collection_name  # type: ignore[attr-defined]
 
-            for doc_id in doc_ids:
-                client.set_payload(
+            # ONE batched call (audit 2026-10-16, P2): this looped a call per
+            # point id, so clearing the key for a file's N chunks cost N round
+            # trips for one logical update — the selector takes a list.
+            #
+            # delete_payload, not set_payload({key: None}): a JSON null is a
+            # PRESENT value, so the old form left the key in the payload
+            # entirely (verified against the pinned client — the reference was
+            # never actually removed).  The key is the DOTTED PATH, because
+            # delete_payload removes TOP-LEVEL keys only: passing the bare
+            # ``original_image`` is a silent no-op against the nested
+            # ``metadata`` mapping this codebase writes (also verified).
+            clean_ids = [str(d) for d in doc_ids if str(d).strip()]
+            if clean_ids:
+                client.delete_payload(
                     collection_name=coll,
-                    payload={tier1_key: None},
-                    points=[doc_id],
+                    keys=[f"metadata.{tier1_key}"],
+                    points=clean_ids,
                 )
         except Exception:
             logger.debug("Failed to remove %s from Qdrant payloads", tier1_key, exc_info=True)
@@ -4260,6 +5337,7 @@ class DatasetManager:
         use_reranker: bool = False,
         reranker_top_k: int = 3,
         filters: dict[str, Any] | None = None,
+        rrf: "RrfParams | None" = None,
     ) -> list[dict[str, Any]]:
         """Search a dataset and return ranked results.
 
@@ -4269,8 +5347,32 @@ class DatasetManager:
         ``vector_store.build_payload_filter``): ``file_types``, ``severities``,
         ``source_prefix``, ``date_from``/``date_to`` — all optional,
         AND-combined, applied server-side in Qdrant before ranking.
+
+        *rrf* is the optional weighted-RRF override (feature: weighted RRF):
+        when set, the hybrid lane runs ``RrfQuery(rrf=Rrf(k=…,
+        weights=[dense, sparse]))`` and every fused entry gains an ``"rrf"``
+        block recording ``{dense, sparse, k, applied}`` — the exact
+        parameters the executed request used.  The override only ever
+        applies to a fusion request: dense-only results (hybrid disabled,
+        no BM25 stats, no query text) stay unstamped here and the block
+        reports ``applied=false`` rather than labelling dense results with
+        weights.  Default path (no override) returns results exactly as
+        before, with no ``"rrf"`` key.
+
+        When *rrf* is ``None`` the dataset's stored weighted-RRF defaults
+        (``meta["rrf"]``, settable at create time and via PATCH) apply —
+        per-call overrides always win over them, and both lose to nothing:
+        when the effective parameters equal the global default (1.0/1.0,
+        no pinned k) the request stays byte-identical to the historical
+        fusion form.  The ``"rrf"`` block reports the EFFECTIVE parameters.
+        Per-dataset defaults are IGNORED by federated multi-dataset search
+        by ruling — one caller-facing merged pool cannot honour per-dataset
+        weights; only an explicit caller override may apply there.
         """
         rag = self._get_rag(dataset_name)
+        # Effective weights: per-call override > dataset meta default >
+        # global default (None → byte-identical default fusion request).
+        effective_rrf = self._effective_rrf(dataset_name, rrf)
         results = rag.retrieve(
             query,
             top_k=top_k,
@@ -4278,17 +5380,71 @@ class DatasetManager:
             reranker_top_k=reranker_top_k,
             need_media=use_reranker and rag.reranker is not None,
             filters=filters,
+            rrf=effective_rrf,
         )
-        output = []
+        # The rrf block rides on the FIRST entry only (same convention as the
+        # hybrid score-kind stamping: it describes the executed request, not
+        # any individual hit).  applied=false when the lane degraded to
+        # dense-only — never label a dense result with weights.  The block
+        # reports the EFFECTIVE parameters (override or dataset default),
+        # which is exactly what the executed request used.
+        rrf_block: dict[str, Any] | None = None
+        if isinstance(effective_rrf, RrfParams):
+            applied = bool(results) and all(isinstance(doc, dict) and "_rrf" in doc for doc, _ in results)
+            rrf_block = {
+                "dense": effective_rrf.dense_weight,
+                "sparse": effective_rrf.sparse_weight,
+                "k": effective_rrf.k,
+                "applied": applied,
+            }
+        output: list[dict[str, Any]] = []
         for doc, score in results:
             entry: dict[str, Any] = {"content": doc, "score": round(score, 4)}
             if isinstance(doc, dict):
+                # Label WHAT the emitted score is -- the same contract the MCP
+                # surface uses: the reranker relevance when a rerank pass
+                # produced it, else RRF rank-fusion arithmetic on a hybrid
+                # lane, else a true cosine.  Computed before the private
+                # stamps below are popped.
+                if "_reranker_score" in doc:
+                    entry["score_kind"] = "reranker"
+                elif doc.get("_score_kind") == "rrf":
+                    entry["score_kind"] = "rrf"
+                else:
+                    entry["score_kind"] = "cosine"
                 emb = doc.pop("_embedding_score", None)
                 rerank = doc.pop("_reranker_score", None)
+                retrieval = doc.pop("_retrieval_score", None)
+                # The lane stamp is internal plumbing for the merge/rerank
+                # helpers -- never part of the public content payload (clients
+                # read the score_kind entry field instead).
+                doc.pop("_score_kind", None)
                 if emb is not None:
                     entry["embedding_score"] = emb
                 if rerank is not None:
                     entry["reranker_score"] = rerank
+                if retrieval is not None:
+                    # Pre-rerank score, kept visible.  Only ever the hybrid
+                    # lane's RRF rank arithmetic: _arerank_with writes it
+                    # when the doc arrived fused (its lane stamp is 'rrf')
+                    # and puts a dense lane's pre-rerank cosine in
+                    # _embedding_score instead.
+                    entry["retrieval_score"] = retrieval
+                # Pop the private per-doc stamp after folding it into the
+                # first entry's request-level block (it must not leak into
+                # the content payload).
+                stamp = doc.pop("_rrf", None)
+            else:
+                entry["score_kind"] = "cosine"
+                stamp = None
+            if rrf_block is not None and not any("rrf" in e for e in output):
+                first_stamp: dict[str, Any] | None = stamp if isinstance(stamp, dict) else None
+                entry["rrf"] = {
+                    "dense": first_stamp["dense"] if first_stamp else rrf_block["dense"],
+                    "sparse": first_stamp["sparse"] if first_stamp else rrf_block["sparse"],
+                    "k": first_stamp["k"] if first_stamp else rrf_block["k"],
+                    "applied": bool(first_stamp),
+                }
             output.append(entry)
         return output
 
@@ -4367,33 +5523,139 @@ class DatasetManager:
             if offset is None:
                 break
 
+    def _existing_point_count(self, client: Any, collection: str, ids: list[Any]) -> int:
+        """Count how many of *ids* actually exist in *collection*.
+
+        document_count is a plain stored counter, so a delete must charge it
+        only for points that were really removed. Without this probe a caller
+        that re-submits ids (a retried/idempotent dedupe pass, or a
+        verification re-probe of ids already deleted) decremented the counter
+        for points that were not there - observed live 2026-11-04: the counter
+        read 719 while 835 points remained, because a 109-id delete was
+        re-submitted twice.
+
+        Best-effort by design: a probe failure must never block a delete, so
+        it falls back to len(ids) (the historical behaviour) and logs.
+        """
+        try:
+            return len(
+                client.retrieve(
+                    collection_name=collection,
+                    ids=ids,
+                    with_payload=False,
+                    with_vectors=False,
+                )
+            )
+        except Exception:  # pragma: no cover - defensive
+            logger.warning(
+                "existing-point probe failed for %s (%d ids); charging the counter for all of them",
+                collection,
+                len(ids),
+                exc_info=True,
+            )
+            return len(ids)
+
+    def _existing_point_ids(self, client: Any, collection: str, ids: list[Any]) -> list[str] | None:
+        """Which of *ids* actually exist in *collection* (as strings); None on probe failure.
+
+        Companion to :meth:``_existing_point_count``, for callers that need the
+        SET of ids rather than just the count: the late-interaction lane lives
+        in a SEPARATE sidecar collection (feature D), so a main-collection
+        delete must tell it exactly which points disappeared.  A probe failure
+        returns None — the caller keeps the historical counter behaviour and
+        SKIPS the sidecar cleanup rather than guessing ids that may not exist.
+        """
+        try:
+            points = client.retrieve(
+                collection_name=collection,
+                ids=ids,
+                with_payload=False,
+                with_vectors=False,
+            )
+            return [str(point.id) for point in points]
+        except Exception:  # pragma: no cover - defensive
+            logger.warning("existing-point id probe failed for %s (%d ids)", collection, len(ids), exc_info=True)
+            return None
+
     def delete_document(self, dataset_name: str, doc_id: str) -> None:
         """Delete a single document from a dataset by its point ID."""
         rag = self._get_rag(dataset_name)
         vs = rag.vector_store
         assert vs is not None and not isinstance(vs, dict)
-        client = vs._client  # type: ignore[attr-defined]
+        # Honest narrowing (mypy): every caller below needs the Qdrant-only
+        # surface (``_client`` / ``collection_name``), which the minimal base
+        # class deliberately does not declare.  The runtime check above already
+        # guarantees a Qdrant store here.
+        qvs = cast("QdrantVectorStore", vs)
+        client = qvs._client
         from qdrant_client.models import PointIdsList
 
+        # Charge the counter only if the point is really there.
+        existing = self._existing_point_count(client, qvs.collection_name, [doc_id])
         # Fetch the point's terms for the BM25 df decrement BEFORE deletion.
         self.forget_bm25_documents(dataset_name, [doc_id])
         client.delete(
-            collection_name=vs.collection_name,  # type: ignore[attr-defined]
+            collection_name=qvs.collection_name,
             points_selector=PointIdsList(points=[doc_id]),
             wait=True,
         )
-        self._decrement_count(dataset_name, 1)
+        self._decrement_count(dataset_name, existing)
+        # Late-interaction sidecar cleanup (feature D follow-up, 2026-11-10):
+        # token vectors live in '<collection>__late', a SEPARATE collection
+        # mirroring main point ids, so a main delete must drop the mirror too.
+        # No-op when the dataset was never late-enabled (the helper probes the
+        # sidecar and returns).  Best-effort: the main delete already
+        # succeeded, so a sidecar failure is logged and never raised — an
+        # orphan token vector costs space, not correctness, and a delete that
+        # reports failure after removing the document is worse.
+        if existing:
+            try:
+                from multimodal_rag import late_interaction as late_lane
 
-    def delete_session_history(self, dataset_name: str, session_id: str) -> int:
-        """Delete every ``session_history`` document for *session_id*.
+                late_lane.delete_late_sidecar_points(client, qvs.collection_name, [str(doc_id)])
+            except Exception:
+                logger.warning(
+                    "late-interaction sidecar cleanup failed for %s; the main delete already succeeded",
+                    qvs.collection_name,
+                    exc_info=True,
+                )
 
-        Used by ``add_memory`` so a session's history is **replaced in
-        place**: when a session is re-flushed (e.g. it grew on a later
-        restart), the new chunks supersede the old ones instead of
-        accumulating copies in the store.
+    def delete_session_memories(
+        self,
+        dataset_name: str,
+        session_id: str,
+        kinds: Sequence[str] | None = None,
+    ) -> int:
+        """Delete this session's stored memories of the given *kinds*.
+
+        Used by ``add_memory`` so a re-distilled session is **replaced in
+        place**: when a session is distilled again (it went quiet, then
+        continued, and the transcript changed), the new summary supersedes the
+        old one instead of accumulating a copy.
+
+        *kinds* defaults to ``("session_history",)`` -- the historical
+        behaviour, byte-identical for the reaper and for any caller that does
+        not pass it.
+
+        WHY THIS TAKES KINDS AT ALL (2026-10-14): the replacement gate in
+        ``add_memory`` was ``kind == "session_history"``, but the gateway
+        distiller writes distilled sessions as ``project-summary``
+        (pcai_llm.core.distiller.KIND_SUMMARY). So every re-distill appended a
+        NEW summary instead of replacing the old one, and a conversation
+        resumed after a quiet window accumulated one memory per resume --
+        live evidence: session 3baae9d4d58e765b carried two summaries 27
+        minutes apart. Attribution by ``source`` was impossible at the time:
+        mm-rag hardcoded ``source: "opencode:memory"`` on every add_memory,
+        gateway writes included (FIXED 2026-10-17 -- the caller's
+        ``metadata["source"]`` now wins and an undeclared writer records
+        ``"unknown:memory"``). Even so, superseding by KIND rather than by
+        source is the correct rule here: the kind identifies what the memory
+        IS, while source identifies who wrote it, and a re-distill from a
+        different writer must still replace the stale summary.
 
         Returns the number of points deleted.
         """
+        want = tuple(kinds) if kinds else ("session_history",)
         rag = self._get_rag(dataset_name)
         vs = rag.vector_store
         assert vs is not None and not isinstance(vs, dict)
@@ -4403,13 +5665,19 @@ class DatasetManager:
         from qdrant_client.models import (
             FieldCondition,
             Filter,
+            MatchAny,
             MatchValue,
             PointIdsList,
         )
 
+        kind_cond = (
+            FieldCondition(key="metadata.memory_kind", match=MatchValue(value=want[0]))
+            if len(want) == 1
+            else FieldCondition(key="metadata.memory_kind", match=MatchAny(any=list(want)))
+        )
         scroll_filter = Filter(
             must=[
-                FieldCondition(key="metadata.memory_kind", match=MatchValue(value="session_history")),
+                kind_cond,
                 FieldCondition(key="metadata.session_id", match=MatchValue(value=session_id)),
             ]
         )
@@ -4441,6 +5709,316 @@ class DatasetManager:
             self._decrement_count(dataset_name, len(ids))
         return len(ids)
 
+    def delete_session_history(self, dataset_name: str, session_id: str) -> int:
+        """Delete every ``session_history`` document for *session_id*.
+
+        Thin alias over :meth:`delete_session_memories` (which generalised this
+        to take a kind list). Kept because the short-term-memory reaper and
+        existing callers depend on the name and on the history-only semantics.
+        """
+        return self.delete_session_memories(dataset_name, session_id, ("session_history",))
+
+    # ------------------------------------------------------------------
+    # Memory payload PATCH (the memory-lifecycle primitive, 2026-11-10)
+    # ------------------------------------------------------------------
+
+    def _memory_payloads(self, dataset_name: str, point_ids: Sequence[str]) -> dict[str, dict[str, Any]]:
+        """Fetch (string id -> payload) for existing points; unknown ids are absent.
+
+        Payload-only retrieve (``with_vectors=False``): memory payloads are
+        small, and the lifecycle path must never pull the multi-MB media values
+        a search result can carry.  Keys are STRINGS because Qdrant hands back
+        whatever id type was stored (uuid or int) and every caller compares
+        against the id strings the MCP tools expose.
+        """
+        ids = [str(pid).strip() for pid in (point_ids or []) if str(pid).strip()]
+        if not ids:
+            return {}
+        rag = self._get_rag(dataset_name)
+        vs = rag.vector_store
+        if vs is None or isinstance(vs, dict):
+            return {}
+        client = vs._client  # type: ignore[attr-defined]
+        coll = vs.collection_name  # type: ignore[attr-defined]
+        found: dict[str, dict[str, Any]] = {}
+        for point in client.retrieve(coll, ids=ids, with_payload=True, with_vectors=False):
+            found[str(point.id)] = dict(point.payload or {})
+        return found
+
+    def get_memory_payloads(self, dataset_name: str, point_ids: Sequence[str]) -> dict[str, dict[str, Any]]:
+        """Public payload read for the memory lifecycle: id -> stored payload.
+
+        The counter loop must READ a memory's current success/fail counts
+        before it can increment them — ``set_payload`` merges but cannot do
+        arithmetic.  Unknown ids are simply absent; callers that must refuse
+        them (:meth:``update_memory_payload``) check the key set.
+        """
+        return self._memory_payloads(dataset_name, point_ids)
+
+    def update_memory_payload(self, name: str, point_ids: Sequence[str], patch: dict[str, Any]) -> int:
+        """Merge *patch* into the METADATA payload of existing memory points.
+
+        THE MISSING PATCH (2026-11-10).  Every memory field — ``memory_kind``,
+        ``session_id``, ``success_count``, ``last_validated``, ``decay_score`` —
+        lives under ``payload["metadata"]`` (MultimodalRAG._to_documents turns
+        every non-"text" document key into metadata), so that is where the
+        patch is applied.  Before this method existed nothing could change a
+        memory after write: ``update_dataset``'s allowlist does not reach
+        payloads and the only other mutation was delete.  That is exactly why
+        the playbook decay loop could never close — counters could be read and
+        never incremented, so no record ever acquired the evidence a demotion
+        or a ranking decision needs.
+
+        Semantics, all deliberate:
+
+        * REFUSES unknown ids: if any requested id is absent the call raises
+          ``ValueError`` and writes NOTHING.  A partial patch is worse than no
+          patch, because the caller cannot tell which half landed.
+        * MERGE, not replace: the existing metadata is read first and the patch
+          is layered over it, so unrelated fields survive.  A patch value of
+          ``None`` REMOVES that key (the same "null clears" convention
+          ``update_dataset`` uses for per-dataset chunk overrides).
+        * Returns the number of ids touched (== ``len(point_ids)`` after the
+          unknown-id refusal).
+        * One ``set_payload`` per id: a lifecycle patch is per-record (its decay
+          score differs), so batching would buy nothing and hide which write
+          failed.
+        """
+        ids = [str(pid).strip() for pid in (point_ids or []) if str(pid).strip()]
+        if not ids:
+            return 0
+        if not isinstance(patch, dict):
+            raise TypeError("patch must be a dict of payload field -> value")
+        existing = self._memory_payloads(name, ids)
+        unknown = [pid for pid in ids if pid not in existing]
+        if unknown:
+            raise ValueError(f"unknown memory point id(s) in '{name}': {', '.join(unknown[:10])}")
+        rag = self._get_rag(name)
+        vs = rag.vector_store
+        if vs is None or isinstance(vs, dict):
+            raise ValueError(f"dataset '{name}' has no vector store")
+        client = vs._client  # type: ignore[attr-defined]
+        coll = vs.collection_name  # type: ignore[attr-defined]
+        from qdrant_client.models import PointIdsList
+
+        touched = 0
+        for pid in ids:
+            meta = dict(existing[pid].get("metadata") or {})
+            for key, value in patch.items():
+                if value is None:
+                    meta.pop(key, None)
+                else:
+                    meta[key] = value
+            client.set_payload(
+                collection_name=coll,
+                payload={"metadata": meta},
+                points=PointIdsList(points=[pid]),
+                wait=True,
+            )
+            touched += 1
+        return touched
+
+    # ------------------------------------------------------------------
+    # Playbook supersession (feature B, 2026-11-10)
+    # ------------------------------------------------------------------
+
+    def find_playbook_memories(
+        self,
+        dataset_name: str,
+        playbook_key: str,
+        limit: int = 100,
+    ) -> list[tuple[str, dict[str, Any]]]:
+        """Every stored playbook document carrying this ``playbook_key``.
+
+        One server-side filter on ``metadata.memory_kind == "playbook"`` AND
+        ``metadata.playbook_key``, scrolled through the existing
+        :meth:``scroll_documents`` helper — no second scan implementation to
+        drift from the memory region's conventions.
+        """
+        from qdrant_client.models import FieldCondition, Filter, MatchValue
+
+        if not playbook_key:
+            return []
+        scroll_filter = Filter(
+            must=[
+                FieldCondition(key="metadata.memory_kind", match=MatchValue(value="playbook")),
+                FieldCondition(key="metadata.playbook_key", match=MatchValue(value=str(playbook_key))),
+            ]
+        )
+        return self.scroll_documents(dataset_name, scroll_filter, limit=limit)
+
+    def supersede_playbook_memory(
+        self,
+        dataset_name: str,
+        playbook_key: str,
+        new_counts: dict[str, Any] | None = None,
+        new_steps: Any = None,
+    ) -> dict[str, Any]:
+        """Supersede a re-emission of the SAME procedure; keep divergent variants.
+
+        TWO identities, and the difference is the whole point (feature B
+        cross-validation findings F9/F10, 2026-11-10):
+
+        * ``playbook_key`` identifies the class of TASK;
+        * the steps fingerprint (``multimodal_rag.playbook.steps_fingerprint``)
+          identifies the PROCEDURE used to solve it.
+
+        Only a re-emission of the same procedure — same key AND same steps
+        fingerprint — replaces the prior record and inherits its counters.  Two
+        sessions can attack one task signature with genuinely different
+        procedures; the design note requires BOTH to be kept and surfaced as a
+        disagreement, so a divergent variant is stored as a SECOND record with
+        the same ``playbook_key`` and fresh 0/0 counters (inheriting across a
+        disagreement would launder evidence).  Superseding on the key alone
+        collapsed the disagreement at write time and made ``detect_conflicts``
+        unreachable on a real store.
+
+        Delete-then-write is still the ORDER (a write-first re-emission would be
+        skipped by near-dup suppression while the old copy is present), which is
+        why the removed documents are returned IN FULL in ``snapshot``: the
+        caller MUST re-add that snapshot if its own write raises, otherwise a
+        failed write permanently destroys the prior procedure and its counters
+        (finding F9).  ``restore_memory_snapshot`` is the compensating write.
+
+        Returns a dict with:
+
+        * ``deleted`` / ``replaced`` — how many prior documents were removed and
+          their point ids;
+        * ``inherited`` — the lifecycle patch for the new document
+          (``merge_counts``: success/fail/last_validated/last_note);
+        * ``snapshot`` — ``[{"memory_id", "payload"}]`` with the full payload
+          (page_content + metadata) of every removed document;
+        * ``diverged`` — True when prior variants exist but none matches the new
+          procedure (nothing was deleted, nothing is inherited);
+        * ``variants`` — one summary per prior variant
+          (``memory_id``, ``steps_fingerprint``, counts).
+
+        Aggregating counters across several prior documents uses ``max()``, not
+        sum: a long memory is split into chunks that each repeat the SAME
+        counter values, so summing would multiply the evidence by chunk count.
+        """
+        from multimodal_rag.playbook import merge_counts, steps_fingerprint
+
+        new_fp = steps_fingerprint(new_steps)
+        empty = {
+            "deleted": 0,
+            "replaced": [],
+            "inherited": merge_counts({}, new_counts or {}),
+            "snapshot": [],
+            "diverged": False,
+            "variants": [],
+        }
+        if not playbook_key:
+            return empty
+        prior = self.find_playbook_memories(dataset_name, playbook_key)
+        if not prior:
+            return empty
+
+        variants: list[dict[str, Any]] = []
+        matching: list[tuple[str, dict[str, Any]]] = []
+        for pid, payload in prior:
+            meta = payload.get("metadata") or {}
+            stored_fp = str(meta.get("steps_fingerprint") or "").strip()
+            if not stored_fp:
+                # Legacy record: derive the fingerprint from the stored steps.
+                # A record with no steps cannot prove it is the same procedure
+                # (it hashes the empty list), so a new record that does carry
+                # steps is treated as a divergent variant, never as a rewrite.
+                stored_fp = steps_fingerprint(meta.get("steps"))
+            variants.append(
+                {
+                    "memory_id": pid,
+                    "steps_fingerprint": stored_fp,
+                    "success_count": _int_or_zero(meta.get("success_count")),
+                    "fail_count": _int_or_zero(meta.get("fail_count")),
+                }
+            )
+            if stored_fp == new_fp:
+                matching.append((pid, payload))
+
+        if not matching:
+            return {
+                "deleted": 0,
+                "replaced": [],
+                "inherited": {},
+                "snapshot": [],
+                "diverged": True,
+                "variants": variants,
+            }
+
+        best_success = 0
+        best_fail = 0
+        validated: list[str] = []
+        newest_note = ""
+        newest_validated = ""
+        for _pid, payload in matching:
+            meta = payload.get("metadata") or {}
+            best_success = max(best_success, _int_or_zero(meta.get("success_count")))
+            best_fail = max(best_fail, _int_or_zero(meta.get("fail_count")))
+            last_validated = str(meta.get("last_validated") or "").strip()
+            if last_validated:
+                validated.append(last_validated)
+                if last_validated >= newest_validated:
+                    newest_validated = last_validated
+                    newest_note = str(meta.get("last_note") or "")
+        old_counts: dict[str, Any] = {
+            "success_count": best_success,
+            "fail_count": best_fail,
+            "last_note": newest_note,
+        }
+        if validated:
+            old_counts["last_validated"] = max(validated)
+
+        snapshot = [{"memory_id": pid, "payload": dict(payload)} for pid, payload in matching]
+        replaced = [pid for pid, _payload in matching]
+        deleted = self.delete_documents(dataset_name, replaced)
+        return {
+            "deleted": deleted,
+            "replaced": replaced,
+            "inherited": merge_counts(old_counts, new_counts or {}),
+            "snapshot": snapshot,
+            "diverged": False,
+            "variants": variants,
+        }
+
+    def restore_memory_snapshot(self, dataset_name: str, snapshot: Sequence[dict[str, Any]]) -> list[str]:
+        """Re-add memory documents from a supersession snapshot (compensating write).
+
+        The counterpart of ``supersede_playbook_memory``'s delete-then-write:
+        when the write that follows a supersession raises, the caller re-adds
+        this snapshot so the prior record (text AND counters) survives.  The
+        re-add is not dedup-skipped, because the delete already removed the
+        near-duplicate it would otherwise match.
+
+        Each snapshot entry is ``{"memory_id", "payload"}`` where the payload is
+        the stored Qdrant payload (``page_content`` + ``metadata``); the payload
+        is converted back into the document-dict shape ``add_documents`` takes
+        (metadata keys at the top level, body under ``text``), so the restored
+        point keeps every field it had, counters included.
+
+        Returns the stored point ids (empty when the snapshot carries nothing
+        usable).  Best-effort by contract: the caller decides what to do when
+        the restore itself fails — it must still surface the ORIGINAL write
+        error, never the restore's.
+        """
+        docs: list[dict[str, Any]] = []
+        for entry in snapshot or []:
+            if not isinstance(entry, dict):
+                continue
+            payload = entry.get("payload")
+            if not isinstance(payload, dict):
+                payload = entry
+            meta = dict(payload.get("metadata") or {})
+            text = payload.get("page_content")
+            if not isinstance(text, str):
+                text = str(meta.pop("text", "") or "")
+            doc = dict(meta)
+            doc["text"] = text
+            docs.append(doc)
+        if not docs:
+            return []
+        return self.add_documents(dataset_name, docs)
+
     def delete_documents(self, dataset_name: str, doc_ids: list[str]) -> int:
         """Delete multiple documents by Qdrant point ID in one batched call.
 
@@ -4457,17 +6035,45 @@ class DatasetManager:
         rag = self._get_rag(dataset_name)
         vs = rag.vector_store
         assert vs is not None and not isinstance(vs, dict)
-        client = vs._client  # type: ignore[attr-defined]
+        # Honest narrowing (mypy) - see delete_document.
+        qvs = cast("QdrantVectorStore", vs)
+        client = qvs._client
         from qdrant_client.models import PointIdsList
 
+        # Charge the counter only for points that actually exist. Re-submitting
+        # ids used to decrement the stored count for points that were already
+        # gone, which is how an idempotent dedupe re-run silently corrupted
+        # document_count (2026-11-04).  The SAME probe yields the ids the
+        # late-interaction sidecar must forget (feature D follow-up): only the
+        # points that really existed, never a guessed id.
+        existing_ids = self._existing_point_ids(client, qvs.collection_name, clean)
+        existing = len(clean) if existing_ids is None else len(existing_ids)
         # Fetch terms for the BM25 df decrement BEFORE deletion.
         self.forget_bm25_documents(dataset_name, clean)
         client.delete(
-            collection_name=vs.collection_name,  # type: ignore[attr-defined]
+            collection_name=qvs.collection_name,
             points_selector=PointIdsList(points=clean),
             wait=True,
         )
-        self._decrement_count(dataset_name, len(clean))
+        self._decrement_count(dataset_name, existing)
+        # Late-interaction sidecar cleanup (feature D follow-up, 2026-11-10):
+        # '<collection>__late' is a SEPARATE collection mirroring main point
+        # ids, so its points outlive the documents unless dropped here.  No-op
+        # when the dataset is not late-enabled.  Best-effort by contract: the
+        # main delete already succeeded, so a sidecar failure is logged and
+        # never raised — an orphan token vector costs space, not correctness.
+        if existing_ids:
+            try:
+                from multimodal_rag import late_interaction as late_lane
+
+                late_lane.delete_late_sidecar_points(client, qvs.collection_name, existing_ids)
+            except Exception:
+                logger.warning(
+                    "late-interaction sidecar cleanup failed for %s (%d ids); the main delete already succeeded",
+                    qvs.collection_name,
+                    len(existing_ids),
+                    exc_info=True,
+                )
         return len(clean)
 
     def scroll_documents(
@@ -4529,13 +6135,48 @@ class DatasetManager:
         scroll_filter = Filter(
             should=[FieldCondition(key="metadata.source", match=MatchPrefix(prefix=p)) for p in prefixes]
         )
+        # Source-only projection (perf quick-win #3): ``["metadata"]`` used to
+        # pull every key under it — including the multi-MB base64 media
+        # values — for each of up to a million points.  Nested keys are
+        # supported by ``PayloadSelectorInclude``, so ask for just the
+        # canonical source.
+        #
+        # STREAMED, not materialised (audit 2026-10-16, P2): this used to
+        # call ``scroll_documents(..., limit=1_000_000)``, which accumulates
+        # every page into one Python list before returning — an O(limit)
+        # allocation of (id, payload) tuples on a large corpus, for a result
+        # the caller only ever reads as a set of strings.  It also silently
+        # TRUNCATED at the cap, and a truncated set feeds ``force_names``
+        # (dataset_manager sync), which then re-downloads and re-embeds
+        # objects that were already stored.  Iterating page by page keeps
+        # peak memory to one page and removes the cap.
+        # check_embedder=False: this scan reads payloads only (it embeds
+        # nothing), and the sync path must keep working on a dataset whose
+        # embedder fingerprint no longer matches the configured embedder.
+        rag = self._get_rag(dataset_name, check_embedder=False)
+        vs = rag.vector_store
+        if vs is None or isinstance(vs, dict):
+            return set()
+        client = vs._client  # type: ignore[attr-defined]
+        coll = vs.collection_name  # type: ignore[attr-defined]
         out: set[str] = set()
-        for _, payload in self.scroll_documents(
-            dataset_name, scroll_filter, limit=1_000_000, payload_keys=["metadata"]
-        ):
-            src = (payload.get("metadata") or {}).get("source")
-            if src:
-                out.add(str(src).rstrip("/"))
+        offset: int | str | None = None
+        with_payload = _source_scan_payload_selector()
+        while True:
+            pts, offset = client.scroll(
+                coll,
+                limit=1024,
+                offset=offset,
+                scroll_filter=scroll_filter,
+                with_payload=with_payload,
+                with_vectors=False,
+            )
+            for pt in pts:
+                src = ((pt.payload or {}).get("metadata") or {}).get("source")
+                if src:
+                    out.add(str(src).rstrip("/"))
+            if offset is None:
+                break
         return out
 
     def _prune_sources(self, dataset_name: str, prefixes: list[str], expected: set[str]) -> dict[str, Any]:
@@ -4544,22 +6185,37 @@ class DatasetManager:
         S3 sync's prune half: objects deleted upstream disappear from the
         dataset instead of lingering.  Deletes are batched by point ID and
         the document counter is decremented accordingly.
+
+        Mass-deletion guards (audit 2026-10-02, per-prefix — a refusal skips
+        that prefix and never blocks the others, reported under
+        ``refused_prefixes`` so the CronJob log shows it):
+
+        * **empty-listing** (NOT env-overridable): the listing for a prefix
+          returned zero objects while stored sources exist under it — the
+          classic mis-typed / renamed-prefix / narrowed-bucket-policy case.
+          A listing *error* already aborts upstream; a syntactically-valid
+          EMPTY listing must not silently delete the corpus.
+        * **stale-ratio**: stale points exceed ``max(_PRUNE_STALE_MIN,
+          _PRUNE_STALE_RATIO × in-scope points)``.  ``PRUNE_STALE_RATIO``
+          (default 0.2; 0 disables) / ``PRUNE_STALE_MIN`` (default 50) are
+          env-overridable for operators who deliberately want an aggressive
+          prune.
         """
         from qdrant_client.models import FieldCondition, Filter, MatchPrefix, PointIdsList
 
         rag = self._get_rag(dataset_name)
         vs = rag.vector_store
         if vs is None or isinstance(vs, dict) or not prefixes:
-            return {"pruned_points": 0, "pruned_sources": [], "scope": prefixes}
+            return {"pruned_points": 0, "pruned_sources": [], "scope": prefixes, "refused_prefixes": []}
         client = vs._client  # type: ignore[attr-defined]
         coll = vs.collection_name  # type: ignore[attr-defined]
 
         scroll_filter = Filter(
             should=[FieldCondition(key="metadata.source", match=MatchPrefix(prefix=p)) for p in prefixes]
         )
-        stale_ids: list[Any] = []
+        stale_triples: list[tuple[Any, str, str]] = []  # (point_id, source, text) — per-prefix guards need the pairing
         stale_sources: set[str] = set()
-        stale_texts: list[str] = []  # for the BM25 df decrement (payloads are already here)
+        scope_srcs: set[str] = set()  # every in-scope stored source (built in THIS pass — no second scroll)
         offset: int | str | None = None
         while True:
             pts, offset = client.scroll(
@@ -4567,32 +6223,133 @@ class DatasetManager:
                 limit=256,
                 offset=offset,
                 scroll_filter=scroll_filter,
-                with_payload=True,
+                # Payload projection (perf P1-5 follow-up): this scroll used
+                # with_payload=True, pulling metadata.image/video — the
+                # multi-MB base64 keys — on every prune tick.  The include
+                # form projects exactly what the guards consume
+                # (metadata.source + page_content; nested keys verified
+                # against qdrant-client 1.19 by the _stored_sources fix).
+                # Shared with _stored_sources so the two scans cannot drift.
+                with_payload=_source_scan_payload_selector(include_page_content=True),
                 with_vectors=False,
             )
             for pt in pts:
                 payload = pt.payload or {}
                 meta = payload.get("metadata") or {}
                 src = str(meta.get("source") or "").rstrip("/")
-                if src and src not in expected:
-                    stale_ids.append(pt.id)
+                if not src:
+                    continue
+                scope_srcs.add(src)
+                if src not in expected:
+                    stale_triples.append((pt.id, src, payload.get("page_content") or ""))
                     stale_sources.add(src)
-                    stale_texts.append(payload.get("page_content") or "")
             if offset is None:
                 break
 
+        # -- Per-prefix guards: split the stale set into deletable vs refused --
+        # The scroll yields (id, src, text) triples; keep them paired so a
+        # per-prefix refusal drops exactly that prefix's ids/sources/texts.
+        stale_by_prefix: dict[str, set[str]] = {p: set() for p in prefixes}
+
+        def _prefix_of(src: str) -> str | None:
+            # Prefixes from _sync_prefixes already end with exactly one "/",
+            # so startswith(p) is the accurate test — rstrip("/") would make
+            # prefix "s3://b/a/" also match sibling "s3://b/ab/..." sources
+            # (cross-validation finding 2, 2026-10-02).
+            for p in prefixes:
+                if src.startswith(p):
+                    return p
+            return None
+
+        for src in stale_sources:
+            pp = _prefix_of(src)
+            if pp is not None:
+                stale_by_prefix[pp].add(src)
+        # In-scope point estimate per prefix: stored sources under it (the
+        # expected set is canonical-URL-shaped, so only the stored side is
+        # counted — good enough for a ratio guard).
+        in_scope_by_prefix: dict[str, int] = {}
+        for s2 in scope_srcs:
+            pp = _prefix_of(s2)
+            if pp is not None:
+                in_scope_by_prefix[pp] = in_scope_by_prefix.get(pp, 0) + 1
+
+        refused: list[dict[str, Any]] = []
+        delete_srcs: set[str] = set()
+        for p in prefixes:
+            stale_p = stale_by_prefix.get(p, set())
+            # Empty-listing guard (cross-validation finding 3, rewritten):
+            # refuse ONLY when the caller's listing produced NOTHING at all
+            # (``expected`` empty) while stored sources exist under this
+            # prefix — the mis-typed/renamed-prefix/narrowed-policy case.  A
+            # legitimately EMPTIED prefix (expected == ∅ too, but the listing
+            # SUCCEEDED) also lands here; that refusal is loud and the
+            # operator clears it by confirming the prefix (or env-disabling
+            # nothing — the guard is intentionally not overridable).  A
+            # partial listing (some objects still exist upstream) never
+            # trips this branch — the ratio guard handles that case.
+            if not expected and stale_p and in_scope_by_prefix.get(p, 0) > 0:
+                refused.append(
+                    {
+                        "prefix": p,
+                        "reason": "empty-listing",
+                        "stale_points": len(stale_p),
+                        "scope_points": in_scope_by_prefix.get(p, 0),
+                        "stale_sources": sorted(stale_p),
+                    }
+                )
+                logger.warning(
+                    "PRUNE REFUSED for prefix %s: the listing returned no objects but %d stored point source(s) "
+                    "exist under it — nothing deleted for this prefix. Verify the prefix/listing (mis-typed or "
+                    "renamed prefix, narrowed bucket policy?) before pruning.",
+                    p,
+                    len(stale_p),
+                )
+                continue
+            cap = max(_PRUNE_STALE_MIN, int(in_scope_by_prefix.get(p, 0) * _PRUNE_STALE_RATIO))
+            if len(stale_p) > cap:
+                refused.append(
+                    {
+                        "prefix": p,
+                        "reason": "stale-ratio",
+                        "stale_points": len(stale_p),
+                        "scope_points": in_scope_by_prefix.get(p, 0),
+                        "cap": cap,
+                        "stale_sources": sorted(stale_p),
+                    }
+                )
+                logger.warning(
+                    "PRUNE REFUSED for prefix %s: %d stale point source(s) exceed the mass-deletion cap (%d of %d "
+                    "in scope) — nothing deleted for this prefix. Verify the listing is complete before pruning.",
+                    p,
+                    len(stale_p),
+                    cap,
+                    in_scope_by_prefix.get(p, 0),
+                )
+                continue
+            delete_srcs |= stale_p
+
+        delete_ids = [pid for pid, src, _ in stale_triples if src in delete_srcs]
+        delete_sources = delete_srcs
+        delete_texts = [txt for pid, src, txt in stale_triples if src in delete_srcs]
+
         deleted = 0
-        if stale_ids:
+        if delete_ids:
             # Terms for the BM25 df decrement — the payloads were already
             # fetched by the scroll above, so no extra round trip.
-            self._forget_bm25_texts(dataset_name, stale_texts)
-        for i in range(0, len(stale_ids), 500):
-            chunk = stale_ids[i : i + 500]
+            self._forget_bm25_texts(dataset_name, delete_texts)
+        for i in range(0, len(delete_ids), 500):
+            chunk = delete_ids[i : i + 500]
             client.delete(coll, points_selector=PointIdsList(points=chunk), wait=True)
             deleted += len(chunk)
         if deleted:
             self._decrement_count(dataset_name, deleted)
-        return {"pruned_points": deleted, "pruned_sources": sorted(stale_sources), "scope": prefixes}
+        return {
+            "pruned_points": deleted,
+            "pruned_sources": sorted(delete_sources),
+            "scope": prefixes,
+            "refused_prefixes": refused,
+        }
 
     def backfill_search_metadata(self, dataset_name: str) -> dict[str, Any]:
         """Backfill ``metadata.file_type`` and search payload indexes.
@@ -4614,6 +6371,8 @@ class DatasetManager:
         docs ingested *while* the backfill runs may be missed (re-run later —
         it is idempotent).
         """
+        from qdrant_client.models import PayloadSelectorInclude
+
         from multimodal_rag.vector_store import ensure_search_payload_indexes
 
         rag = self._get_rag(dataset_name)
@@ -4633,7 +6392,12 @@ class DatasetManager:
                 coll,
                 limit=256,
                 offset=offset,
-                with_payload=True,
+                # Payload projection (cross-validation P2-5): the write-back
+                # touches ONLY metadata — projecting ["metadata"] instead of
+                # with_payload=True keeps page_content (often the largest
+                # key on text corpora) and the twin media keys off the wire
+                # for this collection-wide pass.
+                with_payload=PayloadSelectorInclude(include=["metadata"]),
                 with_vectors=False,
             )
             # group point ids by their complete new metadata so each unique
@@ -4677,6 +6441,266 @@ class DatasetManager:
         meta = self._read_meta(dataset_name) or {}
         return bool(meta.get("ocr", False))
 
+    # ------------------------------------------------------------------
+    # Per-dataset chunk-size overrides (base + code/structured).
+    #
+    # Chunk size is otherwise a GLOBAL property of the embedder model
+    # (chunk_size / code_chunk_size on the model config, chart values).
+    # These four meta keys let ONE dataset deviate without touching the
+    # deployment: a memory/notes dataset wants large chunks (a whole
+    # curated document in one vector, so its header travels with every
+    # hit), while a code-search dataset wants the model default.
+    #
+    # ABSENT = INHERIT.  Nothing is written at create time unless the
+    # caller explicitly asked for an override, so every existing dataset
+    # (and every dataset created without these fields) keeps behaving
+    # exactly as before this feature.
+    #
+    # Chunk size is baked at INGEST: changing it never re-chunks stored
+    # content (content-hash dedup would skip the re-embed anyway).
+    # Recreate is the adoption path, exactly as for contextual.
+    # ------------------------------------------------------------------
+
+    #: meta key -> embedder attribute it overrides (same names by design)
+    _CHUNK_META_KEYS: "tuple[str, ...]" = (
+        "chunk_size",
+        "chunk_overlap",
+        "code_chunk_size",
+        "code_chunk_overlap",
+    )
+
+    @staticmethod
+    def _clamp_chunk_value(value: Any, field: str, minimum: int) -> int:
+        """Validate one chunk-size/overlap value, returning a plain int.
+
+        None/empty mean "no override" and are handled by the caller (key
+        presence), never here.
+
+        Wrong TYPE raises TypeError (TRY004: an invalid type is a
+        TypeError, not a ValueError); an out-of-range VALUE raises
+        ValueError.  BOTH REST boundaries catch the pair and answer
+        HTTP 400, so the distinction is for callers, not for the status
+        code - see api_create_dataset / api_update_dataset.
+        """
+        if isinstance(value, bool):
+            # bool is an int subclass - reject explicitly rather than
+            # turning True into a 1-token chunk.
+            raise TypeError(f"{field} must be an integer, not a boolean")
+        try:
+            ivalue = int(value)
+        except (TypeError, ValueError):
+            raise TypeError(f"{field} must be an integer") from None
+        if ivalue < minimum:
+            raise ValueError(f"{field} must be >= {minimum}")
+        return ivalue
+
+    @classmethod
+    def _sanitize_chunk_meta(cls, updates: Any) -> "dict[str, int]":
+        """Normalize a create/PATCH chunk-override payload to the stored shape.
+
+        Accepts a dict holding any subset of the four keys.  A None value
+        is dropped (the idiomatic "clear this override" spelling), unknown
+        keys are ignored for forward compatibility, and the result may be
+        empty - which means "store nothing, inherit the model".  Chunk
+        sizes are clamped to >= 1 and overlaps to >= 0.  A non-dict payload
+        raises TypeError (invalid type, per TRY004); the REST boundaries
+        catch it and answer HTTP 400.
+        """
+        if updates is None:
+            return {}
+        if not isinstance(updates, dict):
+            raise TypeError("chunk overrides must be an object")
+        out: dict[str, int] = {}
+        for key in cls._CHUNK_META_KEYS:
+            if key not in updates:
+                continue
+            raw = updates[key]
+            if raw is None:
+                continue
+            minimum = 0 if key.endswith("_overlap") else 1
+            out[key] = cls._clamp_chunk_value(raw, key, minimum)
+        return out
+
+    def _chunk_overrides(self, dataset_name: str) -> "dict[str, int]":
+        """The dataset's stored chunk overrides, or {} (inherit everything).
+
+        Read FRESH from meta.json on every ingest - setting an override
+        later must apply to subsequent ingests, and the parsed meta is
+        already cached under an mtime/size stamp, so this is a dict lookup
+        rather than an extra file read.
+        """
+        meta = self._read_meta(dataset_name) or {}
+        stored = meta.get("chunk")
+        if not isinstance(stored, dict):
+            return {}
+        out: dict[str, int] = {}
+        for key in self._CHUNK_META_KEYS:
+            raw = stored.get(key)
+            if raw is None:
+                continue
+            try:
+                out[key] = self._clamp_chunk_value(raw, key, 0 if key.endswith("_overlap") else 1)
+            except ValueError:
+                # A corrupt stored value must fail CLOSED (inherit the
+                # model), never abort an ingest.
+                logger.warning(
+                    "Ignoring invalid stored chunk override %s=%r for dataset %r",
+                    key,
+                    raw,
+                    dataset_name,
+                )
+        return out
+
+    def _resolve_chunk_params(self, dataset_name: str, rag: Any, *, structured: bool = False) -> "tuple[int, int, Any]":
+        """Resolve (chunk_size, chunk_overlap, text_splitter) for one ingest.
+
+        Resolution order: the dataset's stored override for the relevant
+        family (base vs code/structured) -> the embedder model's value.
+        When an override is present the splitter is rebuilt to match it,
+        because the model's cached splitter carries its own baked-in chunk
+        size and would otherwise silently defeat the override on the
+        oversized-paragraph fallback path.
+        """
+        overrides = self._chunk_overrides(dataset_name)
+        if structured:
+            base_size = getattr(rag.embedder, "code_chunk_size", 8192)
+            base_overlap = getattr(rag.embedder, "code_chunk_overlap", 512)
+            size = overrides.get("code_chunk_size", base_size)
+            overlap = overrides.get("code_chunk_overlap", base_overlap)
+            model_splitter = getattr(rag.embedder, "code_text_splitter", None)
+        else:
+            base_size = getattr(rag.embedder, "chunk_size", 2048)
+            base_overlap = getattr(rag.embedder, "chunk_overlap", 256)
+            size = overrides.get("chunk_size", base_size)
+            overlap = overrides.get("chunk_overlap", base_overlap)
+            model_splitter = getattr(rag.embedder, "text_splitter", None)
+
+        if size == base_size and overlap == base_overlap:
+            # No effective override - use the model's splitter untouched,
+            # keeping the no-override path byte-identical to before.
+            return size, overlap, model_splitter
+
+        # An overlap >= the chunk size would make the character fallback
+        # rewind and never advance (the same 80 % cap the processors
+        # apply), so clamp it here once.
+        overlap = min(overlap, int(size * 0.8))
+        return size, overlap, self._splitter_for(size, overlap, model_splitter)
+
+    @staticmethod
+    def _splitter_for(chunk_size: int, chunk_overlap: int, model_splitter: Any) -> Any:
+        """Build a splitter matching an override, or fall back to the model's.
+
+        Returns the model splitter unchanged when it is already sized for
+        this budget, and None (character-based chunking) when the tokenizer
+        is unavailable - mirroring the model's own fallback.
+        """
+        if model_splitter is not None and (
+            getattr(model_splitter, "chunk_size", None) == chunk_size
+            and getattr(model_splitter, "chunk_overlap", None) == chunk_overlap
+        ):
+            return model_splitter
+        if model_splitter is None:
+            return None
+        try:
+            from multimodal_rag.utils.token_text_splitter import TokenTextSplitter
+
+            return TokenTextSplitter.from_bundled(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+        except Exception:
+            logger.debug("Could not rebuild splitter for chunk override", exc_info=True)
+            return None
+
+    # ------------------------------------------------------------------
+    # Per-dataset weighted-RRF defaults (feature: weighted RRF, dataset-
+    # defaults slice).  Resolution order at search time: per-call override >
+    # dataset meta default > global default (1.0/1.0, no pinned k).  A meta
+    # default that EQUALS the global default must behave exactly like "no
+    # default at all" — no override reaches the store, so the fusion request
+    # stays byte-identical (the k-default trap rule from the wave-1 slice).
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _clamp_rrf_weight(value: Any, name: str) -> float:
+        """Clamp a meta weight to ``[0.0, 10.0]``, rounded to 3 decimals.
+
+        Non-numeric values raise ``ValueError`` (the PATCH/create caller
+        surfaces it as HTTP 400).  ``None`` never reaches here — callers
+        gate on key presence so an omitted key keeps the global default.
+        """
+        try:
+            w = float(value)
+        except (TypeError, ValueError):
+            raise ValueError(f"rrf.{name} must be a number") from None
+        if math.isnan(w) or math.isinf(w):
+            raise ValueError(f"rrf.{name} must be a finite number")
+        return round(min(max(w, 0.0), _RRF_WEIGHT_MAX), 3)
+
+    @staticmethod
+    def _clamp_rrf_k(value: Any) -> int:
+        """Clamp the meta RRF ranking constant to ``[1, 1000]``.
+
+        Same clamp-not-reject discipline as the REST/MCP surfaces: a bad
+        ``k: 0`` degrades to the minimum sane constant instead of failing.
+        """
+        try:
+            k = int(value)
+        except (TypeError, ValueError):
+            raise ValueError("rrf.k must be an integer") from None
+        return max(1, min(k, 1000))
+
+    @classmethod
+    def _sanitize_rrf_meta(cls, rrf: Any) -> "dict[str, Any] | None":
+        """Normalize a create/PATCH ``rrf`` payload to the stored meta shape.
+
+        Accepts ``None`` / non-dict → ``None`` (nothing stored).  A dict is
+        cleaned key by key: unknown keys are dropped (forward compatibility,
+        same tolerance as the public filter dict), present keys are clamped
+        with the API-slice discipline.  A payload that clamps to pure
+        defaults (1.0/1.0, no k) returns ``None`` — storing it would make
+        ``meta["rrf"]`` LOOK set while behaving like the global default,
+        which would then need default-identity logic on every read.
+        """
+        if not isinstance(rrf, dict):
+            return None
+        out: dict[str, Any] = {}
+        if "dense_weight" in rrf and rrf["dense_weight"] is not None:
+            out["dense_weight"] = cls._clamp_rrf_weight(rrf["dense_weight"], "dense_weight")
+        if "sparse_weight" in rrf and rrf["sparse_weight"] is not None:
+            out["sparse_weight"] = cls._clamp_rrf_weight(rrf["sparse_weight"], "sparse_weight")
+        if "k" in rrf and rrf["k"] is not None:
+            out["k"] = cls._clamp_rrf_k(rrf["k"])
+        if not out:
+            return None
+        if out.get("dense_weight", 1.0) == 1.0 and out.get("sparse_weight", 1.0) == 1.0 and out.get("k") is None:
+            # Rank-arithmetic-identical to the global default — store nothing.
+            return None
+        return out
+
+    def _effective_rrf(self, dataset_name: str, rrf: "RrfParams | None" = None) -> "RrfParams | None":
+        """Resolve the effective weighted-RRF params for one search.
+
+        Order: the per-call override wins after its existence check (it was
+        already clamped at the API boundary); otherwise the dataset's
+        ``meta["rrf"]`` default; otherwise ``None`` — the global default,
+        which keeps the fusion request byte-identical (no ``RrfQuery``).
+
+        A meta default that equals the global default (1.0/1.0, no k) also
+        returns ``None``: emitting an ``RrfQuery`` for it would pin the
+        implicit client ``k`` and silently change rank arithmetic on every
+        default query (the k-default trap from the wave-1 slice).
+        """
+        if isinstance(rrf, RrfParams):
+            return rrf
+        meta = self._read_meta(dataset_name) or {}
+        stored = meta.get("rrf")
+        if not isinstance(stored, dict) or not stored:
+            return None
+        dense = self._clamp_rrf_weight(stored.get("dense_weight", 1.0), "dense_weight")
+        sparse = self._clamp_rrf_weight(stored.get("sparse_weight", 1.0), "sparse_weight")
+        k = self._clamp_rrf_k(stored["k"]) if stored.get("k") is not None else None
+        if dense == 1.0 and sparse == 1.0 and k is None:
+            return None
+        return RrfParams(dense_weight=dense, sparse_weight=sparse, k=k)
+
     def _get_rag(self, dataset_name: str, check_embedder: bool = True) -> MultimodalRAG:
         """Return (or create and cache) a MultimodalRAG for *dataset_name*.
 
@@ -4703,6 +6727,7 @@ class DatasetManager:
                         asr=self.asr,
                         caption_with_asr=ds_caption_with_asr,
                         caption_with_vlm=ds_caption_with_vlm,
+                        contextualize=bool(meta.get("contextual", False)),
                         remote=self.remote,
                         dedup_threshold=self.dedup_threshold,
                         vector_store={
@@ -4768,16 +6793,27 @@ class DatasetManager:
         that a later embedder swap is detected.  No embedding call is made
         when a matching fingerprint already exists (verified once per
         dataset per process).
+
+        The contextual-retrieval mode rides the same fingerprint: a new
+        ingest whose ``contextualize`` setting differs from the stored one
+        is allowed but loudly warned — per the decision, mixed-embedding
+        datasets (contextualized + plain chunks) are explicitly permitted,
+        so this is an introspectability nudge (per-point
+        ``metadata.contextualized`` says which is which), never an error.
         """
         stored_dim = None
         stored_name = ""
+        stored_contextual: bool | None = None
         meta = self._read_meta(dataset_name) or {}
         if meta:
             stored_dim = meta.get("embedder_dim")
             stored_name = meta.get("embedder_model") or ""
+            if "contextual" in meta:
+                stored_contextual = bool(meta.get("contextual"))
 
         cur_name = (getattr(self.embedder, "model_name", "") or "") if self.embedder else ""
         cur_dim = self._embedder_dimension()
+        cur_contextual = bool(getattr(self, "contextualize", False))
         # Alias group: ids the operator declared equivalent to the configured
         # embedder (e.g. a quantized redeploy of the same base model).  A
         # dataset fingerprinted under any of them passes the name check.
@@ -4809,6 +6845,22 @@ class DatasetManager:
                 "semantically incompatible — recreate the dataset to rebuild it "
                 "(POST /api/admin/datasets/{name}/recreate)."
             )
+        # Contextual-mode mismatch: allowed (the decision explicitly permits
+        # mixed-embedding datasets — the per-point ``contextualized`` stamp
+        # keeps them introspectable), so WARN rather than raise.  Recreate
+        # remains the way to make a dataset uniformly (un-)contextualized.
+        if stored_contextual is not None and stored_contextual != cur_contextual:
+            logger.warning(
+                "Dataset '%s' was indexed with contextual retrieval %s; ingesting now with "
+                "contextual retrieval %s. Mixed context modes are allowed (per-point "
+                "metadata.contextualized records which is which); Recreate the dataset "
+                "(POST /api/admin/datasets/%s/recreate) to make it uniformly %s.",
+                dataset_name,
+                "ENABLED" if stored_contextual else "disabled",
+                "enabled" if cur_contextual else "DISABLED",
+                dataset_name,
+                "contextualized" if cur_contextual else "plain",
+            )
 
     def _nudge_schema_upgrade(self, dataset_name: str) -> None:
         """Warn once per process when a dataset predates the current schema.
@@ -4836,13 +6888,23 @@ class DatasetManager:
             )
 
     def _write_embedder_fingerprint(self, dataset_name: str) -> None:
-        """Persist the current embedder's model name + dimension to meta.json."""
+        """Persist the current embedder's model name + dimension to meta.json.
+
+        The dataset's contextual-retrieval mode rides along (``contextual``
+        next to ``embedder_model``/``embedder_dim``): a later mode flip is
+        detected and warned about (never an error — mixed-embedding datasets
+        are allowed per the decision) instead of being invisible.  The value
+        recorded is the DATASET's own meta flag (create/PATCH set it), not
+        the manager's deployment-wide default — the fingerprint describes
+        this dataset.
+        """
         with self._get_meta_lock(dataset_name):
             meta = self._read_meta(dataset_name)
             if not meta:
                 return
             meta["embedder_model"] = (getattr(self.embedder, "model_name", "") or "") if self.embedder else ""
             meta["embedder_dim"] = self._embedder_dimension()
+            meta["contextual"] = bool(meta.get("contextual", getattr(self, "contextualize", False)))
             meta["embedder_updated_at"] = datetime.now().isoformat()
             self._write_meta(dataset_name, meta)
 
@@ -4853,13 +6915,85 @@ class DatasetManager:
         return self._dataset_dir(name) / "meta.json"
 
     def _read_meta(self, name: str) -> dict[str, Any] | None:
+        """Return the parsed meta.json for *name*, or ``None`` (fail-closed).
+
+        Cached per meta path under an mtime/size stamp (perf P1-2) — see
+        :data:`_META_CACHE`.  Missing/corrupt meta caches the ``None`` under
+        the same stamp discipline, preserving the historical behavior exactly:
+        no meta dir -> None, unparseable meta -> None, never an exception.
+
+        Returns a defensive copy: callers mutate the returned dict (pop
+        ``password_hash``, bump ``document_count``, …) and a shared cached
+        dict would silently corrupt the cache for every later reader.
+        ``copy.deepcopy`` keeps nested structures (``rrf``,
+        ``file_type_counts``) private too, so an in-place edit of a returned
+        sub-dict cannot poison the cache either.
+        """
         p = self._meta_path(name)
-        if not p.exists():
-            return None
+        key = str(p)
         try:
-            return json.loads(p.read_text())
-        except Exception:
+            st = p.stat()
+            stamp = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            stamp = _META_CACHE_MISSING  # missing (or unstat-able) meta
+        with _meta_cache_lock:
+            cached = _META_CACHE.get(key)
+            if cached is not None and (cached[0], cached[1]) == stamp:
+                hit: dict[str, Any] | None | object = cached[2]
+                # Move-to-back on hit (cross-validation P3-12): makes the
+                # eviction FIFO shape an actual LRU so a >100-dataset
+                # deployment with a hot working set stops thrashing.
+                _META_CACHE[key] = _META_CACHE.pop(key)
+            else:
+                hit = _META_CACHE_HIT
+        # Copy OUTSIDE the lock: cached entries are never mutated in place (a
+        # refresh always stores a fresh object), so handing the reference out
+        # of the critical section is safe and readers do not serialise on the
+        # deep copy.
+        if hit is not _META_CACHE_HIT:
+            # Sentinel identity already excluded above; the declared union is
+            # only there to keep the sentinel flow type-safe.
+            return copy.deepcopy(cast("dict[str, Any] | None", hit))
+        if stamp == _META_CACHE_MISSING:
+            meta: dict[str, Any] | None = None
+        else:
+            try:
+                meta = json.loads(p.read_text())
+            except Exception:
+                meta = None  # corrupt/racing meta: fail closed, never raise
+        # Re-stat AFTER the read (cross-validation P1-3): a write that lands
+        # between the deciding stat and read_text() would otherwise be
+        # cached under the PRE-write stamp, and a later same-stamp rewrite
+        # (same mtime_ns + size) could then serve the stale parse for the
+        # process lifetime.  Storing only when the stamp still matches the
+        # bytes we actually read closes that window in-process.
+        try:
+            post = p.stat()
+            post_stamp = (post.st_mtime_ns, post.st_size)
+        except OSError:
+            post_stamp = _META_CACHE_MISSING
+        if post_stamp != stamp:
+            return copy.deepcopy(meta)  # changed mid-read: serve fresh, cache nothing
+        with _meta_cache_lock:
+            _META_CACHE[key] = (stamp[0], stamp[1], meta)
+            if len(_META_CACHE) > _META_CACHE_MAX:  # bound across many datasets
+                _META_CACHE.pop(next(iter(_META_CACHE)), None)
+        return copy.deepcopy(meta)
+
+    def read_created_by(self, name: str) -> "str | None":
+        """The dataset's ``created_by`` stamp (D23 ownership), or None.
+
+        None covers every "no provable creator" case: missing dataset,
+        corrupt/unreadable meta, and pre-D23 metas that never carried the
+        stamp — the callers (owner-or-admin delete, creator public toggle)
+        all treat None as admin-only, so a corrupt read can never widen
+        a non-admin's powers (fail-closed by construction).
+        """
+        meta = self._read_meta(name)
+        if not meta:
             return None
+        creator = str(meta.get("created_by") or "").strip()
+        return creator or None
 
     def _write_meta(self, name: str, meta: dict[str, Any]) -> None:
         p = self._meta_path(name)
@@ -4869,6 +7003,10 @@ class DatasetManager:
         tmp = p.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(meta, indent=2, default=str))
         os.replace(tmp, p)
+        # Publish the new bytes before dropping the cached parse, so a
+        # concurrent _read_meta can only see the old entry (with the old
+        # stamp, which now misses) or the new file — never a torn mix.
+        _invalidate_meta_cache(p)
 
     def _sync_count_from_qdrant(self, name: str, meta: dict[str, Any]) -> None:
         """Update ``document_count`` in *meta* to match the actual Qdrant point count."""
@@ -4892,6 +7030,77 @@ class DatasetManager:
                             self._write_meta(name, fresh)
         except Exception:
             pass  # Best-effort: don't fail if Qdrant is unreachable
+
+    def contextualize_preview(self, dataset_name: str) -> dict[str, Any]:
+        """Cost preview for enabling contextual retrieval (feature: contextual
+        retrieval).
+
+        The estimate is deliberately simple and LABELED as an estimate: the
+        live Qdrant point count (multiplied by 2 when the collection is
+        bm25/hybrid-capable, because real-text chunks get text-only twins that
+        carry the same context line) × the token math of one context call
+        (shared preamble + chunk input + ~OUTPUT_TOKENS_PER_CHUNK output) +
+        the configured model name.  It is a *count-based* projection of what
+        the NEXT ingest of this much content would cost — not a measured
+        figure, and not a promise about content not yet uploaded.
+
+        Raises ``FileNotFoundError`` when the dataset does not exist.
+        """
+        from multimodal_rag.utils import contextualizer
+
+        meta = self._read_meta(dataset_name)
+        if not meta:
+            raise FileNotFoundError(f"Dataset '{dataset_name}' not found")
+
+        # The live count IS the estimate basis (D12 note: when
+        # RAG_DEFER_COUNT_SYNC defers syncing, meta["document_count"] may be
+        # stale — read Qdrant directly so the preview never quotes a stale
+        # number).
+        points = 0
+        hybrid_capable = False
+        try:
+            rag = self._get_rag(dataset_name, check_embedder=False)
+            vs = rag.vector_store
+            if vs is not None and not isinstance(vs, dict):
+                client = vs._client  # type: ignore[attr-defined]
+                info = client.get_collection(vs.collection_name)  # type: ignore[attr-defined]
+                points = int(info.points_count or 0)
+                hybrid_capable = bool(getattr(vs, "supports_hybrid", lambda: False)())
+        except Exception:
+            logger.debug("contextualize_preview: Qdrant count unavailable for %s", dataset_name, exc_info=True)
+            points = int(meta.get("document_count", 0) or 0)
+
+        chunk_count = points * 2 if hybrid_capable else points
+        model_name = (getattr(self.vlm, "model_name", "") or "") if self.vlm else ""
+
+        digest_n = contextualizer.digest_chars()
+        preamble_tokens = contextualizer.sample_preamble_tokens(digest_n)
+        # Average chunk: the embedder chunk budget (tokens), roughly — chars/4
+        # back into tokens.  Raw-document drops can exceed it; the preview is
+        # an estimate.
+        chunk_tokens = max(1, int(getattr(self.embedder, "chunk_size", 2048) or 2048))
+        input_per_chunk = preamble_tokens + chunk_tokens
+        output_per_chunk = contextualizer.OUTPUT_TOKENS_PER_CHUNK
+        total_tokens = chunk_count * (input_per_chunk + output_per_chunk)
+
+        return {
+            "dataset": dataset_name,
+            "model": model_name,
+            "estimated_chunk_count": chunk_count,
+            "point_count": points,
+            "hybrid_twin_multiplier": 2 if hybrid_capable else 1,
+            "count_source": "qdrant" if points else "meta_document_count",
+            "estimate_basis": (
+                f"{chunk_count} chunk context call(s) — {preamble_tokens} cached-preamble tokens "
+                f"(shared per document), ~{chunk_tokens} chunk-input tokens, ~{output_per_chunk} "
+                "output tokens per chunk. ESTIMATE — actual cost depends on real chunk sizes "
+                "and the serving engine's prefix-cache hit rate."
+            ),
+            "estimated_input_tokens_per_chunk": input_per_chunk,
+            "estimated_output_tokens_per_chunk": output_per_chunk,
+            "estimated_total_tokens": total_tokens,
+            "contextual_now": bool(meta.get("contextual", False)),
+        }
 
     def _get_meta_lock(self, name: str) -> contextlib.AbstractContextManager:
         """Return a cross-process lock for *meta.json* read→modify→write.
@@ -4934,23 +7143,55 @@ class DatasetManager:
         return self._dataset_dir(dataset_name) / "files" / _INGESTED_HASHES_FILE
 
     def _is_ingested(self, dataset_name: str, file_hash: str) -> bool:
-        """True if *file_hash* was already successfully ingested here."""
-        return file_hash in _load_ingested_hashes(self._ingested_hashes_path(dataset_name))
+        """True if *file_hash* was already successfully ingested here.
+
+        Consults the DEFERRED dirty set as well as the on-disk file: within a
+        batch, a file marked moments ago has not reached disk yet, and a
+        duplicate of it later in the same batch must still be recognised as
+        already ingested (otherwise the deferral would change batch semantics
+        rather than just its I/O shape).
+        """
+        p = self._ingested_hashes_path(dataset_name)
+        with _ingested_hashes_dirty_lock:
+            pending = _ingested_hashes_dirty.get(p)
+        if pending and file_hash in pending:
+            return True
+        return file_hash in _load_ingested_hashes(p)
 
     def _mark_ingested(self, dataset_name: str, file_hash: str) -> None:
-        """Record *file_hash* as successfully ingested for *dataset_name*."""
+        """Record *file_hash* as successfully ingested for *dataset_name*.
+
+        DEFERRED (audit 2026-10-16, P2): the hash joins an in-process dirty set
+        and reaches disk once per batch via :func:`_flush_ingested_hash_writes`
+        (called from ``add_files_batch``), instead of rewriting the whole
+        ``.ingested_hashes.json`` — and taking the cross-process lock — once
+        per file.  ``add_files_batch`` calls this once per embedded file, so
+        the old shape was O(n²) bytes of JSON and O(n²) NFS writes for an
+        n-file batch; this is the same fix .hashes.json already carries.
+
+        Single-file callers are not inside a batch flush, so they persist
+        immediately through :meth:`_flush_ingested_hashes_now` — the deferral
+        is an optimisation for the batch loop, never a correctness
+        dependency.
+        """
         p = self._ingested_hashes_path(dataset_name)
-        with _cross_process_lock(p.with_suffix(".lock")):
-            hashes = _load_ingested_hashes(p)
-            if file_hash in hashes and p.exists():
-                return
-            hashes.add(file_hash)
-            p.parent.mkdir(parents=True, exist_ok=True)
-            tmp = p.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(sorted(hashes)), encoding="utf-8")
-            os.replace(tmp, p)
-            with _ingested_hashes_cache_lock:
-                _ingested_hashes_cache[p] = (p.stat().st_mtime_ns, hashes)
+        with _ingested_hashes_dirty_lock:
+            _ingested_hashes_dirty.setdefault(p, set()).add(file_hash)
+
+    def _flush_ingested_hashes_now(self, dataset_name: str) -> None:
+        """Persist any deferred ingest-dedup hashes for ONE dataset immediately.
+
+        Used by the single-file ingest paths (which are not wrapped by the
+        batch flush) so a crash cannot lose their dedup entry.
+        """
+        p = self._ingested_hashes_path(dataset_name)
+        with _ingested_hashes_dirty_lock:
+            updates = _ingested_hashes_dirty.pop(p, set())
+        if not updates:
+            return
+        with _ingested_hashes_dirty_lock:
+            _ingested_hashes_dirty[p] = updates
+        _flush_ingested_hash_writes()
 
     def _clear_ingested_hashes(self, dataset_name: str) -> None:
         """Forget every ingest-dedup hash for *dataset_name*.
@@ -4960,6 +7201,11 @@ class DatasetManager:
         them all as "already ingested".
         """
         p = self._ingested_hashes_path(dataset_name)
+        # Pending (deferred) hashes belong to the OLD collection: flushing them
+        # after a recreate would resurrect exactly the entries this clear just
+        # dropped, leaving the rebuilt collection skipping every file.
+        with _ingested_hashes_dirty_lock:
+            _ingested_hashes_dirty.pop(p, None)
         with _cross_process_lock(p.with_suffix(".lock")):
             try:
                 if p.exists():
@@ -4969,10 +7215,105 @@ class DatasetManager:
             with _ingested_hashes_cache_lock:
                 _ingested_hashes_cache.pop(p, None)
 
+    # ------------------------------------------------------------------
+    # Watched S3 sources (feature: watched sources): the per-dataset
+    # ETag/Size skip state in files/.watched_state.json — the sidecar the
+    # reconciler's skip logic reads and the successful ingest writes.
+    # Same discipline as the dedup hashes: fcntl-locked read→modify→write,
+    # atomic promote, mtime-cached reads; the state is an optimisation, so
+    # any failure degrades to "re-download everything", never to a wrong skip.
+    # ------------------------------------------------------------------
+
+    def _watched_state_path(self, dataset_name: str) -> Path:
+        return self._dataset_dir(dataset_name) / "files" / _WATCHED_STATE_FILE
+
+    def _watched_state_load(self, dataset_name: str) -> dict[str, dict[str, Any]]:
+        """Read the watched-source skip state for *dataset_name* (may be empty)."""
+        return _load_watched_state(self._watched_state_path(dataset_name))
+
+    def _watched_state_update(
+        self,
+        dataset_name: str,
+        fingerprints: dict[str, dict[str, Any]],
+        only_urls: set[str] | None = None,
+    ) -> None:
+        """Record *fingerprints* (``s3://bucket/key → {etag, size}``) as the
+        last-successfully-ingested versions, merged under the cross-process
+        lock.
+
+        Entries the batch did NOT see are left untouched (a prefix A sync must
+        not invalidate prefix B's state).  ``only_urls`` optionally narrows the
+        merge to those canonical URLs (the URLs actually attempted this run) —
+        a listed-but-failed object must not get a state entry, or the next run
+        would wrongly skip it.
+        """
+        if not fingerprints:
+            return
+        p = self._watched_state_path(dataset_name)
+        with _cross_process_lock(p.with_suffix(".lock")):
+            state = _load_watched_state(p)
+            for url, fp in fingerprints.items():
+                key = _canonical_s3_url(url)
+                if only_urls is not None and key not in only_urls:
+                    continue
+                state[key] = {"etag": fp.get("etag"), "size": fp.get("size")}
+            try:
+                _save_watched_state(p, state)
+            except OSError:
+                # Best-effort: losing the state only costs re-downloads.
+                logger.warning("Could not write watched-source state %s", p, exc_info=True)
+
+    def _watched_state_clear(self, dataset_name: str) -> None:
+        """Forget every watched-source fingerprint for *dataset_name*.
+
+        Called by :meth:`recreate_dataset` (the collection was dropped — every
+        source must re-ingest, exactly like the dedup-hash clear beside it).
+        """
+        p = self._watched_state_path(dataset_name)
+        with _cross_process_lock(p.with_suffix(".lock")):
+            try:
+                if p.exists():
+                    p.unlink()
+            except OSError:
+                logger.warning("Could not clear watched-source state %s", p)
+            with _watched_state_cache_lock:
+                _watched_state_cache.pop(p, None)
+
+    def _watched_state_forget(self, dataset_name: str, urls: list[str]) -> None:
+        """Drop the state entries for *urls* (canonicalised).
+
+        Sync's prune half deletes a source's points when its object leaves the
+        bucket — its fingerprint entry must go too, so a pruned-and-reappeared
+        object is treated as new (and the force-re-ingest path embeds it).
+        """
+        if not urls:
+            return
+        p = self._watched_state_path(dataset_name)
+        with _cross_process_lock(p.with_suffix(".lock")):
+            state = _load_watched_state(p)
+            changed = False
+            for url in urls:
+                key = _canonical_s3_url(url)
+                if key in state:
+                    del state[key]
+                    changed = True
+            if changed:
+                try:
+                    _save_watched_state(p, state)
+                except OSError:
+                    logger.warning("Could not update watched-source state %s", p, exc_info=True)
+
     def _finish_ingest(self, dataset_name: str, content_hash: str | None, result: dict[str, Any]) -> dict[str, Any]:
-        """Mark *content_hash* ingested when the result stored vectors, then return it."""
+        """Mark *content_hash* ingested when the result stored vectors, then return it.
+
+        Persists IMMEDIATELY: this is the single-file ingest path (not wrapped
+        by ``add_files_batch``'s deferred flush), so leaving the hash in the
+        dirty set until some later batch would make a crash lose the dedup
+        entry for a file that is already stored.
+        """
         if content_hash and result.get("stored_ids"):
             self._mark_ingested(dataset_name, content_hash)
+            self._flush_ingested_hashes_now(dataset_name)
         return result
 
     # ------------------------------------------------------------------
@@ -5035,9 +7376,20 @@ class DatasetManager:
             logger.debug("BM25 df decrement failed", exc_info=True)
 
     def _forget_bm25_texts(self, dataset_name: str, texts: list[str]) -> None:
-        """Decrement the BM25 df stats by *texts* (locked, best-effort)."""
+        """Decrement the BM25 df stats by *texts* (locked, best-effort).
+
+        Counts through ``bm25_lane.indexable_term_counts`` — the SAME
+        placeholder-stripping rule the ingest side counted with (audit
+        2026-10-16, P1-7).  Counting the raw ``page_content`` here subtracted
+        terms the ingest never added (placeholder tokens like "image" /
+        "description", which DO exist in ``df`` from other documents' real
+        text), so every delete/prune/reap pushed df and ``total_len`` down
+        and inflated idf (always positive).  ``indexable_term_counts`` also
+        makes the skipped-empty case implicit: a bare-placeholder chunk yields
+        no terms and therefore no decrement, exactly as it added none.
+        """
         try:
-            term_maps = [bm25_lane.term_counts(t) for t in texts if t]
+            term_maps = [bm25_lane.indexable_term_counts(t) for t in texts if t]
             if term_maps:
                 bm25_lane.forget_documents(self._bm25_stats_path(dataset_name), term_maps)
         except Exception:
@@ -5090,7 +7442,30 @@ class DatasetManager:
         dest = files_dir / f"{uuid.uuid4().hex}_{stem}{suffix}"
         import shutil
 
-        shutil.copy2(source_path, dest)
+        # Atomic copy (audit C4): write a UNIQUE ``.part`` sibling and rename
+        # it onto the final path only once the bytes are all there.  The old
+        # ``copy2(source, dest)`` wrote straight to the final path, so a
+        # crash mid-copy (pod eviction, full disk) left a TRUNCATED file
+        # under a name the hash index — and the recreate fallback — treat as
+        # a complete document, re-embedding garbage.  Same pattern as the
+        # preprocessed-media writers (unique temp sibling → validate →
+        # ``Path.replace``): the ``.part`` name keeps this call's fresh UUID
+        # prefix, so concurrent writers never share a temp path.
+        #
+        # The name is DOT-prefixed (``.<dest>.part``) — same convention as
+        # ``_unique_tmp_sibling`` — because a SIGKILL between copy and
+        # replace cannot run the cleanup below, and every file listing
+        # (MCP ``get_dataset_files``, API export/storage stats, the backup
+        # archive's ``rglob``) filters with ``name.startswith(".")``: a
+        # non-dot ``.part`` would surface as a phantom dataset file.
+        part = dest.with_name(f".{dest.name}.part")
+        try:
+            shutil.copy2(source_path, part)
+            os.replace(part, dest)  # atomic on POSIX — no partial file ever visible
+        except Exception:
+            with contextlib.suppress(OSError):
+                part.unlink(missing_ok=True)
+            raise
 
         # Load or create hash index.  The read→modify→write of .hashes.json
         # is guarded by a cross-process file lock so concurrent uploads

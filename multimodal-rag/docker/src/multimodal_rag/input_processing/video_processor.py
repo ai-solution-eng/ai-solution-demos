@@ -92,11 +92,21 @@ class VideoProcessor:
         if stride <= 0:
             stride = self.segment_seconds
 
+        # ``seg_count`` indexes every WINDOW that produced a document (and is
+        # what names the saved ``seg{N}.mp4`` file); ``window_index`` counts
+        # every window the loop visits, successes and failures alike.  They
+        # are separate because a failed transcode must still advance the file
+        # index: the old code did ``continue`` without ``seg_count += 1``, so
+        # the next successful segment reused the failed window's number and
+        # ``write_bytes`` clobbered the ``seg{N}.mp4`` already written for the
+        # PREVIOUS successful window (audit 2026-10-16, P2 segment clobber).
         seg_count = 0
+        window_index = 0
+        failed_windows: list[tuple[float, float]] = []
         t_start = 0.0
         while t_start < duration:
             remaining = duration - t_start
-            if seg_count > 0 and remaining < self.overlap_seconds:
+            if window_index > 0 and remaining < self.overlap_seconds:
                 break
             seg_duration = min(self.segment_seconds, remaining)
             t_end = t_start + seg_duration
@@ -139,11 +149,28 @@ class VideoProcessor:
                 scale_filter,
             )
             if not mp4_bytes:
+                # Silent segment loss was the other half of this bug: the
+                # failure was logged per-window inside _transcode_segment but
+                # never summarised, so a video whose middle windows failed
+                # ingested a SHORTER document set with no caller-visible signal.
+                failed_windows.append((round(t_start, 1), round(t_end, 1)))
+                logger.warning(
+                    "%s: segment %.1fs-%.1fs failed to transcode — window skipped (%d failed so far)",
+                    name,
+                    t_start,
+                    t_end,
+                    len(failed_windows),
+                )
+                window_index += 1
                 t_start += stride
                 continue
 
             if save_dir:
-                save_path = Path(save_dir) / f"{Path(video_path).stem}_seg{seg_count}.mp4"
+                # Named by the WINDOW index, not by the success counter, so a
+                # failure can never make two different windows collide on one
+                # path.  A window that fails leaves no file (and no gap-filler
+                # that could be mistaken for real content).
+                save_path = Path(save_dir) / f"{Path(video_path).stem}_seg{window_index}.mp4"
                 save_path.parent.mkdir(parents=True, exist_ok=True)
                 save_path.write_bytes(mp4_bytes)
 
@@ -159,6 +186,7 @@ class VideoProcessor:
             }
 
             seg_count += 1
+            window_index += 1
             t_start += stride
 
         dyn = f", target {self.target_frames} frames/seg" if self.target_frames > 0 else ""
@@ -172,6 +200,17 @@ class VideoProcessor:
             self.fps,
             dyn,
         )
+        if failed_windows:
+            # One summarised warning so a partially-transcoded video is never
+            # silently short: the caller sees how many windows were lost and
+            # where, instead of only per-window debug noise.
+            logger.warning(
+                "%s: %d of %d window(s) failed to transcode and produced no document — timestamps: %s",
+                name,
+                len(failed_windows),
+                window_index,
+                ", ".join(f"{a:.1f}s-{b:.1f}s" for a, b in failed_windows),
+            )
 
     # ------------------------------------------------------------------
     # Internal helpers

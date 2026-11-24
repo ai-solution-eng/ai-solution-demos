@@ -1,13 +1,14 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { ShieldAlert, MessageSquare, Play, Square, Crosshair, Upload, Activity, Settings2, Eye, Zap, ChevronLeft, ChevronRight, Settings, BookOpen } from "lucide-react";
+import { ShieldAlert, MessageSquare, Play, Square, Crosshair, Upload, Activity, Settings2, Eye, Zap, ChevronLeft, ChevronRight, Settings, BookOpen, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { api } from "@/lib/api";
+import { api, type Alert, type LlmModel } from "@/lib/api";
 import styles from "./ops-center.module.css";
 import SettingsView from "@/components/SettingsView";
+import { useStickToBottom } from "@/lib/useStickToBottom";
 import DocsModal from "@/components/DocsModal";
 
 // Helper to resolve dynamic service URLs
@@ -26,6 +27,36 @@ const getBaseUrl = (envVar: string | undefined, defaultLocal: string) => {
 
 const API_BASE = ""; 
 
+// The operator can rewrite these on the dashboard. llm-service always puts its own operating rules
+// first (grounding, observed vs assessed, military register), so clearing them loses only the format.
+const DEFAULT_SYSTEM_PROMPT =
+  "You are the intelligence watchkeeper in a joint operations centre, reporting to the commander. " +
+  "Use the format the tasking asks for, such as a SITREP or a SALUTE report. Otherwise answer as: " +
+  "BLUF (one or two lines); OBSERVED, by feed; THREATS, each with likelihood and impact; " +
+  "RECOMMENDED ACTIONS in priority order. Keep answers under 200 words unless asked for more.";
+// The default before 1.2.0. Browsers saved it on first visit, so treat it as "not customised".
+const LEGACY_SYSTEM_PROMPT =
+  "You are an advanced military AI assisting a Command & Control centre. Analyse visuals objectively and provide concise tactical assessments.";
+const SYSTEM_PROMPT_KEY = "ops_system_prompt";
+
+// Ready-made questions under the chat box: a click puts one in the box to send or edit.
+const SAMPLE_QUESTIONS: { label: string; text: string }[] = [
+  { label: "SITREP", text: "Give me a SITREP across the active feeds and the latest alerts." },
+  { label: "Confirm alerts", text: "Which alerts can you confirm from the imagery, and which can you not?" },
+  { label: "Count vehicles", text: "How many military vehicles can you see in each feed?" },
+  { label: "Force strength", text: "Give your best estimate of the strength of the observed forces." },
+  { label: "Likely intent", text: "What is the likely intent of the observed forces?" },
+  { label: "Priorities", text: "Which threat needs action first, and what do you recommend?" },
+  { label: "Next ISR", text: "What should the next ISR collection confirm?" },
+];
+
+// Feed names as operators see them; llm-service and kafka-service use the same rule (common/feeds.py).
+const formatFileName = (name: string) => {
+  if (!name) return "";
+  const base = name.split('.').slice(0, -1).join('.').replace(/[-_]/g, ' ');
+  return base.split(' ').filter(Boolean).map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+};
+
 interface VideoSource {
   filename: string;
   source: string;
@@ -34,6 +65,8 @@ interface VideoSource {
 interface ChatMessage {
   role: 'user' | 'bot';
   content: string;
+  reasoning?: string | null;
+  notices?: string[];
 }
 
 export default function OpsCenter() {
@@ -48,72 +81,88 @@ export default function OpsCenter() {
   const [targetContext, setTargetContext] = useState<string>("smart");
   const [isSending, setIsSending] = useState(false);
   const [enableThinking, setEnableThinking] = useState(false);
-  
-  const [logs, setLogs] = useState<{timestamp: number, severity: string, location: string, message: string}[]>([]);
-  const [systemPrompt, setSystemPrompt] = useState("You are an advanced military AI assisting a Command & Control centre. Analyse visuals objectively and provide concise tactical assessments.");
+  // The model chosen on System Config, with what it accepts; thinking is offered only if it supports it.
+  const [activeModel, setActiveModel] = useState<LlmModel | null>(null);
+
+  const [logs, setLogs] = useState<Alert[]>([]);
+  const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
   const [isKafkaConfigured, setIsKafkaConfigured] = useState<boolean | null>(null);
-  const logsEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const chatInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const savedPrompt = localStorage.getItem("ops_system_prompt");
-    if (savedPrompt) {
+    const savedPrompt = localStorage.getItem(SYSTEM_PROMPT_KEY);
+    if (savedPrompt && savedPrompt !== LEGACY_SYSTEM_PROMPT) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- restored after hydration: the server render has no localStorage
       setSystemPrompt(savedPrompt);
     }
   }, []);
 
   useEffect(() => {
-    localStorage.setItem("ops_system_prompt", systemPrompt);
+    // Only keep the operator's own wording, so a better default reaches everyone else.
+    if (systemPrompt === DEFAULT_SYSTEM_PROMPT) localStorage.removeItem(SYSTEM_PROMPT_KEY);
+    else localStorage.setItem(SYSTEM_PROMPT_KEY, systemPrompt);
   }, [systemPrompt]);
 
-  useEffect(() => {
-    // Scroll logs
-    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [logs]);
+  const alertFeedRef = useRef<HTMLDivElement>(null);
+  const chatFeedRef = useRef<HTMLDivElement>(null);
+  const onAlertFeedScroll = useStickToBottom(alertFeedRef, logs);
+  const onChatFeedScroll = useStickToBottom(chatFeedRef, `${chatMessages.length}:${isSending}`);
 
-  const fetchVideos = useCallback(async () => {
-    try {
-      const res = await fetch(`${API_BASE}/api/v1/video/list`);
-      const data = await res.json();
-      if (data.status === 'success') {
-        const vids = data.data;
-        setVideos(vids);
-        // Default to first few videos if available (only if not already set)
-        setSelectedVideos(prev => {
-           // If we already have selections, don't overwrite them automatically
-           if (prev.some(v => v !== "")) return prev;
-           
-           const newSelected = [...prev];
-           for (let i = 0; i < 4; i++) {
-             if (vids[i]) newSelected[i] = vids[i].filename;
-           }
-           return newSelected;
-        });
-      }
-    } catch (_e) {
-      console.error("Failed to fetch videos.");
-    }
+  const pickSampleQuestion = (text: string) => {
+    setChatInput(text);
+    chatInputRef.current?.focus();
+  };
+
+  const applyVideos = useCallback((vids: VideoSource[]) => {
+    setVideos(vids);
+    // Default to first few videos if available (only if not already set)
+    setSelectedVideos(prev => {
+       // If we already have selections, don't overwrite them automatically
+       if (prev.some(v => v !== "")) return prev;
+
+       const newSelected = [...prev];
+       for (let i = 0; i < 4; i++) {
+         if (vids[i]) newSelected[i] = vids[i].filename;
+       }
+       return newSelected;
+    });
   }, []);
+
+  // State is set in promise callbacks, so effects can call these without cascading renders.
+  const fetchVideos = useCallback(() =>
+    fetch(`${API_BASE}/api/v1/video/list`)
+      .then(res => res.json())
+      .then(data => { if (data.status === 'success') applyVideos(data.data); })
+      .catch(() => console.error("Failed to fetch videos.")),
+  [applyVideos]);
 
   useEffect(() => {
     fetchVideos();
-    
+
     // Check if Kafka is configured
-    async function checkKafka() {
-      try {
-        const config = await api.getDemoConfig();
-        if (config && config.status === 'success' && config.data) {
-          setIsKafkaConfigured(!!config.data.kafka_broker);
-        } else {
-          setIsKafkaConfigured(false);
-        }
-      } catch (_err) {
-        console.error("Failed to check Kafka config", _err);
+    api.getDemoConfig()
+      .then(({ data }) => setIsKafkaConfigured(!!data.kafka_broker && !!data.kafka_topic))
+      .catch((err: unknown) => {
+        console.error("Failed to check Kafka config", err);
         setIsKafkaConfigured(false);
-      }
-    }
-    checkKafka();
+      });
   }, [fetchVideos]);
+
+  const loadActiveModel = useCallback(() =>
+    api.getModels()
+      .then(({ models, selected }) => models.find(m => m.id === selected) ?? null)
+      .catch(() => null)
+      .then(model => {
+        setActiveModel(model);
+        if (model?.reasoning !== true) setEnableThinking(false);
+      }),
+  []);
+
+  useEffect(() => {
+    // Re-read after System Config closes, as the model may have changed
+    if (!isSettingsOpen) loadActiveModel();
+  }, [isSettingsOpen, loadActiveModel]);
 
   useEffect(() => {
     if (!isKafkaConfigured) return;
@@ -162,168 +211,77 @@ export default function OpsCenter() {
     }
   };
 
-  const handleChat = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!chatInput.trim()) return;
-    
-    const userMsg = chatInput;
-    setChatInput("");
-    setChatMessages(p => [...p, {role: 'user', content: userMsg}]);
+  // llm-service builds the visual context itself: a clip for video models, frames otherwise.
+  const askModel = async (message: string, videos: string[], displayMsg: string) => {
+    setChatMessages(p => [...p, {role: 'user', content: displayMsg}]);
     setIsSending(true);
-    
     try {
-      const configRes = await api.getDemoConfig();
-      const provider = configRes?.data?.llm_provider || "ollama";
-
-      let images: string[] = [];
-      let image_b64 = null;
-      let video_b64 = null;
-
-      if (targetContext === "smart") {
-        // Fetch combined video context from ALL active videos
-        const activeVideos = Array.from(new Set(selectedVideos.filter((vid, i) => vid && playingState[i])));
-        if (activeVideos.length > 0) {
-           try {
-             const vidsParam = activeVideos.join(",");
-             if (provider === "ollama") {
-               const vRes = await fetch(`${API_BASE}/api/v1/video/combined-frames?vids=${vidsParam}`);
-               const vData = await vRes.json();
-               if (vData.status === 'success') {
-                 images = vData.data.images_b64;
-               }
-             } else {
-               const vRes = await fetch(`${API_BASE}/api/v1/video/combined-context?vids=${vidsParam}`);
-               const vData = await vRes.json();
-               if (vData.status === 'success') {
-                 video_b64 = vData.data.video_b64;
-               }
-             }
-           } catch(_e) { 
-             console.error("Failed to capture combined context context", _e);
-           }
-        }
-      } else if (targetContext !== "none") {
-        try {
-          const frameRes = await fetch(`${API_BASE}/api/v1/video/frame/${targetContext}`);
-          const frameData = await frameRes.json();
-          if (frameData.status === 'success') {
-            image_b64 = frameData.data.image_b64;
-          }
-        } catch(_e) {
-          console.error("Failed to capture single frame context");
-        }
-      }
-      
-      const payload = {
-        message: userMsg,
-        image_b64,
-        images: images.length > 0 ? images : undefined,
-        video_b64: video_b64 || undefined,
+      const reply = await api.chat({
+        message,
+        videos,
         kafka_context: logs,
         system_prompt: systemPrompt,
-        enable_thinking: enableThinking
-      };
-      
-      const res = await fetch(`${API_BASE}/api/v1/llm/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        enable_thinking: enableThinking && activeModel?.reasoning === true,
       });
-      
-      const data = await res.json();
-      if (data.status === 'success') {
-        setChatMessages(p => [...p, {role: 'bot', content: data.data.reply}]);
-      } else {
-         const errorMsg = data.message || data.detail || "Unknown error";
-         setChatMessages(p => [...p, {role: 'bot', content: `Error: ${errorMsg}`}]);
-         toast.error(`LLM Error: ${errorMsg}`);
-      }
-      
-    } catch(_err) {
-      const errorMessage = "Failed to reach LLM service.";
-      setChatMessages(p => [...p, {role: 'bot', content: errorMessage}]);
-      toast.error(errorMessage);
+      setChatMessages(p => [...p, {
+        role: 'bot',
+        content: reply.reply,
+        reasoning: reply.reasoning,
+        notices: reply.notices,
+      }]);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : "Failed to reach the LLM service.";
+      setChatMessages(p => [...p, {role: 'bot', content: `Error: ${errorMsg}`}]);
+      toast.error(`LLM Error: ${errorMsg}`);
     } finally {
       setIsSending(false);
     }
+  };
+
+  const handleChat = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatInput.trim()) return;
+
+    const userMsg = chatInput;
+    setChatInput("");
+    let videos: string[] = [];
+    if (targetContext === "smart") {
+      videos = Array.from(new Set(selectedVideos.filter((vid, i) => vid && playingState[i])));
+    } else if (targetContext !== "none") {
+      videos = [targetContext];
+    }
+    await askModel(userMsg, videos, userMsg);
   };
 
   const handleSpecialAnalysis = async (videoFilename: string, type: 'threat' | 'objects') => {
     if (isSending || !videoFilename) return;
 
-    const prompt = type === 'threat' 
-      ? "As an elite military intelligence analyst, perform an immediate threat assessment on the provided visual feed (analysing the last sequence of frames). Identify any active, imminent, or potential threats to security, personnel, or infrastructure. Provide a concise, high-priority tactical summary of risks and recommended countermeasures. Respond with authority and precision."
-      : "Acting as a top-tier military reconnaissance specialist, identify all objects of interest within this video sequence. Focus on military hardware (vehicles, weaponry, comms), tactical assets, and personnel formations. Provide an itemised report detailing the nature, quantity, and suspected strategic significance of each identified object. Ensure the assessment is detailed and professional.";
-    
-    const userDisplayMsg = type === 'threat' 
-      ? `[TACTICAL SCAN] Initiating Threat Assessment on: ${videoFilename}` 
-      : `[RECONNAISSANCE] Identifying Objects of Interest in: ${videoFilename}`;
+    const feed = formatFileName(videoFilename);
+    const prompt = type === 'threat'
+      ? `THREAT ASSESSMENT of the ${feed} feed. BLUF first. Then OBSERVED: platforms, personnel, ` +
+        "weapons and activity. Then THREATS, each with type, likelihood (high, medium or low), " +
+        "potential impact and time frame. Then RECOMMENDED ACTIONS in priority order: protective, " +
+        `reporting and collection measures. Use only the alerts whose location starts with "${feed}".`
+      : `SALUTE REPORT on the ${feed} feed: Size, Activity, Location (terrain and setting as seen), ` +
+        `Unit (markings or type, if identifiable), Time (from alerts whose location starts with "${feed}", ` +
+        'otherwise "not shown"), Equipment. Then a table of objects of interest with the columns Object, ' +
+        "Count and Notes. Mark estimated counts as estimates.";
 
-    setChatMessages(p => [...p, {role: 'user', content: userDisplayMsg}]);
-    setIsSending(true);
+    const userDisplayMsg = type === 'threat'
+      ? `[THREAT ASSESSMENT] ${feed}`
+      : `[SALUTE REPORT] ${feed}`;
 
-    try {
-      const configRes = await api.getDemoConfig();
-      const provider = configRes?.data?.llm_provider || "ollama";
-
-      let video_b64 = null;
-      let images: string[] = [];
-
-      try {
-        if (provider === "ollama") {
-          const vRes = await fetch(`${API_BASE}/api/v1/video/combined-frames?vids=${videoFilename}`);
-          const vData = await vRes.json();
-          if (vData.status === 'success') {
-            images = vData.data.images_b64;
-          }
-        } else {
-          const vRes = await fetch(`${API_BASE}/api/v1/video/combined-context?vids=${videoFilename}`);
-          const vData = await vRes.json();
-          if (vData.status === 'success') {
-            video_b64 = vData.data.video_b64;
-          }
-        }
-      } catch(_e) {
-        console.error("Failed to capture sequence context context", _e);
-      }
-
-      const payload = {
-        message: prompt,
-        image_b64: null,
-        images: images.length > 0 ? images : undefined,
-        video_b64: video_b64 || undefined,
-        kafka_context: logs,
-        system_prompt: systemPrompt,
-        enable_thinking: enableThinking
-      };
-
-      const res = await fetch(`${API_BASE}/api/v1/llm/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      const data = await res.json();
-      if (data.status === 'success') {
-        setChatMessages(p => [...p, {role: 'bot', content: data.data.reply}]);
-      } else {
-        const errorMsg = data.message || data.detail || "Unknown error";
-        setChatMessages(p => [...p, {role: 'bot', content: `Error: ${errorMsg}`}]);
-        toast.error(`Analysis Error: ${errorMsg}`);
-      }
-    } catch(_err) {
-      const errorMessage = "Failed to reach LLM service for analysis.";
-      setChatMessages(p => [...p, {role: 'bot', content: errorMessage}]);
-      toast.error(errorMessage);
-    } finally {
-      setIsSending(false);
-    }
+    await askModel(prompt, [videoFilename], userDisplayMsg);
   };
 
   const handleGenerateAlerts = async () => {
+    // Alerts match the feeds in the grid; with none selected they are general.
+    const feeds = Array.from(new Set(selectedVideos.filter(Boolean)));
     try {
       const res = await fetch(`${API_BASE}/api/v1/kafka/generate`, {
-        method: 'POST'
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ feeds }),
       });
       const data = await res.json();
       if (data.status === 'success') {
@@ -381,16 +339,6 @@ export default function OpsCenter() {
     });
   };
 
-  const formatFileName = (name: string) => {
-    if (!name) return "";
-    // Remove extension
-    let base = name.split('.').slice(0, -1).join('.');
-    // Replace - and _ with space
-    base = base.replace(/[-_]/g, ' ');
-    // Capitalize first letters of every word
-    return base.split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
-  };
-
   return (
     <div className={styles.container}>
       <header className={styles.header}>
@@ -440,7 +388,7 @@ export default function OpsCenter() {
                              <button 
                                onClick={() => handleSpecialAnalysis(selectedVideos[i], 'threat')}
                                className={`${styles.analysisBtn} ${styles.threatBtn}`}
-                               title="Threat Detection"
+                               title="Threat assessment"
                                disabled={isSending || !selectedVideos[i]}
                              >
                                 <ShieldAlert size={16} />
@@ -449,7 +397,7 @@ export default function OpsCenter() {
                              <button 
                                onClick={() => handleSpecialAnalysis(selectedVideos[i], 'objects')}
                                className={styles.analysisBtn}
-                               title="Identify Objects"
+                               title="SALUTE report (objects of interest)"
                                disabled={isSending || !selectedVideos[i]}
                              >
                                 <Eye size={16} />
@@ -499,25 +447,24 @@ export default function OpsCenter() {
                         <button 
                           onClick={handleGenerateAlerts}
                           className={styles.generateBtn}
-                          title="Generate Sample Alerts"
+                          title="Generate sample alerts about the selected feeds"
                         >
                            <Zap size={10} /> Generate Alerts
                         </button>
                      </div>
-                    <div className={styles.terminalFeed}>
+                    <div className={styles.terminalFeed} ref={alertFeedRef} onScroll={onAlertFeedScroll}>
                        {logs.length === 0 ? (
                          <span className={styles.emptyLog}>No alerts received... Waiting for datalink...</span>
                        ) : (
                          logs.map((log, i) => (
                            <div key={i} className={styles.logEntry}>
-                              <span className={styles.logTime}>[{new Date(log.timestamp * 1000).toISOString().split('T')[1].slice(0,-1)}]</span>
+                              <span className={styles.logTime}>[{log.timestamp !== undefined ? new Date(log.timestamp * 1000).toISOString().split('T')[1].slice(0,-1) : '--:--:--'}]</span>
                               <span className={styles[`log${log.severity}`]}>[{log.severity}]</span>
                               <span style={{color: 'white'}}>[{log.location}]</span>
                               <span>{log.message}</span>
                            </div>
                          ))
                        )}
-                       <div ref={logsEndRef} />
                     </div>
                 </div>
               )}
@@ -551,12 +498,22 @@ export default function OpsCenter() {
               <div className={styles.promptContainer}>
                  <div className={styles.promptHeader}>
                     <Settings2 size={16} /> ASSISTANT INSTRUCTIONS
+                    {systemPrompt !== DEFAULT_SYSTEM_PROMPT && (
+                      <button
+                        type="button"
+                        className={styles.resetBtn}
+                        onClick={() => setSystemPrompt(DEFAULT_SYSTEM_PROMPT)}
+                        title="Restore the default instructions"
+                      >
+                        <RotateCcw size={10} /> Reset
+                      </button>
+                    )}
                  </div>
                  <textarea 
                    className={styles.promptInput}
                    value={systemPrompt}
                    onChange={(e) => setSystemPrompt(e.target.value)}
-                   placeholder="System prompt..."
+                   placeholder="Instructions for the assistant (optional)"
                  />
               </div>
 
@@ -564,29 +521,30 @@ export default function OpsCenter() {
                  <div className={styles.chatHeader}>
                     <MessageSquare size={18} /> TACTICAL ASSISTANT
                  </div>
-                 <div className={styles.chatMessages}>
+                 <div className={styles.chatMessages} ref={chatFeedRef} onScroll={onChatFeedScroll}>
                     {chatMessages.map((m, i) => (
                        <div key={i} className={`${styles.message} ${m.role === 'user' ? styles.userMsg : styles.botMsg}`}>
                           {m.role === 'user' ? (
                             m.content
                           ) : (
                             <div className={styles.markdownContent}>
-                               <ReactMarkdown 
-                                 remarkPlugins={[remarkGfm]}
-                                 components={{
-                                   // @ts-expect-error - Custom 'think' component is not in standard Markdown types
-                                   think: ({node: _node, ...props}: {node: unknown}) => <div className={styles.thinkSegment} {...props} />
-                                 }}
-                               >
-                                 {m.content}
-                               </ReactMarkdown>
+                               {m.reasoning && (
+                                 <details className={styles.thinkSegment}>
+                                   <summary>Reasoning</summary>
+                                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.reasoning}</ReactMarkdown>
+                                 </details>
+                               )}
+                               <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                               {m.notices?.map(n => (
+                                 <p key={n} className={styles.notice}>{n}</p>
+                               ))}
                             </div>
                           )}
                        </div>
                     ))}
                     {isSending && (
                       <div className={`${styles.message} ${styles.botMsg}`} style={{opacity: 0.6}}>
-                        Analyzing...
+                        Analysing…
                       </div>
                     )}
                  </div>
@@ -599,25 +557,47 @@ export default function OpsCenter() {
                        <option value="smart">Context: Smart (Active Streams)</option>
                        <option value="none">Context: None</option>
                        {videos.map(v => (
-                          <option key={v.filename} value={v.filename}>{v.filename}</option>
+                          <option key={v.filename} value={v.filename}>Context: {formatFileName(v.filename)}</option>
                        ))}
                     </select>
                     
-                    <label className={styles.thinkingLabel}>
-                       <input 
-                         type="checkbox" 
+                    <label
+                      className={`${styles.thinkingLabel} ${activeModel?.reasoning === true ? "" : styles.thinkingDisabled}`}
+                      title={activeModel?.reasoning === true
+                        ? `Ask ${activeModel.id} to reason before answering`
+                        : `${activeModel?.id ?? "The selected model"} does not support thinking mode`}
+                    >
+                       <input
+                         type="checkbox"
                          checked={enableThinking}
+                         disabled={activeModel?.reasoning !== true}
                          onChange={(e) => setEnableThinking(e.target.checked)}
-                       /> 
+                       />
                        <span>Thinking</span>
                     </label>
 
+                    <div className={styles.suggestions} role="group" aria-label="Sample questions">
+                       {SAMPLE_QUESTIONS.map(q => (
+                         <button
+                           key={q.label}
+                           type="button"
+                           className={styles.suggestionBtn}
+                           title={q.text}
+                           disabled={isSending}
+                           onClick={() => pickSampleQuestion(q.text)}
+                         >
+                           {q.label}
+                         </button>
+                       ))}
+                    </div>
+
                     <input 
+                      ref={chatInputRef}
                       type="text" 
                       value={chatInput}
                       onChange={e => setChatInput(e.target.value)}
                       className={styles.chatInput}
-                      placeholder="Query intelligence..."
+                      placeholder="Ask a question, or pick one above, then press Enter"
                       disabled={isSending}
                     />
                  </form>

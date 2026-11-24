@@ -1,0 +1,25 @@
+# The build context is the repository root for every image; each Dockerfile copies what it needs.
+.git
+.gitignore
+.dockerignore
+.tiltignore
+Tiltfile
+helm/
+charts/
+dist/
+*.tgz
+defence-ops-ezapp.yaml
+# Recordings at the root; the demo videos in assets/videos/ are baked into video-service.
+*.mp4
+.env
+**/.DS_Store
+**/node_modules/
+**/.next/
+**/__pycache__/
+**/*.py[cod]
+**/.venv/
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+**/tests/
+tilt_config*.json
